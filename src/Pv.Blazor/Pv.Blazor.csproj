@@ -10,7 +10,7 @@
     <ViewerCoreInput Include="$(ViewerCoreDirectory)src\**\*;$(ViewerCoreDirectory)scripts\**\*;$(ViewerCoreDirectory)package-lock.json" />
   </ItemGroup>
 
-  <Target Name="RestoreViewerCore" Condition="!Exists('$(ViewerCoreDirectory)node_modules')">
+  <Target Name="RestoreViewerCore" Inputs="$(ViewerCoreDirectory)package-lock.json" Outputs="$(ViewerCoreDirectory)node_modules\.package-lock.json">
     <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(ViewerCoreDirectory)" />
   </Target>
 

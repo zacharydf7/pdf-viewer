@@ -3,8 +3,8 @@
 A PDF viewer for .NET and the web, built for applications that need to test what they display. It renders with
 [PDF.js](https://mozilla.github.io/pdf.js/) and needs no commercial SDK.
 
-Pages and objects are real DOM elements, so tests can find, assert and drag them directly instead of aiming a mouse at a
-canvas. See the [test contract](docs/test-contract.md).
+Pages and objects are real DOM elements, so tests can find them by selector, assert on their attributes and drag them, instead
+of working out pixel positions on a canvas. See the [test contract](docs/test-contract.md).
 
 ```razor
 <PdfViewer Source="@documentUrl" InitialPage="1" OnDocumentLoaded="HandleLoaded" OnObjectChanged="HandleObjectChanged" />
@@ -37,7 +37,8 @@ tests/fixtures     Generated PDFs with ink at known positions, for checking coor
 Three rules keep it fast and testable:
 
 - **The browser owns interaction.** Scrolling, zooming and dragging never wait for the server.
-- **PDF bytes never cross the Blazor circuit.** The browser fetches URLs and reads local files itself.
+- **Opening a document sends no PDF bytes over the Blazor circuit.** The browser fetches URLs and reads local files itself.
+  Only `CopyDocumentToAsync` sends bytes to .NET, and only when you call it.
 - **All pdf.js calls go through `engine.ts`,** so upgrades touch one file.
 
 ## Building
@@ -50,6 +51,12 @@ dotnet run --project samples/Pv.Sample
 ```
 
 Then open the URL it prints, and either pick a local PDF or add `?doc=documents/letter.pdf` to the address.
+
+## Hosting
+
+The viewer's pdf.js files include `.bcmap` and `.icc` assets, which `UseStaticFiles` doesn't serve by default. Without them,
+some CJK text and CMYK colors render wrong. `MapStaticAssets` serves them as is. With `UseStaticFiles`, add both extensions to
+a `FileExtensionContentTypeProvider`.
 
 ## Testing
 
@@ -73,8 +80,15 @@ node tests/Pv.EndToEnd/bin/Debug/net10.0/.playwright/package/cli.js install chro
 
 Browser suites run without test-level retries, so a flaky test fails rather than hiding.
 
+## Styling
+
+The viewer fills its parent's height, with a minimum of 300px so it stays visible in a parent with no set height. In a shorter
+parent it overflows, and you can lower the minimum with the `--pv-viewer-min-height` CSS variable.
+`--pv-viewer-background` sets the color around the page.
+
 ## Known limitations
 
+- **Touch input isn't supported yet.** A finger pans the page instead of drawing, moving or resizing objects.
 - **Range requests only help if the file allows it.** pdf.js visits every page in the page tree when opening a document, so
   a PDF with page dictionaries scattered through the file is fetched almost completely, even to show one page.
 - **The fonts bundled with pdf.js 6.5.438 include Liberation Sans under GPLv2 with exceptions.** Upstream has removed them

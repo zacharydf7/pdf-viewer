@@ -28,7 +28,8 @@ public partial class PdfViewer
     [Parameter] public PdfSource? Source { get; set; }
 
     /// <summary>
-    /// The page to show when a document opens. Later changes have no effect, so use <see cref="GoToPageAsync"/>.
+    /// The page to show when a document opens. Changing it doesn't move a document that's already open, so use
+    /// <see cref="GoToPageAsync"/> for that.
     /// </summary>
     [Parameter] public int InitialPage { get; set; } = 1;
 
@@ -70,14 +71,20 @@ public partial class PdfViewer
     [Parameter] public EventCallback<ViewerError> OnError { get; set; }
 
     /// <summary>
-    /// Raised when a change finishes, never during a drag. Check the origin to tell user edits from your own.
+    /// Raised when a change finishes, never during a drag. Check the origin to tell user edits from your own. Set this
+    /// before the first render, because changes are only sent to .NET if a handler was set by then.
     /// </summary>
     [Parameter] public EventCallback<ViewerObjectChange> OnObjectChanged { get; set; }
 
+    /// <summary>
+    /// Raised when the selection changes. As with <see cref="OnObjectChanged"/>, set this before the first render.
+    /// </summary>
     [Parameter] public EventCallback<ViewerSelectionChange> OnSelectionChanged { get; set; }
 
     [Parameter(CaptureUnmatchedValues = true)]
     public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private bool NoDocument => _pageCount == 0;
 
     public int CurrentPage => _currentPage;
 
@@ -92,15 +99,24 @@ public partial class PdfViewer
     /// <summary>Sets the viewing rotation in degrees, which is added to any rotation the page already has.</summary>
     public Task SetRotationAsync(int degrees)
     {
+        ThrowIfNotQuarterTurn(degrees);
         _rotation = degrees;
         return InvokeBridgeAsync("setRotation", degrees);
     }
 
     /// <summary>
-    /// Sets how one page is finally displayed, replacing both its own rotation and the viewing rotation. Pass null to
-    /// go back to its normal rotation. Unlike adding to a rotation, the same call always gives the same result.
+    /// Sets the rotation one page ends up with, replacing both its own rotation and the viewing rotation. Pass null to
+    /// return to its own rotation plus the viewing rotation. The result doesn't depend on any rotation the page already
+    /// has.
     /// </summary>
-    public Task SetPageRotationAsync(int page, int? degrees) => InvokeBridgeAsync("setPageRotation", page, degrees);
+    public Task SetPageRotationAsync(int page, int? degrees)
+    {
+        if (degrees is { } value)
+        {
+            ThrowIfNotQuarterTurn(value);
+        }
+        return InvokeBridgeAsync("setPageRotation", page, degrees);
+    }
 
     public Task SetToolAsync(ViewerTool tool, ViewerDrawDefaults? drawDefaults = null) =>
         InvokeBridgeAsync("setTool", tool, drawDefaults);
@@ -115,7 +131,7 @@ public partial class PdfViewer
     {
         var bridge = _bridge ?? throw NotReady();
         await using var data =
-            await bridge.InvokeAsync<IJSStreamReference>("getDocumentData", CancellationToken.None, []);
+            await bridge.InvokeAsync<IJSStreamReference>("getDocumentData", cancellationToken, []);
         await using var source = await data.OpenReadStreamAsync(maximumSize, cancellationToken);
         await source.CopyToAsync(destination, cancellationToken);
     }
@@ -157,16 +173,40 @@ public partial class PdfViewer
             coordinates = Coordinates,
             objectHitArea = ObjectHitArea,
         };
-        _bridge = await _module.InvokeAsync<IJSObjectReference>("attach", _host, _reference, options);
+        var subscriptions = new { objects = OnObjectChanged.HasDelegate, selection = OnSelectionChanged.HasDelegate };
+        _bridge = await _module.InvokeAsync<IJSObjectReference>("attach", _host, _reference, options, subscriptions);
         await OpenSourceIfChangedAsync();
     }
 
     private async Task OpenSourceIfChangedAsync()
     {
-        if (Source is not null && !Source.Equals(_openedSource))
+        if (Source is null ? _openedSource is null : Source.Equals(_openedSource))
         {
-            _openedSource = Source;
+            return;
+        }
+        _openedSource = Source;
+        ResetPosition();
+        if (Source is null)
+        {
+            await InvokeBridgeAsync("close");
+        }
+        else
+        {
             await InvokeBridgeAsync("open", Source.ToInterop(), InitialPage);
+        }
+    }
+
+    private void ResetPosition()
+    {
+        _pageCount = 0;
+        _currentPage = 1;
+    }
+
+    private static void ThrowIfNotQuarterTurn(int degrees)
+    {
+        if (degrees % 90 != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(degrees), degrees, "Rotation must be a multiple of 90 degrees.");
         }
     }
 
@@ -201,7 +241,15 @@ public partial class PdfViewer
     }
 
     [JSInvokable]
-    public Task NotifyError(string code, string message) => OnError.InvokeAsync(new ViewerError(code, message));
+    public async Task NotifyError(string code, string message, bool documentFailed)
+    {
+        if (documentFailed)
+        {
+            ResetPosition();
+        }
+        await OnError.InvokeAsync(new ViewerError(code, message));
+        StateHasChanged();
+    }
 
     [JSInvokable]
     public Task NotifyObjectChanged(ViewerObjectChange change) => OnObjectChanged.InvokeAsync(change);

@@ -9,7 +9,8 @@ type PdfJs = typeof import("pdfjs-dist");
 
 export type DocumentSource =
   | { kind: "url"; url: string; headers?: Record<string, string>; withCredentials?: boolean }
-  | { kind: "data"; data: Uint8Array };
+  | { kind: "data"; data: Uint8Array }
+  | { kind: "file"; file: Blob };
 
 export type DocumentErrorCode = "invalid-pdf" | "network" | "password-required" | "password-incorrect" | "unknown";
 
@@ -23,7 +24,7 @@ export class DocumentError extends Error {
 }
 
 export interface RenderHandle {
-  /** Resolves when finished, and rejects with RenderCancelled if canceled first. */
+  /** Resolves when finished, and rejects with RenderCanceled if canceled first. */
   readonly done: Promise<void>;
   cancel(): void;
 }
@@ -33,7 +34,7 @@ export interface TextRender extends RenderHandle {
   update(scale: number, viewRotation: Rotation): void;
 }
 
-export class RenderCancelled extends Error {}
+export class RenderCanceled extends Error {}
 
 export interface CanvasOptions {
   maximumPixels: number;
@@ -76,10 +77,11 @@ function loadPdfJs(): Promise<PdfJs> {
 
 export async function openDocument(source: DocumentSource): Promise<EngineDocument> {
   const pdfJs = await loadPdfJs();
+  const location = source.kind === "url"
+    ? { url: source.url, httpHeaders: source.headers, withCredentials: source.withCredentials }
+    : { data: source.kind === "file" ? new Uint8Array(await source.file.arrayBuffer()) : source.data };
   const task = pdfJs.getDocument({
-    ...(source.kind === "url"
-      ? { url: source.url, httpHeaders: source.headers, withCredentials: source.withCredentials }
-      : { data: source.data }),
+    ...location,
     // Fetch only what the visible page needs when the server supports range requests.
     disableAutoFetch: true,
     disableStream: true,
@@ -97,7 +99,7 @@ export async function openDocument(source: DocumentSource): Promise<EngineDocume
     document = await task.promise;
   } catch (error) {
     await task.destroy();
-    throw toDocumentError(pdfJs, error);
+    throw toDocumentError(pdfJs, error, source);
   }
 
   const textCache = new Map<number, Promise<TextContent>>();
@@ -112,6 +114,8 @@ export async function openDocument(source: DocumentSource): Promise<EngineDocume
 /** Returns a page's text from the cache, keeping the most recently used pages. */
 function cachedTextContent(page: PDFPageProxy, cache: Map<number, Promise<TextContent>>): Promise<TextContent> {
   const content = cache.get(page.pageNumber) ?? page.getTextContent({ disableNormalization: true });
+  // Forgetting a failure lets a later render try again, since the cause may have been a passing network problem.
+  content.catch(() => cache.delete(page.pageNumber));
   cache.delete(page.pageNumber);
   cache.set(page.pageNumber, content);
   if (cache.size > textCacheSize) {
@@ -151,7 +155,7 @@ function wrapPage(pdfJs: PdfJs, page: PDFPageProxy, textCache: Map<number, Promi
       });
       return {
         done: task.promise.catch((error: unknown) => {
-          throw error instanceof pdfJs.RenderingCancelledException ? new RenderCancelled() : error;
+          throw error instanceof pdfJs.RenderingCancelledException ? new RenderCanceled() : error;
         }),
         cancel: () => task.cancel(),
       };
@@ -162,14 +166,14 @@ function wrapPage(pdfJs: PdfJs, page: PDFPageProxy, textCache: Map<number, Promi
       const render = async () => {
         const textContentSource = await cachedTextContent(page, textCache);
         if (canceled) {
-          throw new RenderCancelled();
+          throw new RenderCanceled();
         }
         layer = new pdfJs.TextLayer({ textContentSource, container, viewport: textViewport(scale, viewRotation) });
         await layer.render();
       };
       return {
         done: render().catch((error: unknown) => {
-          throw canceled ? new RenderCancelled() : error;
+          throw canceled ? new RenderCanceled() : error;
         }),
         cancel() {
           canceled = true;
@@ -184,7 +188,7 @@ function wrapPage(pdfJs: PdfJs, page: PDFPageProxy, textCache: Map<number, Promi
   };
 }
 
-function toDocumentError(pdfJs: PdfJs, error: unknown): DocumentError {
+function toDocumentError(pdfJs: PdfJs, error: unknown, source: DocumentSource): DocumentError {
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof pdfJs.PasswordException) {
     const incorrect = error.code === pdfJs.PasswordResponses.INCORRECT_PASSWORD;
@@ -193,7 +197,8 @@ function toDocumentError(pdfJs: PdfJs, error: unknown): DocumentError {
   if (error instanceof pdfJs.InvalidPDFException) {
     return new DocumentError("invalid-pdf", message);
   }
-  if (error instanceof pdfJs.ResponseException) {
+  // pdf.js reports a refused connection with a generic error, unlike an error response from a server.
+  if (error instanceof pdfJs.ResponseException || source.kind === "url") {
     return new DocumentError("network", message);
   }
   return new DocumentError("unknown", message);

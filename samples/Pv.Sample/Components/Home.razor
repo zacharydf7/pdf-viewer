@@ -45,6 +45,8 @@
         <dl>
             <dt>Last change</dt>
             <dd data-testid="last-change">@_lastChange</dd>
+            <dt>Selected object</dt>
+            <dd data-testid="selected-object">@_selectedObject</dd>
             <dt>Last tag</dt>
             <dd data-testid="last-tag">@_lastTag</dd>
             <dt>Last error</dt>
@@ -61,7 +63,10 @@
         <PdfViewer @ref="_viewer" Source="_source" InitialPage="Page ?? 1" ShowToolbar="!Headless"
                    InitialZoom="Headless ? ViewerZoomMode.FitPage : ViewerZoomMode.FitWidth"
                    HideFormFields="Headless" KeyboardEditing="!Headless" RoundCoordinates="Headless"
+                   Coordinates="Headless ? ViewerCoordinates.Display : ViewerCoordinates.Page"
+                   ObjectHitArea="Headless ? ViewerObjectHitArea.Border : ViewerObjectHitArea.Fill"
                    OnDocumentLoaded="HandleDocumentLoaded" OnObjectChanged="HandleObjectChanged"
+                   OnSelectionChanged="HandleSelectionChanged"
                    OnError="error => _lastError = error.Code" />
     </main>
 </div>
@@ -74,6 +79,7 @@
     private readonly Dictionary<string, ViewerObject> _objects = [];
     private string _lastChange = "";
     private string _lastTag = "";
+    private string _selectedObject = "none";
     private string _lastError = "";
     private int _loadCount;
     private long _documentBytes;
@@ -118,6 +124,8 @@
         await _viewer!.CopyDocumentToAsync(stream);
         _documentBytes = stream.Length;
     }
+
+    private void HandleSelectionChanged(ViewerSelectionChange change) => _selectedObject = change.Id ?? "none";
 
     private void HandleDocumentLoaded()
     {

@@ -53,9 +53,19 @@ public class PdfSourceTests
     [Fact]
     public void ImplicitConversion_ShouldCreateUrlSource_WhenGivenString()
     {
-        PdfSource source = "/a.pdf";
+        PdfSource? source = "/a.pdf";
 
         Assert.Equal(PdfSource.FromUrl("/a.pdf"), source);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void ImplicitConversion_ShouldGiveNoSource_WhenGivenNoUrl(string? url)
+    {
+        PdfSource? source = url;
+
+        Assert.Null(source);
     }
 
     [Fact]

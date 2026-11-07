@@ -1,18 +1,9 @@
-import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import type { ObjectChange } from "../../src/object-store.js";
-import type { PdfViewerElement, ViewerOptions } from "../../src/viewer-element.js";
-import { expectRectsClose, fixtureUrl, manifest, Viewer } from "./support.js";
+import type { PdfViewerElement } from "../../src/viewer-element.js";
+import { expectRectsClose, fixtureUrl, manifest, openViewer, Viewer } from "./support.js";
 
 const start = { x: 100, y: 100, width: 200, height: 100 };
-
-async function openViewer(page: Page, options: ViewerOptions, fixture = "letter"): Promise<Viewer> {
-  const viewer = new Viewer(page);
-  await viewer.goto();
-  await viewer.host.evaluate((element: PdfViewerElement, value) => element.configure(value), options);
-  await viewer.open(fixture);
-  return viewer;
-}
 
 async function isVisibleColor(viewer: Viewer, channels: [number, number, number]): Promise<boolean> {
   return viewer.pageElement().evaluate((page, [red, green, blue]) => {

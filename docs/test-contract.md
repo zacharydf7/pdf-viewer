@@ -1,7 +1,7 @@
 # Test contract
 
-The viewer's DOM is part of its public API. These attributes are always present, including in production, so what you
-test is what ships. Wait on them instead of using timers, and use them from any test framework.
+The viewer's DOM is part of its public API. These attributes aren't stripped from production builds, so what you test is
+what ships. Wait on them instead of using timers, and use them from any test framework.
 
 Everything sits inside `<pdf-viewer>`, in the light DOM, so ordinary selectors reach it.
 
@@ -10,10 +10,10 @@ Everything sits inside `<pdf-viewer>`, in the light DOM, so ordinary selectors r
 | Attribute | Values |
 |---|---|
 | `data-document-state` | `idle`, `loading`, `ready`, `error` |
-| `data-error-code` | Set in the `error` state: `invalid-pdf`, `network`, `password-required`, `password-incorrect`, `unknown` |
+| `data-error-code` | Present only in the `error` state: `invalid-pdf`, `network`, `password-required`, `password-incorrect`, `unknown` |
 | `data-page-count` | Number of pages, once the document is open |
 | `data-current-page` | The displayed page, starting at 1 |
-| `data-zoom` | The zoom being displayed or rendered, with 1 meaning 100% |
+| `data-zoom` | The zoom being displayed or rendered, with 1 meaning 100%. Absent until a page has been sized |
 | `data-tool` | `select`, `draw-rect`, `none` |
 | `data-object-hit-area` | `fill`, or `border` when only an unselected object's edges catch the pointer |
 | `data-selected-object` | ID of the selected object, or empty |
@@ -24,7 +24,7 @@ Everything sits inside `<pdf-viewer>`, in the light DOM, so ordinary selectors r
 | Attribute | Values |
 |---|---|
 | `data-page-number` | The page number, starting at 1 |
-| `data-page-state` | `pending` (hidden, so there's no size to fit yet), `rendering`, `rendered`, `error` |
+| `data-page-state` | `pending` (no size to fit yet, usually because the viewer is hidden), `rendering`, `rendered`, `error` |
 | `data-text-state` | `pending`, `ready`, `error` |
 | `data-render-scale` | The zoom of the last finished render |
 | `data-rotation` | Total clockwise rotation, including the page's own |
@@ -42,10 +42,10 @@ depends on sharp pixels.
 
 | Attribute | Values |
 |---|---|
-| `data-object-id` | The ID your application gave it, or a generated one for objects the user draws |
+| `data-object-id` | The ID your application gave it, or a generated version 4 UUID for objects the user draws |
 | `data-object-kind` | `rect` |
 | `data-object-tag` | The application's own category, if it gave one |
-| `data-page-rect` | `x,y,width,height` in page units |
+| `data-page-rect` | `x,y,width,height` in the coordinates objects use |
 | `data-locked`, `data-selectable` | `true` or `false` |
 | `aria-selected` | `true` or `false` |
 
@@ -53,7 +53,7 @@ Objects also have `role="option"` and an accessible name, so `getByRole("option"
 `data-object-id` for identity, because names can be localized or repeated.
 
 Objects appear only for the displayed page. To read any object in the document, call `getObject(id)` or `getObjects()` on
-the element, and check `data-object-count` on the page.
+the element. `data-object-count` gives the number on the displayed page.
 
 The selected object's handles are `[data-handle="nw|n|ne|e|se|s|sw|w"]`, with `data-handle-for` set to its ID. Handles are
 real elements, so a test can drag them with the real mouse.
@@ -65,7 +65,7 @@ crop box, with y growing downward. A rectangle stays attached to the page's cont
 PDF user space, where y grows upward, use `pdfX = cropLeft + x` and `pdfY = cropTop - y`.
 
 With the `display` coordinates option, rectangles are measured from the top-left corner of the page as presented after
-rotation, and include its UserUnit. A rectangle keeps its numbers when the page rotates, so it moves relative to the content.
+rotation, and are scaled by its UserUnit. A rectangle keeps its numbers when the page rotates, so it moves relative to the content.
 
 ## Events
 
@@ -78,7 +78,7 @@ These are bubbling `CustomEvent`s on `<pdf-viewer>`.
 | `pv-page-change` | `{ page }` |
 | `pv-object-change` | `{ sequence, origin, kind, object }`, where `origin` is `user` or `api` |
 | `pv-selection-change` | `{ sequence, origin, id }` |
-| `pv-error` | `{ code, message }` |
+| `pv-error` | `{ code, message, documentFailed }`, where `code` is one of the `data-error-code` values when `documentFailed` is true. Otherwise it's `page` or `render` for a page that failed, or `command` for a rejected command from .NET. For a URL source, `network` also covers any other error from pdf.js, because it reports a refused connection as a generic error |
 
 Object changes fire when a gesture finishes, never during a drag.
 

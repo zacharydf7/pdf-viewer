@@ -56,6 +56,20 @@ test.describe("drawing", () => {
     await expect(page.locator("[data-draft]")).toHaveCount(0);
   });
 
+  test("drawRect_ShouldGiveObjectUniqueUuid_WhenFinished", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.setTool("draw-rect");
+
+    await viewer.drag(await viewer.pagePoint(0.1, 0.1), await viewer.pagePoint(0.2, 0.2));
+    await viewer.drag(await viewer.pagePoint(0.3, 0.3), await viewer.pagePoint(0.4, 0.4));
+
+    const ids = (await viewer.getObjects()).map(({ id }) => id);
+    expect(new Set(ids).size).toBe(2);
+    for (const id of ids) {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    }
+  });
+
   test("drawRect_ShouldSelectNewObject_WhenFinished", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.setTool("draw-rect");

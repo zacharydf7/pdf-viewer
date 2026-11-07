@@ -1,9 +1,12 @@
 /**
  * Coordinate conversions between the public page space and the page as displayed.
  *
- * Page space is the unit every public API uses. Its origin is the top-left corner of the unrotated crop box, x grows
+ * Page space is what public APIs use by default. Its origin is the top-left corner of the unrotated crop box, x grows
  * right, y grows down, and one unit is one PDF user-space unit. Rectangles stay attached to page content under any
  * rotation, whether it comes from the document's /Rotate or from the viewer.
+ *
+ * With the "display" coordinates option, the viewer passes in an upright geometry that includes UserUnit, so the
+ * presented page acts as page space here.
  *
  * Display space has the same scale but is rotated to match what the user sees.
  */

@@ -164,6 +164,9 @@ export class ObjectLayer {
   }
 
   #removeElement(id: string, element: HTMLElement): void {
+    if (this.#drag !== undefined && this.#drag.kind !== "draw" && this.#drag.id === id) {
+      this.#drag = undefined;
+    }
     element.remove();
     this.#objectElements.delete(id);
     this.#appliedStates.delete(id);
@@ -206,7 +209,7 @@ export class ObjectLayer {
     }
     element.dataset.locked = String(object.locked);
     element.dataset.selectable = String(object.selectable);
-    element.setAttribute("aria-label", object.label ?? `Object ${object.id}`);
+    element.setAttribute("aria-label", object.label ?? `Object on page ${this.#pageNumber}`);
     element.setAttribute("aria-selected", String(selected));
     element.tabIndex = object.selectable && this.#tool !== "none" ? 0 : -1;
     element.style.setProperty("--pv-object-color", object.style?.color ?? "");
@@ -225,7 +228,8 @@ export class ObjectLayer {
   #syncHandles(): void {
     this.#handlesElement.replaceChildren();
     const selected = this.#store.selectedId === null ? undefined : this.#store.get(this.#store.selectedId);
-    if (selected === undefined || selected.page !== this.#pageNumber || selected.locked || this.#tool !== "select") {
+    if (selected === undefined || selected.page !== this.#pageNumber || selected.locked || !selected.selectable
+      || this.#tool !== "select") {
       return;
     }
     const rect = this.#currentRect(selected);
@@ -349,9 +353,9 @@ export class ObjectLayer {
     if (drag === undefined) {
       return;
     }
+    this.#drag = undefined;
     // The release position counts, even if the browser delivered no move before it.
     this.#applyPointer(drag, event);
-    this.#drag = undefined;
     switch (drag.kind) {
       case "draw":
         this.#commitDraw(drag.start, drag.current);
@@ -421,7 +425,8 @@ export class ObjectLayer {
   #onKeyDown(event: KeyboardEvent): void {
     const element = (event.target as Element).closest<HTMLElement>("[data-object-id]");
     const object = element === null ? undefined : this.#store.get(element.dataset.objectId!);
-    if (!this.#keyboardEditing || object === undefined || this.#tool !== "select" || !object.selectable) {
+    if (!this.#keyboardEditing || this.#drag !== undefined || object === undefined || this.#tool !== "select"
+      || !object.selectable) {
       return;
     }
     if (event.key === "Escape") {
@@ -476,8 +481,11 @@ function formatNumber(value: number): string {
   return String(Math.round(value * 1000) / 1000);
 }
 
-let lastObjectNumber = 0;
-
+/** A version 4 UUID, built by hand because crypto.randomUUID only exists on secure origins. */
 function newObjectId(): string {
-  return `object-${++lastObjectNumber}-${Math.random().toString(36).slice(2, 8)}`;
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }

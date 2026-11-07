@@ -3,8 +3,9 @@ using System.Text.Json.Serialization;
 namespace Pv.Blazor;
 
 /// <summary>
-/// A rectangle in page space: PDF user-space units, measured from the top-left corner of the unrotated crop box, with y
-/// growing downward. It stays attached to the page's content at any zoom or rotation.
+/// A rectangle on a page. By default it's in page space: PDF user-space units, measured from the top-left corner of the
+/// unrotated crop box, with y growing downward, and it stays attached to the page's content at any zoom or rotation.
+/// With <see cref="ViewerCoordinates.Display"/>, it's measured against the page as presented instead.
 /// </summary>
 public readonly record struct PageRect(double X, double Y, double Width, double Height);
 
@@ -82,7 +83,9 @@ public enum ViewerCoordinates
     /// <summary>The unrotated page, so a rectangle stays attached to the page's content at any rotation.</summary>
     [JsonStringEnumMemberName("page")] Page,
 
-    /// <summary>The page as presented after rotation, so a rectangle keeps its numbers when a page rotates.</summary>
+    /// <summary>
+    /// The page as presented after rotation, including its UserUnit, so a rectangle keeps its numbers when a page rotates.
+    /// </summary>
     [JsonStringEnumMemberName("display")] Display,
 }
 
@@ -130,6 +133,9 @@ public sealed record ViewerSelectionChange(long Sequence, ChangeOrigin Origin, s
 public sealed record DocumentLoadedArgs(int PageCount);
 
 /// <summary>
-/// A viewer failure. <paramref name="Code"/> is a stable value such as <c>invalid-pdf</c> or <c>network</c>.
+/// A viewer failure. <paramref name="Code"/> is a stable value: <c>invalid-pdf</c>, <c>network</c>,
+/// <c>password-required</c>, <c>password-incorrect</c> or <c>unknown</c> when a document couldn't open, <c>page</c> or
+/// <c>render</c> when a page failed, and <c>command</c> when a command was rejected. For a URL source, <c>network</c>
+/// also covers any other error from pdf.js, because it reports a refused connection as a generic error.
 /// </summary>
 public sealed record ViewerError(string Code, string Message);

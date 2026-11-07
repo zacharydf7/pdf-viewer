@@ -6,13 +6,15 @@ namespace Pv.Blazor.Tests;
 public class PdfViewerTests : BunitContext
 {
     private const string ModulePath = "./_content/Pv.Blazor/pv.js";
+    private readonly BunitJSModuleInterop _module;
     private readonly BunitJSModuleInterop _bridge;
 
     public PdfViewerTests()
     {
         // Strict mode fails any JavaScript call a test didn't plan for.
         JSInterop.Mode = JSRuntimeMode.Strict;
-        _bridge = JSInterop.SetupModule(ModulePath).SetupModule("attach", _ => true);
+        _module = JSInterop.SetupModule(ModulePath);
+        _bridge = _module.SetupModule("attach", _ => true);
         _bridge.SetupVoid(_ => true).SetVoidResult();
     }
 
@@ -110,6 +112,7 @@ public class PdfViewerTests : BunitContext
     public async Task RotateButton_ShouldAddQuarterTurnEachClick_WhenClickedRepeatedly()
     {
         var viewer = Render<PdfViewer>();
+        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(5));
 
         for (var i = 0; i < 5; i++)
         {
@@ -140,9 +143,85 @@ public class PdfViewerTests : BunitContext
         var viewer = Render<PdfViewer>(parameters =>
             parameters.Add(component => component.OnError, error => received = error));
 
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyError("invalid-pdf", "Bad file"));
+        await viewer.InvokeAsync(() => viewer.Instance.NotifyError("invalid-pdf", "Bad file", documentFailed: true));
 
         Assert.Equal(new ViewerError("invalid-pdf", "Bad file"), received);
+    }
+
+    [Theory]
+    [InlineData("Zoom out")]
+    [InlineData("Zoom in")]
+    [InlineData("Rotate clockwise")]
+    public async Task ToolbarButton_ShouldBeEnabledOnlyWithDocument_WhenRendered(string label)
+    {
+        var viewer = Render<PdfViewer>();
+
+        Assert.True(viewer.Find($"[aria-label='{label}']").HasAttribute("disabled"));
+        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(5));
+        Assert.False(viewer.Find($"[aria-label='{label}']").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void Toolbar_ShouldSayNoDocument_WhenNothingIsOpen()
+    {
+        var viewer = Render<PdfViewer>();
+
+        Assert.Equal("No document", viewer.Find("[role=status]").TextContent);
+    }
+
+    [Fact]
+    public async Task Toolbar_ShouldResetPosition_WhenOpeningDocumentFails()
+    {
+        var viewer = Render<PdfViewer>();
+        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(5));
+
+        await viewer.InvokeAsync(() => viewer.Instance.NotifyError("invalid-pdf", "Bad file", documentFailed: true));
+
+        Assert.Equal("No document", viewer.Find("[role=status]").TextContent);
+    }
+
+    [Fact]
+    public async Task Toolbar_ShouldKeepPosition_WhenOnlyPageFails()
+    {
+        var viewer = Render<PdfViewer>();
+        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(5));
+
+        await viewer.InvokeAsync(() => viewer.Instance.NotifyError("render", "Bad page", documentFailed: false));
+
+        Assert.Equal("Page 1 of 5", viewer.Find("[role=status]").TextContent);
+    }
+
+    [Fact]
+    public void PdfViewer_ShouldCloseDocument_WhenSourceBecomesNull()
+    {
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Source, "/a.pdf"));
+
+        viewer.Render(parameters => parameters.Add(component => component.Source, (string?)null));
+
+        Assert.Equal(["open", "close"], _bridge.Invocations.Select(call => call.Identifier));
+    }
+
+    [Fact]
+    public async Task SetRotationAsync_ShouldThrowAndKeepRotation_WhenNotQuarterTurn()
+    {
+        var viewer = Render<PdfViewer>();
+        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(5));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => viewer.Instance.SetRotationAsync(45));
+        await viewer.Find("[aria-label='Rotate clockwise']").ClickAsync(new());
+
+        Assert.Equal(90, Assert.Single(_bridge.Invocations).Arguments[0]);
+    }
+
+    [Fact]
+    public void PdfViewer_ShouldSubscribeOnlyToHandledNotifications_WhenAttaching()
+    {
+        Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.OnSelectionChanged, (ViewerSelectionChange _) => { }));
+
+        var subscriptions = Assert.Single(_module.Invocations["attach"]).Arguments[3]!;
+        Assert.Equal(false, subscriptions.GetType().GetProperty("objects")!.GetValue(subscriptions));
+        Assert.Equal(true, subscriptions.GetType().GetProperty("selection")!.GetValue(subscriptions));
     }
 
     [Fact]

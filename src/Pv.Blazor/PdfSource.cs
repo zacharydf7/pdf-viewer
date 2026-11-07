@@ -3,8 +3,8 @@ using Microsoft.AspNetCore.Components;
 namespace Pv.Blazor;
 
 /// <summary>
-/// Where a document comes from. PDF bytes never cross the Blazor circuit: the browser fetches a URL itself, using range
-/// requests when the server supports them, and reads a local file itself.
+/// Where a document comes from. Opening one sends no PDF bytes over the Blazor circuit: the browser fetches a URL itself,
+/// using range requests when the server supports them, and reads a local file itself.
 /// </summary>
 public sealed class PdfSource : IEquatable<PdfSource>
 {
@@ -41,7 +41,11 @@ public sealed class PdfSource : IEquatable<PdfSource>
     /// </summary>
     public static PdfSource FromFileInput(ElementReference fileInput) => new(fileInput);
 
-    public static implicit operator PdfSource(string url) => FromUrl(url);
+    /// <summary>
+    /// Lets a URL be used directly as a source. A null or empty URL gives no source, so a bound URL that hasn't been set
+    /// yet leaves the viewer empty.
+    /// </summary>
+    public static implicit operator PdfSource?(string? url) => string.IsNullOrEmpty(url) ? null : FromUrl(url);
 
     public bool Equals(PdfSource? other)
     {

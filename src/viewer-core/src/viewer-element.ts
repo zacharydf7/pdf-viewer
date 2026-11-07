@@ -1,5 +1,5 @@
 import type { DocumentSource, EngineDocument, EnginePage, RenderHandle, TextRender } from "./engine.js";
-import { DocumentError, openDocument, RenderCancelled } from "./engine.js";
+import { DocumentError, openDocument, RenderCanceled } from "./engine.js";
 import type { PageGeometry, Rotation } from "./geometry.js";
 import { fitScale, normalizeRotation } from "./geometry.js";
 import type { DrawDefaults, ViewerTool } from "./object-layer.js";
@@ -14,7 +14,9 @@ export interface ViewerOptions {
   initialZoom?: ZoomSetting;
   /** Leaves form fields unpainted, while other annotations still appear. Defaults to false. */
   hideFormFields?: boolean;
-  /** Whether arrow keys and Delete edit the focused object. Turn off if the application handles them. Defaults to true. */
+  /**
+   * Whether arrow keys and Delete edit the focused object. Turn off if the application handles them. Defaults to true.
+   */
   keyboardEditing?: boolean;
   /** Rounds rectangles the user creates or changes to whole page units. Defaults to false. */
   roundCoordinates?: boolean;
@@ -22,13 +24,14 @@ export interface ViewerOptions {
   wheelZoom?: boolean;
   /**
    * What object rectangles are measured against. "page" stays attached to the page's content at any rotation. "display"
-   * is the page as presented after rotation, including its UserUnit, so a rectangle keeps its numbers when a page rotates.
-   * Defaults to "page".
+   * is the page as presented after rotation, including its UserUnit, so a rectangle keeps its numbers when a page
+   * rotates. Defaults to "page".
    */
   coordinates?: "page" | "display";
   /**
    * Where an object catches the pointer. "fill" is its whole area. "border" is a band along its edges, so objects inside
-   * or behind it stay reachable, while a selected or very small object still catches the pointer everywhere. Defaults to "fill".
+   * or behind it stay reachable, while a selected or very small object still catches the pointer everywhere. Defaults
+   * to "fill".
    */
   objectHitArea?: "fill" | "border";
 }
@@ -47,7 +50,12 @@ function loadStyles(): Promise<void> {
     link.rel = "stylesheet";
     link.href = stylesUrl;
     link.onload = () => resolve();
-    link.onerror = () => reject(new Error(`Could not load ${stylesUrl}.`));
+    link.onerror = () => {
+      // Forgetting the failure lets the next document try again.
+      link.remove();
+      stylesLoaded = undefined;
+      reject(new Error(`Could not load ${stylesUrl}.`));
+    };
     document.head.append(link);
   });
   return stylesLoaded;
@@ -56,7 +64,7 @@ function loadStyles(): Promise<void> {
 /**
  * The viewer, as a framework-independent custom element.
  *
- * Its data attributes and events are the public test contract, and are always present in production. Host attributes
+ * Its data attributes and events are the public test contract, and they stay in production builds. Host attributes
  * report document state, and each .pv-page reports its own render, text and object state, so tests can wait on those
  * rather than on timers.
  */
@@ -71,10 +79,11 @@ export class PdfViewerElement extends HTMLElement {
   #resizeObserver: ResizeObserver | undefined;
   #document: EngineDocument | undefined;
   #enginePage: EnginePage | undefined;
-  #renders: RenderHandle[] = [];
+  #canvasRender: RenderHandle | undefined;
   #textRender: TextRender | undefined;
   #textReady = false;
   #openGeneration = 0;
+  #navigationGeneration = 0;
   #renderGeneration = 0;
   #pageNumber = 1;
   #zoom: ZoomSetting = "fit-width";
@@ -96,6 +105,8 @@ export class PdfViewerElement extends HTMLElement {
     this.dataset.documentState = "idle";
     this.dataset.tool = this.#tool;
     this.dataset.objectHitArea ??= "fill";
+    this.dataset.selectedObject = "";
+    this.dataset.lastChange = "0";
     this.#viewport = document.createElement("div");
     this.#viewport.className = "pv-viewport";
     this.append(this.#viewport);
@@ -108,7 +119,7 @@ export class PdfViewerElement extends HTMLElement {
   /** Applies options. Set them before opening a document, or the page repaints to apply them. */
   configure(options: ViewerOptions): void {
     if (options.initialZoom !== undefined) {
-      this.#zoom = options.initialZoom;
+      this.#zoom = normalizeZoom(options.initialZoom) ?? this.#zoom;
     }
     this.#keyboardEditing = options.keyboardEditing ?? this.#keyboardEditing;
     this.#roundCoordinates = options.roundCoordinates ?? this.#roundCoordinates;
@@ -129,25 +140,28 @@ export class PdfViewerElement extends HTMLElement {
     });
   }
 
-  get pageCount(): number {
-    return this.#document?.pageCount ?? 0;
-  }
-
+  /** The displayed page, or 0 when no document is open. */
   get currentPage(): number {
-    return this.#pageNumber;
+    return this.#document === undefined ? 0 : this.#pageNumber;
   }
 
   get selectedObjectId(): string | null {
     return this.#store.selectedId;
   }
 
-  /** Opens a document, replacing any open one. A later call makes an earlier call's result count for nothing. */
+  /** Opens a document, replacing any open one. An open() or close() before it finishes discards this document. */
   async open(source: DocumentSource, initialPage = 1): Promise<void> {
     const generation = ++this.#openGeneration;
-    await this.#closeDocument();
+    // Set first, so a test waiting for "ready" can't be satisfied by the previous document.
     this.#setDocumentState("loading");
     let opened: EngineDocument;
     try {
+      // Inside the try, so if the previous document fails to close, this open ends in the error state instead of staying
+      // "loading".
+      await this.#closeDocument();
+      if (generation !== this.#openGeneration) {
+        return;
+      }
       await loadStyles();
       opened = await openDocument(source);
     } catch (error) {
@@ -163,16 +177,23 @@ export class PdfViewerElement extends HTMLElement {
     this.#document = opened;
     this.dataset.pageCount = String(opened.pageCount);
     this.#pageRotations.clear();
-    this.#store.replaceAll([], "api");
+    const previousPage = this.#pageNumber;
+    const firstPage = clampPage(initialPage, opened.pageCount);
+    this.#pageNumber = firstPage;
+    this.dataset.currentPage = String(firstPage);
     this.#setDocumentState("ready");
+    const navigation = this.#navigationGeneration;
     this.#emit("pv-document-loaded", { pageCount: opened.pageCount });
-    await this.#showPage(clampPage(initialPage, opened.pageCount));
+    // A listener may already have navigated or closed the document, and that has to win.
+    if (navigation === this.#navigationGeneration) {
+      await this.#showPage(firstPage, previousPage);
+    }
   }
 
   async close(): Promise<void> {
     this.#openGeneration++;
-    await this.#closeDocument();
     this.#setDocumentState("idle");
+    await this.#closeDocument();
   }
 
   async goToPage(pageNumber: number): Promise<void> {
@@ -181,9 +202,13 @@ export class PdfViewerElement extends HTMLElement {
     }
   }
 
+  /** Sets the zoom. A number that isn't finite is ignored, since there's no page size it could produce. */
   async setZoom(zoom: ZoomSetting): Promise<void> {
-    this.#zoom = typeof zoom === "number" ? Math.min(Math.max(zoom, minimumZoom), maximumZoom) : zoom;
-    await this.#renderCurrentPage();
+    const normalized = normalizeZoom(zoom);
+    if (normalized !== undefined) {
+      this.#zoom = normalized;
+      await this.#renderCurrentPage();
+    }
   }
 
   /** Sets the viewing rotation, which is added to any rotation the page already has. */
@@ -193,8 +218,8 @@ export class PdfViewerElement extends HTMLElement {
   }
 
   /**
-   * Sets how one page is finally displayed, replacing both its own rotation and the viewing rotation. Pass null to go
-   * back to its normal rotation. Unlike adding to a rotation, the same call always gives the same result.
+   * Sets the rotation one page ends up with, replacing both its own rotation and the viewing rotation. Pass null to
+   * return to its own rotation plus the viewing rotation. The result doesn't depend on any rotation the page already has.
    */
   async setPageRotation(pageNumber: number, degrees: number | null): Promise<void> {
     if (degrees === null) {
@@ -251,17 +276,26 @@ export class PdfViewerElement extends HTMLElement {
     return this.#store.all();
   }
 
-  async #showPage(pageNumber: number): Promise<void> {
+  /** Navigation has its own counter because zooming or resizing while a page loads doesn't count as navigating away. */
+  async #showPage(pageNumber: number, previousPage = this.#pageNumber): Promise<void> {
     const document = this.#document!;
-    const generation = ++this.#renderGeneration;
-    this.#cancelRenders();
-    const page = await document.getPage(pageNumber);
-    if (generation !== this.#renderGeneration || document !== this.#document) {
+    const generation = ++this.#navigationGeneration;
+    let page: EnginePage;
+    try {
+      page = await document.getPage(pageNumber);
+    } catch (error) {
+      if (generation === this.#navigationGeneration && document === this.#document) {
+        await this.#onPageFailed(error);
+      }
       return;
     }
+    if (generation !== this.#navigationGeneration || document !== this.#document) {
+      return;
+    }
+    this.#cancelCanvasRender();
     this.#disposePage();
     this.#enginePage = page;
-    const changed = this.#pageNumber !== pageNumber;
+    const changed = previousPage !== pageNumber;
     this.#pageNumber = pageNumber;
     this.dataset.currentPage = String(pageNumber);
     this.#createPageElement(pageNumber, page);
@@ -273,12 +307,26 @@ export class PdfViewerElement extends HTMLElement {
     await rendered;
   }
 
+  /** A document that can't show its first page has failed and closes. Otherwise the page already on screen stays there. */
+  async #onPageFailed(error: unknown): Promise<void> {
+    if (this.#page !== undefined) {
+      this.#emitError("page", error);
+      return;
+    }
+    const generation = this.#openGeneration;
+    await this.#closeDocument();
+    if (generation === this.#openGeneration) {
+      this.#fail(error);
+    }
+  }
+
   #createPageElement(pageNumber: number, page: EnginePage): void {
     this.#page = document.createElement("div");
     this.#page.className = "pv-page";
     this.#page.dataset.pageNumber = String(pageNumber);
     this.#viewport!.replaceChildren(this.#page);
-    this.#layer = new ObjectLayer(this.#page, pageNumber, this.#objectGeometry(page, this.#viewRotation(page)), this.#store);
+    const geometry = this.#objectGeometry(page, this.#viewRotation(page));
+    this.#layer = new ObjectLayer(this.#page, pageNumber, geometry, this.#store);
     this.#applyTool();
   }
 
@@ -298,7 +346,7 @@ export class PdfViewerElement extends HTMLElement {
     }
   }
 
-  /** The rotation to add to the page's own, which a final rotation set for this page takes into account. */
+  /** The rotation to add to the page's own: the viewing rotation, or whatever reaches the setPageRotation value. */
   #viewRotation(page: EnginePage): Rotation {
     const final = this.#pageRotations.get(this.#pageNumber);
     return final === undefined ? this.#rotation : normalizeRotation(final - page.geometry(0).rotation);
@@ -316,16 +364,19 @@ export class PdfViewerElement extends HTMLElement {
       return;
     }
     const generation = ++this.#renderGeneration;
-    this.#cancelRenders();
+    this.#cancelCanvasRender();
 
     const viewRotation = this.#viewRotation(page);
     const scale = this.#resolveScale(page, viewRotation);
     if (scale === undefined) {
-      // The viewer is hidden, so there's no size to fit yet. The resize observer renders it once it appears. Observing
-      // again forgets the last size, because hiding and showing within one frame would otherwise look like no change.
+      // There's no size to fit yet, usually because the viewer is hidden, so the resize observer renders it once there
+      // is. Observing again forgets the last size, because hiding and showing within one frame would otherwise look like
+      // no change. That only works at no size at all: anything else would count as a change and fire again every frame.
       element.dataset.pageState = "pending";
-      this.#resizeObserver!.unobserve(this.#viewport!);
-      this.#resizeObserver!.observe(this.#viewport!);
+      if (this.#viewport!.clientWidth === 0 && this.#viewport!.clientHeight === 0) {
+        this.#resizeObserver!.unobserve(this.#viewport!);
+        this.#resizeObserver!.observe(this.#viewport!);
+      }
       return;
     }
     const geometry = this.#objectGeometry(page, viewRotation);
@@ -345,16 +396,25 @@ export class PdfViewerElement extends HTMLElement {
     canvas.setAttribute("role", "presentation");
     const canvasOptions = { maximumPixels: maximumCanvasPixels, hideFormFields: this.#hideFormFields };
     const canvasRender = page.renderCanvas(canvas, scale, viewRotation, canvasOptions);
-    this.#renders = [canvasRender];
+    this.#canvasRender = canvasRender;
     this.#renderText(page, element, scale, viewRotation);
 
-    await this.#settle(canvasRender, generation, () => {
+    try {
+      await canvasRender.done;
+    } catch (error) {
+      if (!(error instanceof RenderCanceled) && generation === this.#renderGeneration) {
+        element.dataset.pageState = "error";
+        this.#emitError("render", error);
+      }
+      return;
+    }
+    if (generation === this.#renderGeneration) {
       element.querySelector(":scope > .pv-canvas")?.remove();
       element.prepend(canvas);
       element.dataset.renderScale = String(scale);
       element.dataset.pageState = "rendered";
       this.#emit("pv-page-rendered", { page: this.#pageNumber, scale });
-    }, () => { element.dataset.pageState = "error"; });
+    }
   }
 
   /**
@@ -379,35 +439,20 @@ export class PdfViewerElement extends HTMLElement {
         element.dataset.textState = "ready";
       }
     }, (error: unknown) => {
-      if (render === this.#textRender && !(error instanceof RenderCancelled)) {
+      if (render === this.#textRender && !(error instanceof RenderCanceled)) {
         element.dataset.textState = "error";
-        this.#emit("pv-error", { code: "render", message: errorMessage(error) });
+        this.#emitError("render", error);
       }
     });
   }
 
-  async #settle(render: RenderHandle, generation: number, onDone: () => void, onError: () => void): Promise<void> {
-    try {
-      await render.done;
-    } catch (error) {
-      if (!(error instanceof RenderCancelled) && generation === this.#renderGeneration) {
-        onError();
-        this.#emit("pv-error", { code: "render", message: errorMessage(error) });
-      }
-      return;
-    }
-    if (generation === this.#renderGeneration) {
-      onDone();
-    }
-  }
-
-  /** Returns undefined if the page should fit a viewer that has no size, which happens while it's hidden. */
+  /** Returns undefined if the page should fit a size the viewer doesn't have yet, which usually means it's hidden. */
   #resolveScale(page: EnginePage, viewRotation: Rotation): number | undefined {
     if (typeof this.#zoom === "number") {
       return this.#zoom;
     }
     const { clientWidth: width, clientHeight: height } = this.#viewport!;
-    if (width === 0 || height === 0) {
+    if (width === 0 || (this.#zoom === "fit-page" && height === 0)) {
       return undefined;
     }
     return fitScale(this.#zoom, page.cssSize(1, viewRotation), { width, height });
@@ -453,11 +498,9 @@ export class PdfViewerElement extends HTMLElement {
     this.#emit("pv-selection-change", change);
   }
 
-  #cancelRenders(): void {
-    for (const render of this.#renders) {
-      render.cancel();
-    }
-    this.#renders = [];
+  #cancelCanvasRender(): void {
+    this.#canvasRender?.cancel();
+    this.#canvasRender = undefined;
   }
 
   #disposePage(): void {
@@ -473,25 +516,37 @@ export class PdfViewerElement extends HTMLElement {
   }
 
   async #closeDocument(): Promise<void> {
+    this.#navigationGeneration++;
     this.#renderGeneration++;
-    this.#cancelRenders();
+    this.#cancelCanvasRender();
     this.#disposePage();
+    if (this.#store.all().length > 0) {
+      this.#store.replaceAll([], "api");
+    }
     const closing = this.#document;
     this.#document = undefined;
     delete this.dataset.pageCount;
     delete this.dataset.currentPage;
+    delete this.dataset.zoom;
     await closing?.destroy();
   }
 
   #setDocumentState(state: "idle" | "loading" | "ready" | "error"): void {
     this.dataset.documentState = state;
+    if (state !== "error") {
+      delete this.dataset.errorCode;
+    }
   }
 
   #fail(error: unknown): void {
     const code = error instanceof DocumentError ? error.code : "unknown";
     this.#setDocumentState("error");
     this.dataset.errorCode = code;
-    this.#emit("pv-error", { code, message: errorMessage(error) });
+    this.#emit("pv-error", { code, message: errorMessage(error), documentFailed: true });
+  }
+
+  #emitError(code: "render" | "page", error: unknown): void {
+    this.#emit("pv-error", { code, message: errorMessage(error), documentFailed: false });
   }
 
   #emit(type: string, detail: unknown): void {
@@ -499,10 +554,18 @@ export class PdfViewerElement extends HTMLElement {
   }
 }
 
+/** Keeps a zoom within limits, or returns undefined for a number that isn't finite. */
+function normalizeZoom(zoom: ZoomSetting): ZoomSetting | undefined {
+  if (typeof zoom !== "number") {
+    return zoom;
+  }
+  return Number.isFinite(zoom) ? Math.min(Math.max(zoom, minimumZoom), maximumZoom) : undefined;
+}
+
 function clampPage(page: number, pageCount: number): number {
   return Math.min(Math.max(Math.trunc(page), 1), pageCount);
 }
 
-function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

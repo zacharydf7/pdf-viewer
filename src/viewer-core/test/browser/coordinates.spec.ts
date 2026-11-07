@@ -73,8 +73,15 @@ test.describe("zoom", () => {
     await viewer.setZoom(1);
     await expect(viewer.pageElement()).toHaveAttribute("data-render-scale", "1");
 
-    await viewer.setZoom(2);
+    const during = await viewer.host.evaluate(async (element: PdfViewerElement) => {
+      const pageElement = element.querySelector<HTMLElement>(".pv-page")!;
+      const rendering = element.setZoom(2);
+      const snapshot = [pageElement.dataset.pageState, pageElement.dataset.renderScale];
+      await rendering;
+      return snapshot;
+    });
 
+    expect(during).toEqual(["rendering", "1"]);
     await expect(viewer.pageElement()).toHaveAttribute("data-render-scale", "2");
     const canvas = viewer.pageElement().locator("canvas");
     const canvasWidth = await canvas.evaluate((element: HTMLCanvasElement) => element.width);

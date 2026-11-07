@@ -5,12 +5,21 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NewPageObject, PageObject } from "../../src/object-store.js";
 import type { Rect } from "../../src/geometry.js";
-import type { PdfViewerElement, ZoomSetting } from "../../src/viewer-element.js";
+import type { PdfViewerElement, ViewerOptions, ZoomSetting } from "../../src/viewer-element.js";
 
 const fixturesDirectory = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "tests", "fixtures");
 
 export const manifest =
   JSON.parse(readFileSync(join(fixturesDirectory, "manifest.json"), "utf8")) as Record<string, Rect[]>;
+
+/** Opens a fixture in a new viewer with the given options applied first. */
+export async function openViewer(page: Page, options: ViewerOptions, fixture = "letter"): Promise<Viewer> {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await viewer.host.evaluate((element: PdfViewerElement, value) => element.configure(value), options);
+  await viewer.open(fixture);
+  return viewer;
+}
 
 export function fixtureUrl(name: string): string {
   return `/tests/fixtures/${name}.pdf`;

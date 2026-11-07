@@ -1,15 +1,7 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import type { PdfViewerElement, ViewerOptions } from "../../src/viewer-element.js";
-import { expectRectsClose, manifest, Viewer } from "./support.js";
-
-async function openViewer(page: Page, options: ViewerOptions, fixture = "letter"): Promise<Viewer> {
-  const viewer = new Viewer(page);
-  await viewer.goto();
-  await viewer.host.evaluate((element: PdfViewerElement, value) => element.configure(value), options);
-  await viewer.open(fixture);
-  return viewer;
-}
+import type { PdfViewerElement } from "../../src/viewer-element.js";
+import { expectRectsClose, manifest, openViewer, Viewer } from "./support.js";
 
 const outer = { x: 100, y: 100, width: 300, height: 300 };
 const inner = { x: 200, y: 200, width: 100, height: 100 };
@@ -198,7 +190,8 @@ test.describe("display coordinates", () => {
   });
 
   test("drawRect_ShouldReportScreenPosition_WhenPageIsRotated", async ({ page }) => {
-    const viewer = await openViewer(page, { coordinates: "display", initialZoom: 1, roundCoordinates: true }, "rotate-90");
+    const options = { coordinates: "display", initialZoom: 1, roundCoordinates: true } as const;
+    const viewer = await openViewer(page, options, "rotate-90");
     await viewer.setTool("draw-rect");
     const box = (await viewer.pageElement().boundingBox())!;
 

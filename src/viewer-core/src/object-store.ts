@@ -9,7 +9,10 @@ export interface ObjectStyle {
   borderWidth?: string;
 }
 
-/** An app-defined object on a page. Its rectangle is in page space, as described in geometry.ts. */
+/**
+ * An app-defined object on a page. Its rectangle is in the viewer's coordinates, which are page space by default, as
+ * described in geometry.ts.
+ */
 export interface PageObject {
   id: string;
   page: number;
@@ -58,10 +61,6 @@ export class ObjectStore {
 
   get selectedId(): string | null {
     return this.#selectedId;
-  }
-
-  get sequence(): number {
-    return this.#sequence;
   }
 
   get(id: string): PageObject | undefined {

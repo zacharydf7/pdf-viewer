@@ -122,6 +122,22 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     }
 
     [Fact]
+    public async Task OnSelectionChanged_ShouldReportSelectionAndDeselection_WhenUserClicks()
+    {
+        await OpenAsync();
+        await TestId("add-object").ClickAsync();
+        await Expect(TestId("last-change")).ToHaveTextAsync("Added Api code-1");
+
+        await _viewer.Object("code-1").ClickAsync();
+        await Expect(TestId("selected-object")).ToHaveTextAsync("code-1");
+
+        // The page's top-right corner is empty and on screen. In this fit-width layout, the bottom of the page isn't.
+        var box = (await _viewer.PageElement().BoundingBoxAsync())!;
+        await _viewer.Page.Mouse.ClickAsync(box.X + box.Width - 20, box.Y + 20);
+        await Expect(TestId("selected-object")).ToHaveTextAsync("none");
+    }
+
+    [Fact]
     public async Task Object_ShouldHaveAccessibleRoleAndName_WhenAddedFromDotNet()
     {
         await OpenAsync();
@@ -301,11 +317,22 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         var id = (await _viewer.Objects.GetAttributeAsync("data-object-id"))!;
         var rect = await _viewer.PageRectAsync(id);
         Assert.All([rect.X, rect.Y, rect.Width, rect.Height], value => Assert.Equal(Math.Round(value), value));
+        await Expect(_viewer.Host).ToHaveAttributeAsync("data-object-hit-area", "border");
 
         await ActivateSelectToolAsync();
         await _viewer.Object(id).FocusAsync();
         await _viewer.Page.Keyboard.PressAsync("Delete");
         await Expect(_viewer.Objects).ToHaveCountAsync(1);
+    }
+
+    [Fact]
+    public async Task HeadlessOptions_ShouldMeasureAsDisplayed_WhenPageHasItsOwnRotation()
+    {
+        await _viewer.Page.GotoAsync("/?doc=documents/rotate-90.pdf&headless=true");
+        await _viewer.WaitForPageAsync();
+
+        await Expect(_viewer.PageElement()).ToHaveAttributeAsync("data-page-width", "792");
+        await Expect(_viewer.PageElement()).ToHaveAttributeAsync("data-page-height", "612");
     }
 
     [Fact]
@@ -380,7 +407,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     }
 
     [Fact]
-    public async Task Viewer_ShouldBeRemovedCleanly_WhenPageIsReloaded()
+    public async Task Viewer_ShouldWorkAgainWithoutErrors_WhenPageIsReloaded()
     {
         await OpenAsync();
 
