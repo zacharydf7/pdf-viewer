@@ -1,0 +1,29 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}
+
+.sample {
+  display: flex;
+  height: 100vh;
+}
+
+.sample-panel {
+  flex: 0 0 260px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.sample-panel h1 {
+  font-size: 1.1rem;
+}
+
+.sample-panel h2 {
+  font-size: 0.95rem;
+}
+
+.sample-viewer {
+  flex: 1 1 auto;
+  min-width: 0;
+}

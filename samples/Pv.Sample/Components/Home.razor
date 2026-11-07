@@ -1,0 +1,155 @@
+@page "/"
+
+<div class="sample">
+    <aside class="sample-panel">
+        <h1>PDF viewer sample</h1>
+
+        <label>
+            Open a local file
+            <input type="file" accept="application/pdf" data-testid="file-input" @ref="_fileInput"
+                   @onchange="OpenSelectedFile" />
+        </label>
+
+        <div>
+            <button type="button" data-testid="tool-select" @onclick="() => _viewer!.SetToolAsync(ViewerTool.Select)">
+                Select
+            </button>
+            <button type="button" data-testid="tool-draw" @onclick="DrawHeading">Draw heading</button>
+            <button type="button" data-testid="add-object" @onclick="AddObject">Add from code</button>
+            <button type="button" data-testid="rotate-page" @onclick="RotateCurrentPage">Rotate page to 180</button>
+            <button type="button" data-testid="read-bytes" @onclick="ReadDocumentBytes">Read document bytes</button>
+        </div>
+
+        @if (_pendingDialog is not null)
+        {
+            <div role="dialog" aria-label="Keep this region?" data-testid="confirm-dialog">
+                <p>Keep this region?</p>
+                <button type="button" data-testid="dialog-save" @onclick="() => _pendingDialog.SetResult(true)">
+                    Save
+                </button>
+                <button type="button" data-testid="dialog-cancel" @onclick="() => _pendingDialog.SetResult(false)">
+                    Cancel
+                </button>
+            </div>
+        }
+
+        <h2>Objects</h2>
+        <ul data-testid="object-list">
+            @foreach (var viewerObject in _objects.Values)
+            {
+                <li data-listed-object="@viewerObject.Id">@viewerObject.Id on page @viewerObject.Page</li>
+            }
+        </ul>
+
+        <h2>Status</h2>
+        <dl>
+            <dt>Last change</dt>
+            <dd data-testid="last-change">@_lastChange</dd>
+            <dt>Last tag</dt>
+            <dd data-testid="last-tag">@_lastTag</dd>
+            <dt>Last error</dt>
+            <dd data-testid="last-error">@_lastError</dd>
+            <dt>Documents loaded</dt>
+            <dd data-testid="load-count">@_loadCount</dd>
+            <dt>Document bytes</dt>
+            <dd data-testid="document-bytes">@_documentBytes</dd>
+        </dl>
+    </aside>
+
+    <main class="sample-viewer">
+        @* The headless query option shows the settings an application with its own controls would use. *@
+        <PdfViewer @ref="_viewer" Source="_source" InitialPage="Page ?? 1" ShowToolbar="!Headless"
+                   InitialZoom="Headless ? ViewerZoomMode.FitPage : ViewerZoomMode.FitWidth"
+                   HideFormFields="Headless" KeyboardEditing="!Headless" RoundCoordinates="Headless"
+                   OnDocumentLoaded="HandleDocumentLoaded" OnObjectChanged="HandleObjectChanged"
+                   OnError="error => _lastError = error.Code" />
+    </main>
+</div>
+
+@code {
+    private PdfViewer? _viewer;
+    private ElementReference _fileInput;
+    private PdfSource? _source;
+    private TaskCompletionSource<bool>? _pendingDialog;
+    private readonly Dictionary<string, ViewerObject> _objects = [];
+    private string _lastChange = "";
+    private string _lastTag = "";
+    private string _lastError = "";
+    private int _loadCount;
+    private long _documentBytes;
+    private int _nextObject = 1;
+
+    [SupplyParameterFromQuery] public string? Doc { get; set; }
+
+    [SupplyParameterFromQuery] public int? Page { get; set; }
+
+    [SupplyParameterFromQuery] public bool Headless { get; set; }
+
+    /// <summary>
+    /// Shows a dialog after each drawing and waits for it inside the change handler, then keeps or removes the object.
+    /// </summary>
+    [SupplyParameterFromQuery] public bool ConfirmDraw { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        _source = Doc is null ? null : PdfSource.FromUrl($"/{Doc}");
+    }
+
+    private void OpenSelectedFile() => _source = PdfSource.FromFileInput(_fileInput);
+
+    private Task DrawHeading() => _viewer!.SetToolAsync(ViewerTool.DrawRectangle, new ViewerDrawDefaults
+    {
+        Tag = "heading",
+        Label = "Heading region",
+    });
+
+    private async Task AddObject()
+    {
+        var id = $"code-{_nextObject++}";
+        var rect = new PageRect(50, 50, 150, 80);
+        await _viewer!.AddObjectAsync(new ViewerObject(id, _viewer.CurrentPage, rect) { Label = $"Region {id}" });
+    }
+
+    private Task RotateCurrentPage() => _viewer!.SetPageRotationAsync(_viewer.CurrentPage, 180);
+
+    private async Task ReadDocumentBytes()
+    {
+        using var stream = new MemoryStream();
+        await _viewer!.CopyDocumentToAsync(stream);
+        _documentBytes = stream.Length;
+    }
+
+    private void HandleDocumentLoaded()
+    {
+        _objects.Clear();
+        _loadCount++;
+    }
+
+    private async Task HandleObjectChanged(ViewerObjectChange change)
+    {
+        _lastChange = $"{change.Kind} {change.Origin} {change.Object?.Id}";
+        if (change.Object is null)
+        {
+            return;
+        }
+        _lastTag = change.Object.Tag ?? "";
+        if (change.Kind == ObjectChangeKind.Removed)
+        {
+            _objects.Remove(change.Object.Id);
+            return;
+        }
+        _objects[change.Object.Id] = change.Object;
+
+        if (ConfirmDraw && change is { Kind: ObjectChangeKind.Added, Origin: ChangeOrigin.User })
+        {
+            _pendingDialog = new TaskCompletionSource<bool>();
+            StateHasChanged();
+            var keep = await _pendingDialog.Task;
+            _pendingDialog = null;
+            if (!keep)
+            {
+                await _viewer!.RemoveObjectAsync(change.Object.Id);
+            }
+        }
+    }
+}

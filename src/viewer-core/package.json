@@ -1,0 +1,24 @@
+{
+  "name": "viewer-core",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "fixtures": "node ../../tests/fixtures/generate.mjs",
+    "test": "vitest run",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.5.438"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "24.10.1",
+    "esbuild": "0.27.2",
+    "typescript": "5.9.3",
+    "vitest": "4.0.16"
+  }
+}

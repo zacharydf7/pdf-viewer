@@ -1,0 +1,204 @@
+.pv-viewer {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--pv-viewer-background, #525659);
+}
+
+/* The stable gutter stops a scrollbar from changing the available width, which would refit the page in a loop. */
+.pv-viewport {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+/* Automatic margins center the page, and unlike align-items they keep all of it reachable when it overflows. */
+.pv-page {
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  position: relative;
+  flex: none;
+  margin: auto;
+  overflow: hidden;
+  background: #fff;
+}
+
+.pv-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Text layer, laid out by pdf.js. The rules it depends on are repeated here so the stock viewer CSS isn't needed. */
+.pv-page .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  text-align: initial;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.pv-page .textLayer[data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.pv-page .textLayer[data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.pv-page .textLayer[data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.pv-page .textLayer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+.pv-page .textLayer > :not(.markedContent),
+.pv-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pv-page .textLayer ::selection {
+  background: rgb(0 0 255 / 0.25);
+  color: transparent;
+}
+
+/* Objects. The layer lets pointers through to the text, and only objects and handles catch them. */
+.pv-object-layer,
+.pv-objects,
+.pv-handles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pv-object-layer {
+  z-index: 1;
+}
+
+.pv-object-layer[data-tool="draw-rect"] {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.pv-object,
+.pv-draft {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.pv-object {
+  border: var(--pv-object-border-width, 2px) solid var(--pv-object-color, #1565c0);
+  background: var(--pv-object-fill, transparent);
+  pointer-events: auto;
+  cursor: move;
+}
+
+.pv-object[data-locked="true"] {
+  cursor: default;
+}
+
+.pv-object[data-selectable="false"],
+.pv-object-layer[data-tool="draw-rect"] .pv-object,
+.pv-object-layer[data-tool="none"] .pv-object {
+  pointer-events: none;
+}
+
+.pv-object[aria-selected="true"] {
+  outline: 2px dashed var(--pv-object-color, #1565c0);
+  outline-offset: 2px;
+}
+
+.pv-object:focus-visible {
+  outline: 3px solid CanvasText;
+  outline-offset: 2px;
+}
+
+.pv-draft {
+  border: 2px dashed #1565c0;
+}
+
+/* The target is 24 by 24 CSS pixels, which meets WCAG 2.5.8, and only its center is painted. */
+.pv-handle {
+  position: absolute;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  pointer-events: auto;
+}
+
+.pv-handle::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border: 2px solid #1565c0;
+  background: #fff;
+}
+
+.pv-handle[data-handle="nw"],
+.pv-handle[data-handle="se"] {
+  cursor: nwse-resize;
+}
+
+.pv-handle[data-handle="ne"],
+.pv-handle[data-handle="sw"] {
+  cursor: nesw-resize;
+}
+
+.pv-handle[data-handle="n"],
+.pv-handle[data-handle="s"] {
+  cursor: ns-resize;
+}
+
+.pv-handle[data-handle="e"],
+.pv-handle[data-handle="w"] {
+  cursor: ew-resize;
+}
+
+/* Blazor toolbar */
+.pv-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pv-root > .pv-viewer {
+  flex: 1 1 auto;
+}
+
+.pv-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+}

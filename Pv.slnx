@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Pv.Blazor/Pv.Blazor.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Pv.Sample/Pv.Sample.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Pv.Blazor.Tests/Pv.Blazor.Tests.csproj" />
+    <Project Path="tests/Pv.EndToEnd/Pv.EndToEnd.csproj" />
+  </Folder>
+</Solution>

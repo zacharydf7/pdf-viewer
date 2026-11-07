@@ -1,0 +1,150 @@
+import { expect, test } from "@playwright/test";
+import type { PdfViewerElement } from "../../src/viewer-element.js";
+import { fixtureUrl, Viewer } from "./support.js";
+
+test("open_ShouldUseRealWorkerAndReportPageCount_WhenGivenValidDocument", async ({ page }) => {
+  const viewer = new Viewer(page);
+  viewer.failOnFakeWorker();
+  await viewer.goto();
+  const events = await viewer.recordEvents("pv-document-loaded");
+
+  await viewer.open("letter");
+
+  await expect(viewer.host).toHaveAttribute("data-page-count", "3");
+  expect(await events()).toEqual([{ pageCount: 3 }]);
+});
+
+test("open_ShouldShowInitialPage_WhenGiven", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+
+  await viewer.open("letter", 2);
+
+  await expect(viewer.host).toHaveAttribute("data-current-page", "2");
+  await expect(viewer.pageElement(2).locator(".textLayer")).toContainText("Page 2 sample text");
+});
+
+test("open_ShouldUseRangeRequests_WhenServerSupportsThem", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  const statuses: number[] = [];
+  page.on("response", (response) => {
+    if (response.url().endsWith("range-large.pdf")) {
+      statuses.push(response.status());
+    }
+  });
+
+  await viewer.open("range-large");
+
+  expect(statuses).toContain(206);
+});
+
+test("open_ShouldReportInvalidPdf_WhenGivenNonPdfData", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  const events = await viewer.recordEvents("pv-error");
+
+  await viewer.host.evaluate((element: PdfViewerElement) => {
+    void element.open({ kind: "data", data: new TextEncoder().encode("this is not a pdf") });
+  });
+
+  await expect(viewer.host).toHaveAttribute("data-document-state", "error");
+  await expect(viewer.host).toHaveAttribute("data-error-code", "invalid-pdf");
+  expect(await events()).toHaveLength(1);
+});
+
+test("open_ShouldReportNetworkError_WhenDocumentIsMissing", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+
+  await viewer.host.evaluate((element: PdfViewerElement) => void element.open({ kind: "url", url: "/missing.pdf" }));
+
+  await expect(viewer.host).toHaveAttribute("data-document-state", "error");
+  await expect(viewer.host).toHaveAttribute("data-error-code", "network");
+});
+
+test("open_ShouldKeepOnlyLatestDocument_WhenCalledRapidly", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  const events = await viewer.recordEvents("pv-document-loaded");
+
+  await viewer.host.evaluate(async (element: PdfViewerElement, urls) => {
+    await Promise.all(urls.map((url) => element.open({ kind: "url", url })));
+  }, [fixtureUrl("a4"), fixtureUrl("rotate-90"), fixtureUrl("mixed-sizes"), fixtureUrl("letter")]);
+
+  await expect(viewer.host).toHaveAttribute("data-page-count", "3");
+  await expect(viewer.pageElement(1)).toHaveAttribute("data-page-width", "612");
+  await viewer.waitForPage();
+  expect(await events()).toEqual([{ pageCount: 3 }]);
+});
+
+test("open_ShouldStartAtFirstPageWithNoObjects_WhenReplacingDocumentWithShorterOne", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await viewer.open("letter", 3);
+  await viewer.addObject({ id: "a", page: 3, rect: { x: 1, y: 1, width: 5, height: 5 } });
+
+  await viewer.open("a4");
+
+  await expect(viewer.host).toHaveAttribute("data-current-page", "1");
+  expect(await viewer.getObjects()).toEqual([]);
+});
+
+test("goToPage_ShouldClampAndReportChange_WhenGivenPageBeyondEnd", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await viewer.open("letter");
+  const events = await viewer.recordEvents("pv-page-change");
+
+  await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(99));
+  await viewer.waitForPage(3);
+
+  expect(await events()).toEqual([{ page: 3 }]);
+});
+
+test("removal_ShouldReturnToIdle_WhenElementLeavesDocument", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await viewer.open("letter");
+
+  // A removed element can't be found by a locator, so wait from inside the page. Teardown includes stopping the worker.
+  await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    element.remove();
+    while (element.dataset.documentState !== "idle") {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  });
+
+  expect(await page.locator(".pv-page").count()).toBe(0);
+});
+
+test("move_ShouldKeepDocumentOpen_WhenElementIsReinsertedImmediately", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await viewer.open("letter");
+
+  await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    const parent = element.parentElement!;
+    parent.removeChild(element);
+    parent.appendChild(element);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  await expect(viewer.host).toHaveAttribute("data-document-state", "ready");
+});
+
+test("multipleViewers_ShouldEachShowOwnDocument_WhenOnSamePage", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await page.evaluate(async ([first, second]) => {
+    const hostA = document.querySelector("pdf-viewer") as PdfViewerElement;
+    const hostB = document.createElement("pdf-viewer") as PdfViewerElement;
+    hostB.id = "second";
+    document.body.append(hostB);
+    await Promise.all([hostA.open({ kind: "url", url: first! }), hostB.open({ kind: "url", url: second! })]);
+  }, [fixtureUrl("letter"), fixtureUrl("a4")]);
+
+  await expect(page.locator("#viewer")).toHaveAttribute("data-page-count", "3");
+  await expect(page.locator("#second")).toHaveAttribute("data-page-count", "1");
+  await expect(page.locator("#second .pv-page")).toHaveAttribute("data-page-width", "595");
+});

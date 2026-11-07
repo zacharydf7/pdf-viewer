@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Viewer test harness</title>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    pdf-viewer { height: 100%; }
+  </style>
+  <script type="module">
+    import "/dist/pv.js";
+    window.viewerReady = true;
+  </script>
+</head>
+<body>
+  <pdf-viewer id="viewer"></pdf-viewer>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# Private research: describes another application, never commit
+research_notes/
+reports/
+
+# Claude files
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+
+# Node
+node_modules/
+dist/
+
+# Generated viewer assets, built from src/viewer-core
+src/Pv.Blazor/wwwroot/
+
+# Playwright
+playwright-report/
+test-results/

@@ -1,0 +1,21 @@
+@implements IAsyncDisposable
+
+<div class="pv-root" @attributes="AdditionalAttributes">
+    @if (ShowToolbar)
+    {
+        <div class="pv-toolbar" role="toolbar" aria-label="PDF viewer controls">
+            <button type="button" aria-label="Previous page" disabled="@(_currentPage <= 1)"
+                    @onclick="() => GoToPageAsync(_currentPage - 1)">&#8249;</button>
+            <span class="pv-page-status" role="status">Page @_currentPage of @_pageCount</span>
+            <button type="button" aria-label="Next page" disabled="@(_currentPage >= _pageCount)"
+                    @onclick="() => GoToPageAsync(_currentPage + 1)">&#8250;</button>
+            <button type="button" aria-label="Zoom out" @onclick="() => ZoomByAsync(1 / ZoomStep)">&#8722;</button>
+            <button type="button" aria-label="Zoom in" @onclick="() => ZoomByAsync(ZoomStep)">+</button>
+            <button type="button" @onclick="() => SetZoomAsync(ViewerZoomMode.FitWidth)">Fit width</button>
+            <button type="button" @onclick="() => SetZoomAsync(ViewerZoomMode.FitPage)">Fit page</button>
+            <button type="button" aria-label="Rotate clockwise" @onclick="RotateClockwiseAsync">&#8635;</button>
+        </div>
+    }
+    @* Blazor renders only this empty element. Everything inside it belongs to the viewer's JavaScript. *@
+    <pdf-viewer @ref="_host"></pdf-viewer>
+</div>

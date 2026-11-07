@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <ViewerCoreDirectory>$(MSBuildThisFileDirectory)..\viewer-core\</ViewerCoreDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SupportedPlatform Include="browser" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.0" />
+    <ViewerCoreInput Include="$(ViewerCoreDirectory)src\**\*;$(ViewerCoreDirectory)scripts\**\*;$(ViewerCoreDirectory)package-lock.json" />
+  </ItemGroup>
+
+  <Target Name="RestoreViewerCore" Condition="!Exists('$(ViewerCoreDirectory)node_modules')">
+    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(ViewerCoreDirectory)" />
+  </Target>
+
+  <Target Name="BuildViewerCore" DependsOnTargets="RestoreViewerCore" Inputs="@(ViewerCoreInput)" Outputs="wwwroot\pv.js">
+    <Exec Command="npm run --silent build" WorkingDirectory="$(ViewerCoreDirectory)" />
+  </Target>
+
+  <!-- The assets may not have existed when the project was evaluated, so they are added again after they are built. -->
+  <Target Name="IncludeViewerCoreAssets" DependsOnTargets="BuildViewerCore" BeforeTargets="ResolveProjectStaticWebAssets;BeforeBuild">
+    <ItemGroup>
+      <Content Remove="wwwroot\**" />
+      <Content Include="wwwroot\**" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+
+</Project>
