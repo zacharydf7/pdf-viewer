@@ -33,6 +33,8 @@ export class ObjectLayer {
   readonly #objectsElement: HTMLElement;
   readonly #handlesElement: HTMLElement;
   readonly #objectElements = new Map<string, HTMLElement>();
+  /** What each element last displayed, so unchanged objects cost nothing to bring up to date. */
+  readonly #appliedStates = new Map<string, string>();
   readonly #page: HTMLElement;
   readonly #pageNumber: number;
   readonly #store: ObjectStore;
@@ -42,6 +44,7 @@ export class ObjectLayer {
   #drawDefaults: DrawDefaults = {};
   #keyboardEditing = true;
   #roundCoordinates = false;
+  #shownSelection: string | null = null;
   #drag: Drag | undefined;
   #draft: HTMLElement | undefined;
 
@@ -69,6 +72,9 @@ export class ObjectLayer {
     page.addEventListener("pointercancel", () => this.#cancelDrag(), { signal });
     this.element.addEventListener("keydown", (event) => this.#onKeyDown(event), { signal });
     this.element.addEventListener("focusin", (event) => this.#onFocusIn(event), { signal });
+    // On the window, because a gesture doesn't always leave focus inside the viewer, and in the capture phase so that
+    // canceling a gesture comes before anything a focused object or the application does with the same key.
+    window.addEventListener("keydown", (event) => this.#onWindowKeyDown(event), { signal, capture: true });
     this.sync();
   }
 
@@ -76,6 +82,7 @@ export class ObjectLayer {
     const { width, height, rotation } = this.#geometry;
     if (geometry.width !== width || geometry.height !== height || geometry.rotation !== rotation) {
       this.#geometry = geometry;
+      this.#appliedStates.clear();
       this.sync();
     }
   }
@@ -114,32 +121,80 @@ export class ObjectLayer {
     const ids = new Set(objects.map((object) => object.id));
     for (const [id, element] of this.#objectElements) {
       if (!ids.has(id)) {
-        element.remove();
-        this.#objectElements.delete(id);
+        this.#removeElement(id, element);
       }
     }
     for (const object of objects) {
-      let element = this.#objectElements.get(object.id);
-      if (element === undefined) {
-        element = document.createElement("div");
-        element.className = "pv-object";
-        element.setAttribute("role", "option");
-        element.dataset.objectId = object.id;
-        this.#objectElements.set(object.id, element);
-        this.#objectsElement.append(element);
-      }
-      this.#applyObject(element, object);
+      this.#applyObject(object);
     }
-
-    if (objects.length > 0) {
-      this.#objectsElement.setAttribute("role", "listbox");
-    } else {
-      this.#objectsElement.removeAttribute("role");
-    }
+    this.#syncListboxRole(objects.length);
+    this.#shownSelection = this.#store.selectedId;
     this.#syncHandles();
   }
 
-  #applyObject(element: HTMLElement, object: PageObject): void {
+  /** Brings one object up to date after a change, without visiting the others. */
+  syncObject(id: string): void {
+    const object = this.#store.get(id);
+    if (object?.page === this.#pageNumber) {
+      this.#applyObject(object);
+    } else {
+      const element = this.#objectElements.get(id);
+      if (element !== undefined) {
+        this.#removeElement(id, element);
+      }
+    }
+    const count = this.#objectElements.size;
+    this.#page.dataset.objectCount = String(count);
+    this.#syncListboxRole(count);
+    if (this.#store.selectedId === id) {
+      this.#syncHandles();
+    }
+  }
+
+  /** Updates only the objects whose selected state changed, which matters on pages with hundreds of objects. */
+  syncSelection(): void {
+    for (const id of [this.#shownSelection, this.#store.selectedId]) {
+      const object = id === null ? undefined : this.#store.get(id);
+      if (object?.page === this.#pageNumber) {
+        this.#applyObject(object);
+      }
+    }
+    this.#shownSelection = this.#store.selectedId;
+    this.#syncHandles();
+  }
+
+  #removeElement(id: string, element: HTMLElement): void {
+    element.remove();
+    this.#objectElements.delete(id);
+    this.#appliedStates.delete(id);
+  }
+
+  #syncListboxRole(count: number): void {
+    const hasRole = this.#objectsElement.hasAttribute("role");
+    if (count > 0 && !hasRole) {
+      this.#objectsElement.setAttribute("role", "listbox");
+    } else if (count === 0 && hasRole) {
+      this.#objectsElement.removeAttribute("role");
+    }
+  }
+
+  #applyObject(object: PageObject): void {
+    const selected = this.#store.selectedId === object.id;
+    const state = JSON.stringify([object, selected, this.#tool]);
+    if (this.#appliedStates.get(object.id) === state) {
+      return;
+    }
+    this.#appliedStates.set(object.id, state);
+
+    let element = this.#objectElements.get(object.id);
+    if (element === undefined) {
+      element = document.createElement("div");
+      element.className = "pv-object";
+      element.setAttribute("role", "option");
+      element.dataset.objectId = object.id;
+      this.#objectElements.set(object.id, element);
+      this.#objectsElement.append(element);
+    }
     this.#position(element, object.rect);
     const { x, y, width, height } = object.rect;
     element.dataset.pageRect = [x, y, width, height].map(formatNumber).join(",");
@@ -152,7 +207,7 @@ export class ObjectLayer {
     element.dataset.locked = String(object.locked);
     element.dataset.selectable = String(object.selectable);
     element.setAttribute("aria-label", object.label ?? `Object ${object.id}`);
-    element.setAttribute("aria-selected", String(this.#store.selectedId === object.id));
+    element.setAttribute("aria-selected", String(selected));
     element.tabIndex = object.selectable && this.#tool !== "none" ? 0 : -1;
     element.style.setProperty("--pv-object-color", object.style?.color ?? "");
     element.style.setProperty("--pv-object-fill", object.style?.fill ?? "");
@@ -223,6 +278,7 @@ export class ObjectLayer {
       const name = handle.dataset.handle as ResizeHandle;
       const start = this.#pointerToDisplay(event);
       this.#beginDrag(event, { kind: "resize", id, handle: name, start, original: rect, rect, moved: false });
+      this.#objectElements.get(id)?.focus({ preventScroll: true });
       return;
     }
 
@@ -241,6 +297,8 @@ export class ObjectLayer {
       const start = this.#pointerToDisplay(event);
       this.#beginDrag(event, { kind: "move", id, start, original: rect, rect, moved: false });
     }
+    // Starting a gesture prevents the browser's default, including moving focus, so arrow keys need this after a click.
+    objectElement.focus({ preventScroll: true });
   }
 
   #beginDrag(event: PointerEvent, drag: Drag): void {
@@ -270,6 +328,7 @@ export class ObjectLayer {
       return;
     }
     drag.moved = true;
+    this.#appliedStates.delete(drag.id);
     drag.rect = drag.kind === "move"
       ? moveRect(this.#geometry, drag.original, deltaX, deltaY)
       : this.#resizeByPointer(drag.original, drag.handle, deltaX, deltaY);
@@ -322,7 +381,7 @@ export class ObjectLayer {
   #commitRect(id: string, original: Rect, rect: Rect): void {
     const final = this.#finalRect(rect);
     if (rectsEqual(final, original)) {
-      this.sync();
+      this.syncObject(id);
     } else {
       this.#store.update(id, { rect: final }, "user");
     }
@@ -338,7 +397,15 @@ export class ObjectLayer {
     this.#draft?.remove();
     this.#draft = undefined;
     if (drag !== undefined && drag.kind !== "draw") {
-      this.sync();
+      this.syncObject(drag.id);
+    }
+  }
+
+  #onWindowKeyDown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && this.#drag !== undefined) {
+      this.#cancelDrag();
+      event.preventDefault();
+      event.stopPropagation();
     }
   }
 

@@ -75,6 +75,31 @@ public enum ViewerZoomMode
     [JsonStringEnumMemberName("fit-page")] FitPage,
 }
 
+/// <summary>What object rectangles are measured against.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ViewerCoordinates>))]
+public enum ViewerCoordinates
+{
+    /// <summary>The unrotated page, so a rectangle stays attached to the page's content at any rotation.</summary>
+    [JsonStringEnumMemberName("page")] Page,
+
+    /// <summary>The page as presented after rotation, so a rectangle keeps its numbers when a page rotates.</summary>
+    [JsonStringEnumMemberName("display")] Display,
+}
+
+/// <summary>Where an object catches the pointer.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ViewerObjectHitArea>))]
+public enum ViewerObjectHitArea
+{
+    /// <summary>The object's whole area.</summary>
+    [JsonStringEnumMemberName("fill")] Fill,
+
+    /// <summary>
+    /// A band along its edges, so objects inside or behind it stay reachable. A selected or very small object still
+    /// catches the pointer everywhere.
+    /// </summary>
+    [JsonStringEnumMemberName("border")] Border,
+}
+
 /// <summary>Whether a change came from the person using the viewer or from the application's code.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<ChangeOrigin>))]
 public enum ChangeOrigin

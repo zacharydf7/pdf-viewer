@@ -1,6 +1,7 @@
 /** The only module that talks to pdf.js. It loads the library on demand, and no pdf.js type leaves this file. */
 
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
+import type { TextContent } from "pdfjs-dist/types/src/display/api.js";
 import type { PageGeometry, Rotation } from "./geometry.js";
 import { normalizeRotation } from "./geometry.js";
 
@@ -27,6 +28,11 @@ export interface RenderHandle {
   cancel(): void;
 }
 
+export interface TextRender extends RenderHandle {
+  /** Moves a finished layer to a new zoom or rotation, which is far cheaper than laying out the text again. */
+  update(scale: number, viewRotation: Rotation): void;
+}
+
 export class RenderCancelled extends Error {}
 
 export interface CanvasOptions {
@@ -43,7 +49,8 @@ export interface EnginePage {
   /** CSS scale that text layer styles multiply by, which includes the page's UserUnit. */
   totalScale(scale: number): number;
   renderCanvas(canvas: HTMLCanvasElement, scale: number, viewRotation: Rotation, options: CanvasOptions): RenderHandle;
-  renderText(container: HTMLElement, scale: number, viewRotation: Rotation): RenderHandle;
+  /** Lays out selectable text. Extraction can take seconds on some documents, so its result is cached per page. */
+  renderText(container: HTMLElement, scale: number, viewRotation: Rotation): TextRender;
   release(): void;
 }
 
@@ -55,6 +62,7 @@ export interface EngineDocument {
   destroy(): Promise<void>;
 }
 
+const textCacheSize = 16;
 const assetsUrl = new URL("./pdfjs/", import.meta.url).href;
 let pdfJsPromise: Promise<PdfJs> | undefined;
 
@@ -92,17 +100,31 @@ export async function openDocument(source: DocumentSource): Promise<EngineDocume
     throw toDocumentError(pdfJs, error);
   }
 
+  const textCache = new Map<number, Promise<TextContent>>();
   return {
     pageCount: document.numPages,
-    getPage: async (pageNumber) => wrapPage(pdfJs, await document.getPage(pageNumber)),
+    getPage: async (pageNumber) => wrapPage(pdfJs, await document.getPage(pageNumber), textCache),
     getData: () => document.getData(),
     destroy: () => task.destroy(),
   };
 }
 
-function wrapPage(pdfJs: PdfJs, page: PDFPageProxy): EnginePage {
+/** Returns a page's text from the cache, keeping the most recently used pages. */
+function cachedTextContent(page: PDFPageProxy, cache: Map<number, Promise<TextContent>>): Promise<TextContent> {
+  const content = cache.get(page.pageNumber) ?? page.getTextContent({ disableNormalization: true });
+  cache.delete(page.pageNumber);
+  cache.set(page.pageNumber, content);
+  if (cache.size > textCacheSize) {
+    cache.delete(cache.keys().next().value!);
+  }
+  return content;
+}
+
+function wrapPage(pdfJs: PdfJs, page: PDFPageProxy, textCache: Map<number, Promise<TextContent>>): EnginePage {
   const viewport = (scale: number, viewRotation: Rotation) =>
     page.getViewport({ scale, rotation: normalizeRotation(page.rotate + viewRotation) });
+  // The layer is laid out unrotated, and pv.css rotates it from the attribute pdf.js sets.
+  const textViewport = (scale: number, viewRotation: Rotation) => viewport(scale, viewRotation).clone({ dontFlip: true });
 
   return {
     geometry(viewRotation) {
@@ -135,20 +157,26 @@ function wrapPage(pdfJs: PdfJs, page: PDFPageProxy): EnginePage {
       };
     },
     renderText(container, scale, viewRotation) {
-      const layer = new pdfJs.TextLayer({
-        textContentSource: page.streamTextContent({ disableNormalization: true }),
-        container,
-        // The layer is laid out unrotated, and pv.css rotates it from the attribute pdf.js sets.
-        viewport: viewport(scale, viewRotation).clone({ dontFlip: true }),
-      });
+      let layer: InstanceType<PdfJs["TextLayer"]> | undefined;
       let canceled = false;
+      const render = async () => {
+        const textContentSource = await cachedTextContent(page, textCache);
+        if (canceled) {
+          throw new RenderCancelled();
+        }
+        layer = new pdfJs.TextLayer({ textContentSource, container, viewport: textViewport(scale, viewRotation) });
+        await layer.render();
+      };
       return {
-        done: layer.render().catch((error: unknown) => {
+        done: render().catch((error: unknown) => {
           throw canceled ? new RenderCancelled() : error;
         }),
         cancel() {
           canceled = true;
-          layer.cancel();
+          layer?.cancel();
+        },
+        update(newScale, newRotation) {
+          layer?.update({ viewport: textViewport(newScale, newRotation) });
         },
       };
     },

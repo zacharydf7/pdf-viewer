@@ -153,16 +153,16 @@ export function resizeRect(geometry: PageGeometry, rect: Rect, handle: ResizeHan
   return displayRectToPage(geometry, { x: left, y: top, width: right - left, height: bottom - top });
 }
 
-/** Rounds a page rectangle to whole units without letting it extend past the page. */
+/**
+ * Rounds a page rectangle's edges to whole units without letting it extend past the page. Its size comes from the rounded
+ * edges, because rounding the size separately could leave the far edge off by one.
+ */
 export function roundRect(geometry: PageGeometry, rect: Rect): Rect {
   const x = clamp(Math.round(rect.x), 0, geometry.width);
   const y = clamp(Math.round(rect.y), 0, geometry.height);
-  return {
-    x,
-    y,
-    width: Math.min(Math.round(rect.width), Math.floor(geometry.width - x)),
-    height: Math.min(Math.round(rect.height), Math.floor(geometry.height - y)),
-  };
+  const right = Math.min(Math.round(rect.x + rect.width), Math.floor(geometry.width));
+  const bottom = Math.min(Math.round(rect.y + rect.height), Math.floor(geometry.height));
+  return { x, y, width: Math.max(right - x, 0), height: Math.max(bottom - y, 0) };
 }
 
 /** Scale that fits a page into the available space, where pageSize is the displayed size at scale 1. */

@@ -1,6 +1,6 @@
-import type { DocumentSource, EngineDocument, EnginePage, RenderHandle } from "./engine.js";
+import type { DocumentSource, EngineDocument, EnginePage, RenderHandle, TextRender } from "./engine.js";
 import { DocumentError, openDocument, RenderCancelled } from "./engine.js";
-import type { Rotation } from "./geometry.js";
+import type { PageGeometry, Rotation } from "./geometry.js";
 import { fitScale, normalizeRotation } from "./geometry.js";
 import type { DrawDefaults, ViewerTool } from "./object-layer.js";
 import { ObjectLayer } from "./object-layer.js";
@@ -20,6 +20,17 @@ export interface ViewerOptions {
   roundCoordinates?: boolean;
   /** Whether Ctrl+wheel and pinch gestures zoom. Defaults to true. */
   wheelZoom?: boolean;
+  /**
+   * What object rectangles are measured against. "page" stays attached to the page's content at any rotation. "display"
+   * is the page as presented after rotation, including its UserUnit, so a rectangle keeps its numbers when a page rotates.
+   * Defaults to "page".
+   */
+  coordinates?: "page" | "display";
+  /**
+   * Where an object catches the pointer. "fill" is its whole area. "border" is a band along its edges, so objects inside
+   * or behind it stay reachable, while a selected or very small object still catches the pointer everywhere. Defaults to "fill".
+   */
+  objectHitArea?: "fill" | "border";
 }
 
 /** How fast Ctrl+wheel zooms, as a power of the wheel distance. A wheel notch of 100 changes zoom by about 22%. */
@@ -61,6 +72,8 @@ export class PdfViewerElement extends HTMLElement {
   #document: EngineDocument | undefined;
   #enginePage: EnginePage | undefined;
   #renders: RenderHandle[] = [];
+  #textRender: TextRender | undefined;
+  #textReady = false;
   #openGeneration = 0;
   #renderGeneration = 0;
   #pageNumber = 1;
@@ -72,6 +85,7 @@ export class PdfViewerElement extends HTMLElement {
   #keyboardEditing = true;
   #roundCoordinates = false;
   #wheelZoom = true;
+  #coordinates: "page" | "display" = "page";
   readonly #pageRotations = new Map<number, Rotation>();
 
   connectedCallback(): void {
@@ -81,6 +95,7 @@ export class PdfViewerElement extends HTMLElement {
     this.classList.add("pv-viewer");
     this.dataset.documentState = "idle";
     this.dataset.tool = this.#tool;
+    this.dataset.objectHitArea ??= "fill";
     this.#viewport = document.createElement("div");
     this.#viewport.className = "pv-viewport";
     this.append(this.#viewport);
@@ -99,6 +114,8 @@ export class PdfViewerElement extends HTMLElement {
     this.#roundCoordinates = options.roundCoordinates ?? this.#roundCoordinates;
     this.#wheelZoom = options.wheelZoom ?? this.#wheelZoom;
     this.#hideFormFields = options.hideFormFields ?? this.#hideFormFields;
+    this.#coordinates = options.coordinates ?? this.#coordinates;
+    this.dataset.objectHitArea = options.objectHitArea ?? this.dataset.objectHitArea ?? "fill";
     this.#applyTool();
     void this.#renderCurrentPage();
   }
@@ -248,10 +265,12 @@ export class PdfViewerElement extends HTMLElement {
     this.#pageNumber = pageNumber;
     this.dataset.currentPage = String(pageNumber);
     this.#createPageElement(pageNumber, page);
-    await this.#renderCurrentPage();
+    const rendered = this.#renderCurrentPage();
+    // Listeners hear about the page before it finishes painting, so they can replace its objects without waiting.
     if (changed) {
       this.#emit("pv-page-change", { page: pageNumber });
     }
+    await rendered;
   }
 
   #createPageElement(pageNumber: number, page: EnginePage): void {
@@ -259,8 +278,15 @@ export class PdfViewerElement extends HTMLElement {
     this.#page.className = "pv-page";
     this.#page.dataset.pageNumber = String(pageNumber);
     this.#viewport!.replaceChildren(this.#page);
-    this.#layer = new ObjectLayer(this.#page, pageNumber, page.geometry(this.#viewRotation(page)), this.#store);
+    this.#layer = new ObjectLayer(this.#page, pageNumber, this.#objectGeometry(page, this.#viewRotation(page)), this.#store);
     this.#applyTool();
+  }
+
+  /** The space object rectangles are measured in. Display space is just a page that isn't rotated any further. */
+  #objectGeometry(page: EnginePage, viewRotation: Rotation): PageGeometry {
+    return this.#coordinates === "display"
+      ? { ...page.cssSize(1, viewRotation), rotation: 0 }
+      : page.geometry(viewRotation);
   }
 
   #applyTool(): void {
@@ -302,14 +328,13 @@ export class PdfViewerElement extends HTMLElement {
       this.#resizeObserver!.observe(this.#viewport!);
       return;
     }
-    const geometry = page.geometry(viewRotation);
+    const geometry = this.#objectGeometry(page, viewRotation);
     const size = page.cssSize(scale, viewRotation);
     element.style.width = `${size.width}px`;
     element.style.height = `${size.height}px`;
     element.style.setProperty("--total-scale-factor", String(page.totalScale(scale)));
     element.dataset.pageState = "rendering";
-    element.dataset.textState = "pending";
-    element.dataset.rotation = String(geometry.rotation);
+    element.dataset.rotation = String(page.geometry(viewRotation).rotation);
     element.dataset.pageWidth = String(geometry.width);
     element.dataset.pageHeight = String(geometry.height);
     this.dataset.zoom = String(scale);
@@ -320,26 +345,45 @@ export class PdfViewerElement extends HTMLElement {
     canvas.setAttribute("role", "presentation");
     const canvasOptions = { maximumPixels: maximumCanvasPixels, hideFormFields: this.#hideFormFields };
     const canvasRender = page.renderCanvas(canvas, scale, viewRotation, canvasOptions);
+    this.#renders = [canvasRender];
+    this.#renderText(page, element, scale, viewRotation);
 
-    const textLayer = document.createElement("div");
-    textLayer.className = "textLayer";
-    const textRender = page.renderText(textLayer, scale, viewRotation);
-    this.#renders = [canvasRender, textRender];
+    await this.#settle(canvasRender, generation, () => {
+      element.querySelector(":scope > .pv-canvas")?.remove();
+      element.prepend(canvas);
+      element.dataset.renderScale = String(scale);
+      element.dataset.pageState = "rendered";
+      this.#emit("pv-page-rendered", { page: this.#pageNumber, scale });
+    }, () => { element.dataset.pageState = "error"; });
+  }
 
-    await Promise.all([
-      this.#settle(canvasRender, generation, () => {
-        element.querySelector(":scope > .pv-canvas")?.remove();
-        element.prepend(canvas);
-        element.dataset.renderScale = String(scale);
-        element.dataset.pageState = "rendered";
-        this.#emit("pv-page-rendered", { page: this.#pageNumber, scale });
-      }, () => { element.dataset.pageState = "error"; }),
-      this.#settle(textRender, generation, () => {
-        element.querySelector(":scope > .textLayer")?.remove();
-        this.#layer!.element.before(textLayer);
+  /**
+   * Keeps text off the rendering path, because extraction can take seconds on some documents, and nothing else should
+   * wait for it. A finished layer just moves to the new zoom or rotation.
+   */
+  #renderText(page: EnginePage, element: HTMLElement, scale: number, viewRotation: Rotation): void {
+    if (this.#textReady) {
+      this.#textRender!.update(scale, viewRotation);
+      return;
+    }
+    this.#textRender?.cancel();
+    element.dataset.textState = "pending";
+    const container = document.createElement("div");
+    container.className = "textLayer";
+    const render = page.renderText(container, scale, viewRotation);
+    this.#textRender = render;
+    render.done.then(() => {
+      if (render === this.#textRender) {
+        this.#layer!.element.before(container);
+        this.#textReady = true;
         element.dataset.textState = "ready";
-      }, () => { element.dataset.textState = "error"; }),
-    ]);
+      }
+    }, (error: unknown) => {
+      if (render === this.#textRender && !(error instanceof RenderCancelled)) {
+        element.dataset.textState = "error";
+        this.#emit("pv-error", { code: "render", message: errorMessage(error) });
+      }
+    });
   }
 
   async #settle(render: RenderHandle, generation: number, onDone: () => void, onError: () => void): Promise<void> {
@@ -395,13 +439,17 @@ export class PdfViewerElement extends HTMLElement {
 
   #onObjectChange(change: ObjectChange): void {
     this.dataset.lastChange = String(change.sequence);
-    this.#layer?.sync();
+    if (change.kind === "replaced") {
+      this.#layer?.sync();
+    } else {
+      this.#layer?.syncObject(change.object.id);
+    }
     this.#emit("pv-object-change", change);
   }
 
   #onSelectionChange(change: SelectionChange): void {
     this.dataset.selectedObject = change.id ?? "";
-    this.#layer?.sync();
+    this.#layer?.syncSelection();
     this.#emit("pv-selection-change", change);
   }
 
@@ -413,6 +461,9 @@ export class PdfViewerElement extends HTMLElement {
   }
 
   #disposePage(): void {
+    this.#textRender?.cancel();
+    this.#textRender = undefined;
+    this.#textReady = false;
     this.#layer?.dispose();
     this.#layer = undefined;
     this.#page?.remove();

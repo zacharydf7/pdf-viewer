@@ -69,8 +69,10 @@ export class ViewerBridge {
   }
 
   #notify(method: string, ...args: unknown[]): void {
-    // Rejections only mean the circuit is gone, and the element keeps working without it.
-    this.#dotNet.invokeMethodAsync(method, ...args).catch(() => {});
+    // A lost circuit also ends up here, and the element keeps working without it, but a failing handler must stay visible.
+    this.#dotNet.invokeMethodAsync(method, ...args).catch((error: unknown) => {
+      console.warn(`The viewer's ${method} notification failed.`, error);
+    });
   }
 }
 

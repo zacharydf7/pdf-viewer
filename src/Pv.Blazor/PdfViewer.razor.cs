@@ -56,6 +56,12 @@ public partial class PdfViewer
     /// <summary>Whether Ctrl+wheel and pinch gestures zoom. Read once, at first render.</summary>
     [Parameter] public bool WheelZoom { get; set; } = true;
 
+    /// <summary>What object rectangles are measured against. Read once, at first render.</summary>
+    [Parameter] public ViewerCoordinates Coordinates { get; set; } = ViewerCoordinates.Page;
+
+    /// <summary>Where objects catch the pointer. Read once, at first render.</summary>
+    [Parameter] public ViewerObjectHitArea ObjectHitArea { get; set; } = ViewerObjectHitArea.Fill;
+
     /// <summary>Raised when the document has opened, which can be before its first page has painted.</summary>
     [Parameter] public EventCallback<DocumentLoadedArgs> OnDocumentLoaded { get; set; }
 
@@ -148,6 +154,8 @@ public partial class PdfViewer
             keyboardEditing = KeyboardEditing,
             roundCoordinates = RoundCoordinates,
             wheelZoom = WheelZoom,
+            coordinates = Coordinates,
+            objectHitArea = ObjectHitArea,
         };
         _bridge = await _module.InvokeAsync<IJSObjectReference>("attach", _host, _reference, options);
         await OpenSourceIfChangedAsync();

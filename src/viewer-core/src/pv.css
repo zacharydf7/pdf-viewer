@@ -140,6 +140,42 @@
   outline-offset: 2px;
 }
 
+/*
+  In the border hit area, the object itself ignores the pointer and a slightly larger ring catches it instead. A pseudo-element
+  counts as its object for events, and a clip-path can change where the ring catches the pointer without changing how the
+  object looks. Container queries let very small objects catch it everywhere without any per-object work on zoom.
+*/
+.pv-viewer[data-object-hit-area="border"] .pv-object {
+  container-type: size;
+  pointer-events: none;
+}
+
+.pv-viewer[data-object-hit-area="border"] .pv-object::before {
+  --band: 8px;
+  content: "";
+  position: absolute;
+  inset: calc(-4px - var(--pv-object-border-width, 2px));
+  pointer-events: auto;
+  clip-path: polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, var(--band) var(--band), var(--band) calc(100% - var(--band)),
+    calc(100% - var(--band)) calc(100% - var(--band)), calc(100% - var(--band)) var(--band), var(--band) var(--band));
+}
+
+.pv-viewer[data-object-hit-area="border"] .pv-object[aria-selected="true"]::before {
+  clip-path: none;
+}
+
+@container (max-width: 28px) or (max-height: 28px) {
+  .pv-viewer[data-object-hit-area="border"] .pv-object::before {
+    clip-path: none;
+  }
+}
+
+.pv-viewer[data-object-hit-area="border"] .pv-object[data-selectable="false"]::before,
+.pv-object-layer[data-tool="draw-rect"] .pv-object::before,
+.pv-object-layer[data-tool="none"] .pv-object::before {
+  pointer-events: none;
+}
+
 .pv-draft {
   border: 2px dashed #1565c0;
 }
