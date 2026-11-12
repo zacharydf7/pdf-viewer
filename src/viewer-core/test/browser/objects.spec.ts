@@ -251,6 +251,32 @@ test.describe("keyboard", () => {
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,201,100");
   });
 
+  test("arrowKey_ShouldMoveObjectAsDisplayed_WhenPageIsRotated", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.setRotation(90);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const before = (await viewer.object("a").boundingBox())!;
+
+    await viewer.object("a").focus();
+    await page.keyboard.press("Control+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,90,200,100");
+    const after = (await viewer.object("a").boundingBox())!;
+    expect(after.x - before.x).toBeCloseTo(10, 0);
+    expect(after.y - before.y).toBeCloseTo(0, 0);
+  });
+
+  test("escapeKey_ShouldClearSelection_WhenObjectIsFocused", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+
+    await viewer.object("a").focus();
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+    await page.keyboard.press("Escape");
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "");
+  });
+
   test("deleteKey_ShouldRemoveFocusedObject_WhenNotLocked", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });

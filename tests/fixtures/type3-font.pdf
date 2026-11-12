@@ -1,0 +1,46 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 1 /Kids [4 0 R] >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type3 /FontBBox [0 0 750 750] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /A 6 0 R /B 7 0 R >> /Encoding << /Type /Encoding /Differences [65 /A /B] >> /FirstChar 65 /LastChar 66 /Widths [1000 1000] /Resources << >> >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 45 >>
+stream
+1 0 0 rg BT /F1 40 Tf 100 612 Td (ABBA) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Length 38 >>
+stream
+1000 0 0 0 750 750 d1 0 0 750 750 re f
+endstream
+endobj
+7 0 obj
+<< /Length 47 >>
+stream
+1000 0 0 0 750 750 d1 0 0 m 750 0 l 375 750 l f
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000377 00000 n 
+0000000503 00000 n 
+0000000598 00000 n 
+0000000686 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+783
+%%EOF

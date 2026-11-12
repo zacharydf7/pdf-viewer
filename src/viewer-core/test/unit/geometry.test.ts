@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PageGeometry, Rect, Rotation } from "../../src/geometry.js";
 import { displayRectToPage, displaySize, displayToPage, fitScale, fractionToPage, moveRect, normalizeRotation,
-  pageRectToDisplay, pageRectToPercent, pageToDisplay, rectFromCorners, resizeRect, roundRect }
+  pageRectToDisplay, pageRectToPercent, pageToDisplay, rectFromCorners, resizeRect, resizeRectBy, roundRect }
   from "../../src/geometry.js";
 
 const rotations: readonly Rotation[] = [0, 90, 180, 270];
@@ -106,6 +106,20 @@ describe("resizeRect", () => {
     // Displayed at 90 degrees, the rectangle spans x 550 to 650 and y 100 to 300. Its displayed right edge is the
     // page rectangle's top edge, so dragging that edge further right grows the rectangle toward y 0.
     expect(resizeRect(page(90), rect, "e", { x: 700, y: 0 })).toEqual({ x: 100, y: 100, width: 200, height: 150 });
+  });
+});
+
+describe("resizeRectBy", () => {
+  it("resizeRectBy_ShouldMoveHandleByDistance_WhenGivenCornerHandle", () => {
+    expect(resizeRectBy(page(0), rect, "nw", 10, 20)).toEqual({ x: 110, y: 170, width: 190, height: 80 });
+  });
+
+  it("resizeRectBy_ShouldIgnoreDistanceAcrossHandle_WhenGivenEdgeHandle", () => {
+    expect(resizeRectBy(page(0), rect, "s", 999, 25)).toEqual({ ...rect, height: 125 });
+  });
+
+  it("resizeRectBy_ShouldStopAtMinimumSize_WhenDistancePassesOppositeEdge", () => {
+    expect(resizeRectBy(page(0), rect, "w", 999, 0, 5)).toEqual({ ...rect, x: 295, width: 5 });
   });
 });
 

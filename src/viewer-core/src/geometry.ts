@@ -157,6 +157,18 @@ export function resizeRect(geometry: PageGeometry, rect: Rect, handle: ResizeHan
 }
 
 /**
+ * Moves one handle of a page rectangle by a displayed distance from where the handle is now, with the same limits as
+ * resizeRect. Passing how far a pointer traveled, not where it is, means grabbing a handle off-center causes no jump.
+ */
+export function resizeRectBy(geometry: PageGeometry, rect: Rect, handle: ResizeHandle, deltaX: number, deltaY: number,
+  minimumSize = 1): Rect {
+  const display = pageRectToDisplay(geometry, rect);
+  const x = handle.includes("w") ? display.x : display.x + display.width;
+  const y = handle.includes("n") ? display.y : display.y + display.height;
+  return resizeRect(geometry, rect, handle, { x: x + deltaX, y: y + deltaY }, minimumSize);
+}
+
+/**
  * Rounds a page rectangle's edges to whole units without letting it extend past the page. Its size comes from the rounded
  * edges, because rounding the size separately could leave the far edge off by one.
  */

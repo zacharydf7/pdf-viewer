@@ -352,5 +352,51 @@
       "width": 200,
       "height": 100
     }
+  ],
+  "dense-text": [
+    {
+      "x": 100,
+      "y": 150,
+      "width": 200,
+      "height": 100
+    },
+    {
+      "x": 100,
+      "y": 150,
+      "width": 200,
+      "height": 100
+    }
+  ],
+  "type3-font": [
+    {
+      "x": 100,
+      "y": 150,
+      "width": 150,
+      "height": 30
+    }
+  ],
+  "cjk-cmap": [
+    {
+      "x": 100,
+      "y": 150,
+      "width": 200,
+      "height": 100
+    }
+  ],
+  "encrypted-owner": [
+    {
+      "x": 100,
+      "y": 150,
+      "width": 200,
+      "height": 100
+    }
+  ],
+  "encrypted-user": [
+    {
+      "x": 100,
+      "y": 150,
+      "width": 200,
+      "height": 100
+    }
   ]
 }

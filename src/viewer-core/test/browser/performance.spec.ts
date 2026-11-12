@@ -212,3 +212,21 @@ test("goToPage_ShouldShowPageWithinBudget_WhenPagesHave5000ObjectsEach", async (
   await expect(viewer.pageElement(2)).toHaveAttribute("data-object-count", "5000");
   expectWithinBudget(time, 250);
 });
+
+test("goToPage_ShouldShowTextWithinBudget_WhenPageHas3000TextRuns", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 }, "dense-text");
+
+  const { time, textState } = await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    const start = performance.now();
+    await element.goToPage(2);
+    const pageElement = element.querySelector<HTMLElement>(".pv-page")!;
+    while (pageElement.dataset.textState === "pending") {
+      await window.perf!.nextFrame();
+    }
+    return { time: performance.now() - start, textState: pageElement.dataset.textState };
+  });
+
+  expect(textState).toBe("ready");
+  expect(await viewer.pageElement(2).locator(".textLayer span").count()).toBeGreaterThanOrEqual(3_000);
+  expectWithinBudget(time, 600);
+});

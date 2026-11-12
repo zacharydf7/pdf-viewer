@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { PdfViewerElement } from "../../src/viewer-element.js";
-import { fixtureUrl, Viewer } from "./support.js";
+import { expectRectsClose, fixtureUrl, manifest, openViewer, Viewer } from "./support.js";
 
 test("open_ShouldUseRealWorkerAndReportPageCount_WhenGivenValidDocument", async ({ page }) => {
   const viewer = new Viewer(page);
@@ -63,6 +63,24 @@ test("open_ShouldReportNetworkError_WhenDocumentIsMissing", async ({ page }) => 
   await expect(viewer.host).toHaveAttribute("data-error-code", "network");
 });
 
+test("open_ShouldReportPasswordRequired_WhenDocumentHasUserPassword", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+
+  await viewer.host.evaluate((element: PdfViewerElement, url) => void element.open({ kind: "url", url }),
+    fixtureUrl("encrypted-user"));
+
+  await expect(viewer.host).toHaveAttribute("data-document-state", "error");
+  await expect(viewer.host).toHaveAttribute("data-error-code", "password-required");
+});
+
+test("open_ShouldShowDecryptedPage_WhenDocumentHasOnlyOwnerPassword", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 }, "encrypted-owner");
+
+  await expect(viewer.pageElement().locator(".textLayer")).toContainText("Page 1 sample text");
+  expectRectsClose(await viewer.inkBounds(), manifest["encrypted-owner"]![0]!, 1);
+});
+
 test("open_ShouldKeepOnlyLatestDocument_WhenCalledRapidly", async ({ page }) => {
   const viewer = new Viewer(page);
   await viewer.goto();
@@ -116,6 +134,39 @@ test("removal_ShouldReturnToIdle_WhenElementLeavesDocument", async ({ page }) =>
   });
 
   expect(await page.locator(".pv-page").count()).toBe(0);
+});
+
+test("close_ShouldLeaveNoWorkerOrPage_WhenDocumentsWereOpenedRepeatedly", async ({ page }) => {
+  await page.addInitScript(() => {
+    const state = window as unknown as { liveWorkers: number };
+    state.liveWorkers = 0;
+    window.Worker = class extends Worker {
+      constructor(...parameters: ConstructorParameters<typeof Worker>) {
+        super(...parameters);
+        state.liveWorkers++;
+      }
+
+      override terminate(): void {
+        state.liveWorkers--;
+        super.terminate();
+      }
+    };
+  });
+  const liveWorkers = () => page.evaluate(() => (window as unknown as { liveWorkers: number }).liveWorkers);
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await viewer.open("letter");
+  expect(await liveWorkers()).toBe(1);
+
+  await viewer.host.evaluate(async (element: PdfViewerElement, url) => {
+    for (let cycle = 0; cycle < 10; cycle++) {
+      await element.open({ kind: "url", url });
+    }
+    await element.close();
+  }, fixtureUrl("letter"));
+
+  expect(await liveWorkers()).toBe(0);
+  await expect(page.locator(".pv-page, pdf-viewer canvas")).toHaveCount(0);
 });
 
 test("move_ShouldKeepDocumentOpen_WhenElementIsReinsertedImmediately", async ({ page }) => {

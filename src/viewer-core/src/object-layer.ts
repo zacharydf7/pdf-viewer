@@ -1,6 +1,7 @@
 import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
-import { clampPoint, displaySize, fractionToPage, moveRect, pageRectToDisplay, pageRectToPercent, rectFromCorners,
-  resizeRect, roundRect } from "./geometry.js";
+import { clampPoint, displaySize, fractionToPage, moveRect, pageRectToPercent, rectFromCorners, resizeRectBy,
+  roundRect } from "./geometry.js";
+import { rectAfterArrowKey } from "./keyboard-editing.js";
 import type { ObjectStore, ObjectStyle, PageObject } from "./object-store.js";
 
 export type ViewerTool = "select" | "draw-rect" | "none";
@@ -8,8 +9,6 @@ export type ViewerTool = "select" | "draw-rect" | "none";
 const handles: readonly ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const minimumDrawSize = 2;
 const minimumResizeSize = 1;
-const keyboardStep = 1;
-const keyboardLargeStep = 10;
 
 type Drag =
   | { kind: "draw"; start: Point; current: Point }
@@ -335,17 +334,9 @@ export class ObjectLayer {
     this.#appliedStates.delete(drag.id);
     drag.rect = drag.kind === "move"
       ? moveRect(this.#geometry, drag.original, deltaX, deltaY)
-      : this.#resizeByPointer(drag.original, drag.handle, deltaX, deltaY);
+      : resizeRectBy(this.#geometry, drag.original, drag.handle, deltaX, deltaY, minimumResizeSize);
     this.#position(this.#objectElements.get(drag.id)!, drag.rect);
     this.#positionHandles(drag.rect);
-  }
-
-  /** Moves the handle by the pointer's travel rather than to the pointer, so grabbing it off-center causes no jump. */
-  #resizeByPointer(rect: Rect, handle: ResizeHandle, deltaX: number, deltaY: number): Rect {
-    const display = pageRectToDisplay(this.#geometry, rect);
-    const x = handle.includes("w") ? display.x : display.x + display.width;
-    const y = handle.includes("n") ? display.y : display.y + display.height;
-    return resizeRect(this.#geometry, rect, handle, { x: x + deltaX, y: y + deltaY }, minimumResizeSize);
   }
 
   #onPointerUp(event: PointerEvent): void {
@@ -436,23 +427,13 @@ export class ObjectLayer {
     } else if (event.key === "Delete") {
       this.#store.remove(object.id, "user");
     } else if (event.key.startsWith("Arrow")) {
-      this.#commitRect(object.id, object.rect, this.#rectAfterArrowKey(object.rect, event));
+      const rect = rectAfterArrowKey(this.#geometry, object.rect, event, minimumResizeSize);
+      this.#commitRect(object.id, object.rect, rect);
     } else {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
-  }
-
-  /** Arrow keys move the object as displayed, and Shift with an arrow key moves its bottom-right corner instead. */
-  #rectAfterArrowKey(rect: Rect, event: KeyboardEvent): Rect {
-    const step = event.ctrlKey ? keyboardLargeStep : keyboardStep;
-    const deltaX = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-    const deltaY = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-    if (!event.shiftKey) {
-      return moveRect(this.#geometry, rect, deltaX, deltaY);
-    }
-    return this.#resizeByPointer(rect, "se", deltaX, deltaY);
   }
 
   #pointerToPage(event: PointerEvent): Point {
