@@ -186,16 +186,25 @@ test.describe("wheel zoom", () => {
     expect(Math.abs(after.y + after.height * fractionY - point.y)).toBeLessThanOrEqual(2);
   });
 
-  test("controlWheel_ShouldDoNothing_WhenWheelZoomIsOff", async ({ page }) => {
+  test("controlWheel_ShouldBeLeftToPage_WhenWheelZoomIsOff", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1, wheelZoom: false });
     const point = await viewer.pagePoint(0.5, 0.25);
     await page.mouse.move(point.x, point.y);
+    // Cancel the Ctrl+wheel at the document, after the viewer has seen it. Otherwise Firefox zooms the whole page and
+    // keeps that zoom for the site, which scales every pointer position in later tests.
+    await page.evaluate(() => {
+      document.addEventListener("wheel", (event) => {
+        (window as unknown as { wheelWasCanceled: boolean }).wheelWasCanceled = event.defaultPrevented;
+        event.preventDefault();
+      }, { passive: false });
+    });
 
     await page.keyboard.down("Control");
     await page.mouse.wheel(0, -200);
     await page.keyboard.up("Control");
-    await page.evaluate(() => new Promise(requestAnimationFrame));
 
+    await expect.poll(() => page.evaluate(() => (window as unknown as { wheelWasCanceled?: boolean }).wheelWasCanceled))
+      .toBe(false);
     await expect(viewer.host).toHaveAttribute("data-zoom", "1");
   });
 
