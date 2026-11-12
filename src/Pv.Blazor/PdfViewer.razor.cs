@@ -173,7 +173,7 @@ public partial class PdfViewer
     public Task SelectObjectsAsync(IEnumerable<string> ids) => InvokeBridgeAsync("selectObjects", ids);
 
     /// <summary>
-    /// Every selected object's ID, in the order selected, as the selection is when the browser answers. That can be
+    /// Every selected object's ID, in the order selected. This is the selection when the browser answers, which can be
     /// newer than the <see cref="OnSelectionChanged"/> notification being handled. The IDs cross the circuit as a
     /// stream, so a large selection needs no change to the hub's message size limit.
     /// </summary>
@@ -243,7 +243,7 @@ public partial class PdfViewer
         _currentPage = 1;
     }
 
-    /// <summary>An integer cast to the enum can hold any number, and only quarter turns are rotations.</summary>
+    /// <summary>A cast can put any integer in a <see cref="PageRotation"/>, but only quarter turns are valid.</summary>
     private static void ThrowIfUndefined(PageRotation rotation)
     {
         if (!Enum.IsDefined(rotation))

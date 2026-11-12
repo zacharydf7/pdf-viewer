@@ -339,11 +339,20 @@ public class PdfViewerTests : BunitContext
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => viewer.Instance.SetRotationAsync((PageRotation)45));
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
-            () => viewer.Instance.SetPageRotationAsync(1, (PageRotation)45));
         await viewer.Find("[aria-label='Rotate clockwise']").ClickAsync(new());
 
         Assert.Equal(90, Assert.Single(_bridge.Invocations).Arguments[0]);
+    }
+
+    [Fact]
+    public async Task SetPageRotationAsync_ShouldThrowAndSendNothing_WhenGivenUndefinedEnumValue()
+    {
+        var viewer = Render<PdfViewer>();
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => viewer.Instance.SetPageRotationAsync(1, (PageRotation)45));
+
+        Assert.Empty(_bridge.Invocations);
     }
 
     [Fact]
