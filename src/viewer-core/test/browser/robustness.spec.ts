@@ -429,7 +429,10 @@ test.describe("handles", () => {
 });
 
 test.describe("Blazor bridge", () => {
-  /** Attaches with the given subscriptions, adds and selects an object, and returns the .NET methods called. */
+  /**
+   * Attaches with the given subscriptions, makes one change of each kind to an object and the selection, and returns
+   * the .NET methods called.
+   */
   async function notifiedMethods(page: Page, subscriptions: { objects: boolean; selection: boolean }) {
     const viewer = await openViewer(page, { initialZoom: 1 });
     return viewer.host.evaluate(async (element: PdfViewerElement, { value, flags }) => {
@@ -439,6 +442,10 @@ test.describe("Blazor bridge", () => {
       attach(element, dotNet, {}, flags);
       element.addObject({ id: "a", page: 1, rect: value });
       element.selectObject("a");
+      element.updateObject("a", { locked: true });
+      element.selectObject(null);
+      element.removeObject("a");
+      element.setObjects([]);
       return calls;
     }, { value: rect, flags: subscriptions });
   }
@@ -448,7 +455,45 @@ test.describe("Blazor bridge", () => {
   });
 
   test("notifications_ShouldReachDotNetOnlyForHandledKinds_WhenSomeHaveHandlers", async ({ page }) => {
-    expect(await notifiedMethods(page, { objects: true, selection: false })).toEqual(["NotifyObjectChanged"]);
+    expect(await notifiedMethods(page, { objects: true, selection: false }))
+      .toEqual(["NotifyObjectAdded", "NotifyObjectUpdated", "NotifyObjectRemoved", "NotifyObjectsReplaced"]);
+    expect(await notifiedMethods(page, { objects: false, selection: true }))
+      .toEqual(["NotifySelectionChanged", "NotifySelectionChanged"]);
+  });
+
+  test("documentLoaded_ShouldReachDotNetWithoutPageLabels_WhenDocumentDefinesThem", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+
+    const loaded = await viewer.host.evaluate(async (element: PdfViewerElement, url) => {
+      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
+      const calls: unknown[][] = [];
+      const dotNet = { invokeMethodAsync: (...call: unknown[]) => { calls.push(call); return Promise.resolve(); } };
+      attach(element, dotNet, {}, { objects: false, selection: false });
+      await element.open({ kind: "url", url });
+      return calls.filter(([method]) => method === "NotifyDocumentLoaded");
+    }, fixtureUrl("page-labels"));
+
+    expect(loaded).toEqual([["NotifyDocumentLoaded", { pageCount: 3 }]]);
+  });
+
+  test("selectionChange_ShouldReachDotNetAsCountWithoutIds_WhenSeveralAreSelected", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+
+    const result = await viewer.host.evaluate(async (element: PdfViewerElement, value) => {
+      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
+      const calls: unknown[][] = [];
+      const dotNet = { invokeMethodAsync: (...call: unknown[]) => { calls.push(call); return Promise.resolve(); } };
+      const bridge = attach(element, dotNet, {}, { objects: false, selection: true });
+      element.addObject({ id: "a", page: 1, rect: value });
+      element.addObject({ id: "b", page: 1, rect: value });
+      element.selectObjects(["a", "b"]);
+      return { calls, ids: new TextDecoder().decode(bridge.getSelectedObjectIds()) };
+    }, rect);
+
+    const notification = { sequence: 3, origin: "api", primaryId: "b", count: 2 };
+    expect(result.calls).toEqual([["NotifySelectionChanged", notification]]);
+    expect(JSON.parse(result.ids)).toEqual(["a", "b"]);
   });
 
   test("updateObject_ShouldClearValues_WhenDotNetLeavesThemOut", async ({ page }) => {

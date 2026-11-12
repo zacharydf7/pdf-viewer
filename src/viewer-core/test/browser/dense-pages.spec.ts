@@ -128,7 +128,7 @@ test.describe("Escape during a gesture", () => {
   test("escape_ShouldRestoreObject_WhenPressedDuringMove", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
     await viewer.addObject({ id: "a", page: 1, rect: outer });
-    const events = await viewer.recordEvents("pv-object-change");
+    const events = await viewer.recordEvents("pv-object-updated");
     const before = await viewer.boundsOnPage(viewer.object("a"));
 
     const from = await viewer.center(viewer.object("a"));

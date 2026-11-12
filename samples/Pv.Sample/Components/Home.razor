@@ -47,6 +47,8 @@
             <dd data-testid="last-change">@_lastChange</dd>
             <dt>Selected object</dt>
             <dd data-testid="selected-object">@_selectedObject</dd>
+            <dt>Selected IDs</dt>
+            <dd data-testid="selected-ids">@_selectedIds</dd>
             <dt>Last tag</dt>
             <dd data-testid="last-tag">@_lastTag</dd>
             <dt>Last error</dt>
@@ -65,9 +67,10 @@
                    HideFormFields="Headless" KeyboardEditing="!Headless" RoundCoordinates="Headless"
                    Coordinates="Headless ? ViewerCoordinates.Display : ViewerCoordinates.Page"
                    ObjectHitArea="Headless ? ViewerObjectHitArea.Border : ViewerObjectHitArea.Fill"
-                   OnDocumentLoaded="HandleDocumentLoaded" OnObjectChanged="HandleObjectChanged"
+                   OnDocumentLoaded="HandleDocumentLoaded" OnObjectAdded="HandleObjectAdded"
+                   OnObjectUpdated="HandleObjectUpdated" OnObjectRemoved="HandleObjectRemoved"
                    OnSelectionChanged="HandleSelectionChanged"
-                   OnError="error => _lastError = error.Code" />
+                   OnError="error => _lastError = error.Code.ToString()" />
     </main>
 </div>
 
@@ -80,6 +83,7 @@
     private string _lastChange = "";
     private string _lastTag = "";
     private string _selectedObject = "none";
+    private string _selectedIds = "";
     private string _lastError = "";
     private int _loadCount;
     private long _documentBytes;
@@ -116,7 +120,7 @@
         await _viewer!.AddObjectAsync(new ViewerObject(id, _viewer.CurrentPage, rect) { Label = $"Region {id}" });
     }
 
-    private Task RotateCurrentPage() => _viewer!.SetPageRotationAsync(_viewer.CurrentPage, 180);
+    private Task RotateCurrentPage() => _viewer!.SetPageRotationAsync(_viewer.CurrentPage, PageRotation.Rotate180);
 
     private async Task ReadDocumentBytes()
     {
@@ -125,7 +129,11 @@
         _documentBytes = stream.Length;
     }
 
-    private void HandleSelectionChanged(ViewerSelectionChange change) => _selectedObject = change.Id ?? "none";
+    private async Task HandleSelectionChanged(SelectionChangedArgs args)
+    {
+        _selectedObject = args.PrimaryId ?? "none";
+        _selectedIds = string.Join(" ", await _viewer!.GetSelectedObjectIdsAsync());
+    }
 
     private void HandleDocumentLoaded()
     {
@@ -133,22 +141,12 @@
         _loadCount++;
     }
 
-    private async Task HandleObjectChanged(ViewerObjectChange change)
+    private async Task HandleObjectAdded(ObjectAddedArgs args)
     {
-        _lastChange = $"{change.Kind} {change.Origin} {change.Object?.Id}";
-        if (change.Object is null)
-        {
-            return;
-        }
-        _lastTag = change.Object.Tag ?? "";
-        if (change.Kind == ObjectChangeKind.Removed)
-        {
-            _objects.Remove(change.Object.Id);
-            return;
-        }
-        _objects[change.Object.Id] = change.Object;
+        Record("Added", args.Origin, args.Object);
+        _objects[args.Object.Id] = args.Object;
 
-        if (ConfirmDraw && change is { Kind: ObjectChangeKind.Added, Origin: ChangeOrigin.User })
+        if (ConfirmDraw && args.Origin == ChangeOrigin.User)
         {
             _pendingDialog = new TaskCompletionSource<bool>();
             StateHasChanged();
@@ -156,8 +154,26 @@
             _pendingDialog = null;
             if (!keep)
             {
-                await _viewer!.RemoveObjectAsync(change.Object.Id);
+                await _viewer!.RemoveObjectAsync(args.Object.Id);
             }
         }
+    }
+
+    private void HandleObjectUpdated(ObjectUpdatedArgs args)
+    {
+        Record("Updated", args.Origin, args.Object);
+        _objects[args.Object.Id] = args.Object;
+    }
+
+    private void HandleObjectRemoved(ObjectRemovedArgs args)
+    {
+        Record("Removed", args.Origin, args.Object);
+        _objects.Remove(args.Object.Id);
+    }
+
+    private void Record(string kind, ChangeOrigin origin, ViewerObject viewerObject)
+    {
+        _lastChange = $"{kind} {origin} {viewerObject.Id}";
+        _lastTag = viewerObject.Tag ?? "";
     }
 }

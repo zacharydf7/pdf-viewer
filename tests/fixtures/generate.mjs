@@ -43,6 +43,8 @@ const fixtures = {
   // Japanese text in a font that isn't embedded, so reading it takes pdf.js's CMap files. The glyphs come from whatever
   // font the browser falls back to, so only the text layer is predictable.
   "cjk-cmap": { font: "cjk", pages: [page(letter)] },
+  // Pages labeled i, ii and iii.
+  "page-labels": { pageLabels: "/r", pages: [page(letter), page(letter), page(letter)] },
   // Opens without a password, but its streams still have to be decrypted.
   "encrypted-owner": { ownerPassword: "owner", userPassword: "", pages: [page(letter)] },
   "encrypted-user": { ownerPassword: "owner", userPassword: "user", pages: [page(letter)] },
@@ -78,7 +80,7 @@ const fonts = {
   },
 };
 
-function buildPdf({ pages, font = "standard", ownerPassword, userPassword }) {
+function buildPdf({ pages, font = "standard", ownerPassword, userPassword, pageLabels }) {
   const objects = [];
   const encryption = ownerPassword === undefined ? undefined : standardEncryption(ownerPassword, userPassword);
   const add = (body) => objects.push(body) && objects.length;
@@ -117,7 +119,9 @@ function buildPdf({ pages, font = "standard", ownerPassword, userPassword }) {
   add.set(fontId, fonts[font].object(add));
   const encryptId = encryption && add(encryption.dictionary);
   const acroForm = annotationsOnPage ? ` /AcroForm << /Fields [${firstAnnotationId} 0 R] >>` : "";
-  objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R${acroForm} >>`;
+  // One numbering style for the whole document, starting at its first page.
+  const labels = pageLabels ? ` /PageLabels << /Nums [0 << /S ${pageLabels} >>] >>` : "";
+  objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R${acroForm}${labels} >>`;
   objects[pagesId - 1] = `<< /Type /Pages /Count ${pageIds.length} /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] >>`;
 
   let output = "%PDF-1.7\n";

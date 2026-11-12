@@ -57,6 +57,8 @@ export interface EnginePage {
 
 export interface EngineDocument {
   readonly pageCount: number;
+  /** Each page's label in page order, or null if the document defines none. */
+  readonly pageLabels: readonly string[] | null;
   getPage(pageNumber: number): Promise<EnginePage>;
   /** The original document's bytes. For a URL source, this fetches whatever hasn't been fetched yet. */
   getData(): Promise<Uint8Array>;
@@ -95,8 +97,11 @@ export async function openDocument(source: DocumentSource): Promise<EngineDocume
   });
 
   let document: PDFDocumentProxy;
+  let pageLabels: readonly string[] | null;
   try {
     document = await task.promise;
+    // Frozen, because listeners get this same array.
+    pageLabels = Object.freeze(await document.getPageLabels());
   } catch (error) {
     await task.destroy();
     throw toDocumentError(pdfJs, error, source);
@@ -105,6 +110,7 @@ export async function openDocument(source: DocumentSource): Promise<EngineDocume
   const textCache = new Map<number, Promise<TextContent>>();
   return {
     pageCount: document.numPages,
+    pageLabels,
     getPage: async (pageNumber) => wrapPage(pdfJs, await document.getPage(pageNumber), textCache),
     getData: () => document.getData(),
     destroy: () => task.destroy(),

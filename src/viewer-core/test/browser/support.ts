@@ -3,6 +3,7 @@ import { expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { PvEventMap } from "../../src/events.js";
 import type { NewPageObject, PageObject } from "../../src/object-store.js";
 import type { Rect } from "../../src/geometry.js";
 import type { PdfViewerElement, ViewerOptions, ZoomSetting } from "../../src/viewer-element.js";
@@ -100,7 +101,7 @@ export class Viewer {
   }
 
   /** Records viewer events so a test can assert on them later. */
-  async recordEvents(type: string): Promise<() => Promise<unknown[]>> {
+  async recordEvents<Type extends keyof PvEventMap>(type: Type): Promise<() => Promise<PvEventMap[Type][]>> {
     const key = `events_${type.replaceAll("-", "_")}`;
     await this.page.evaluate(([name, property]) => {
       const store = window as unknown as Record<string, unknown[]>;
@@ -108,7 +109,8 @@ export class Viewer {
       const host = document.querySelector("pdf-viewer")!;
       host.addEventListener(name!, (event) => store[property!]!.push((event as CustomEvent).detail));
     }, [type, key]);
-    return () => this.page.evaluate((property) => (window as unknown as Record<string, unknown[]>)[property]!, key);
+    return () => this.page.evaluate((property) => (window as unknown as Record<string, unknown[]>)[property]!, key) as
+      Promise<PvEventMap[Type][]>;
   }
 
   /** The screen position of a point given as a fraction of the displayed page. */

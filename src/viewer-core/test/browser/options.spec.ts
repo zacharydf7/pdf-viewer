@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import type { ObjectChange } from "../../src/object-store.js";
 import type { PdfViewerElement } from "../../src/viewer-element.js";
 import { expectRectsClose, fixtureUrl, manifest, openViewer, Viewer } from "./support.js";
 
@@ -288,7 +287,7 @@ test.describe("rounding", () => {
   test("move_ShouldReportNoChangeAndRestorePosition_WhenItRoundsBackToOriginal", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 4, roundCoordinates: true });
     await viewer.addObject({ id: "a", page: 1, rect: start });
-    const events = await viewer.recordEvents("pv-object-change");
+    const events = await viewer.recordEvents("pv-object-updated");
     const before = await viewer.boundsOnPage(viewer.object("a"));
 
     const from = await viewer.center(viewer.object("a"));
@@ -315,12 +314,11 @@ test.describe("tags and styles", () => {
     await viewer.host.evaluate((element: PdfViewerElement) => {
       element.setTool("draw-rect", { tag: "heading", style: { color: "rgb(255, 0, 0)", borderWidth: "5px" } });
     });
-    const events = await viewer.recordEvents("pv-object-change");
+    const events = await viewer.recordEvents("pv-object-added");
 
     await viewer.drag(await viewer.pagePoint(0.2, 0.2), await viewer.pagePoint(0.4, 0.4));
 
-    const [change] = (await events()) as ObjectChange[];
-    expect(change).toMatchObject({ kind: "added", origin: "user", object: { tag: "heading" } });
+    expect(await events()).toMatchObject([{ origin: "user", object: { tag: "heading" } }]);
     const object = page.locator('[data-object-tag="heading"]');
     await expect(object).toHaveCSS("border-top-color", "rgb(255, 0, 0)");
     // Browsers snap borders to device pixels, so the computed width can be slightly under the 5px asked for.

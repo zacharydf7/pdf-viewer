@@ -1,10 +1,11 @@
 import type { DocumentSource, EngineDocument, EnginePage, RenderHandle, TextRender } from "./engine.js";
 import { DocumentError, openDocument, RenderCanceled } from "./engine.js";
-import type { PageGeometry, Rotation } from "./geometry.js";
-import { fitScale, normalizeRotation } from "./geometry.js";
+import type { PageInfo, PvEventMap } from "./events.js";
+import type { PageGeometry, Point, Rotation } from "./geometry.js";
+import { displaySize, fitScale, normalizeRotation, pageToDisplay } from "./geometry.js";
 import type { DrawDefaults, ViewerTool } from "./object-layer.js";
 import { ObjectLayer } from "./object-layer.js";
-import type { NewPageObject, ObjectChange, PageObject, SelectionChange } from "./object-store.js";
+import type { NewPageObject, ObjectPatch, PageObject, SelectionChanged } from "./object-store.js";
 import { ObjectStore } from "./object-store.js";
 
 export type ZoomSetting = number | "fit-width" | "fit-page";
@@ -70,8 +71,11 @@ function loadStyles(): Promise<void> {
  */
 export class PdfViewerElement extends HTMLElement {
   readonly #store = new ObjectStore({
-    onChange: (change) => this.#onObjectChange(change),
-    onSelectionChange: (change) => this.#onSelectionChange(change),
+    onAdded: (change) => this.#onObjectChange("pv-object-added", change, change.object.id),
+    onUpdated: (change) => this.#onObjectChange("pv-object-updated", change, change.object.id),
+    onRemoved: (change) => this.#onObjectChange("pv-object-removed", change, change.object.id),
+    onReplaced: (change) => this.#onObjectChange("pv-objects-replaced", change),
+    onSelectionChanged: (change) => this.#onSelectionChanged(change),
   });
   #viewport: HTMLElement | undefined;
   #page: HTMLElement | undefined;
@@ -145,8 +149,14 @@ export class PdfViewerElement extends HTMLElement {
     return this.#document === undefined ? 0 : this.#pageNumber;
   }
 
+  /** The object selected last, or null when nothing is selected. */
   get selectedObjectId(): string | null {
-    return this.#store.selectedId;
+    return this.#store.primarySelectedId;
+  }
+
+  /** Every selected object, in the order selected. */
+  get selectedObjectIds(): readonly string[] {
+    return this.#store.selectedIds;
   }
 
   /** Opens a document, replacing any open one. An open() or close() before it finishes discards this document. */
@@ -183,7 +193,7 @@ export class PdfViewerElement extends HTMLElement {
     this.dataset.currentPage = String(firstPage);
     this.#setDocumentState("ready");
     const navigation = this.#navigationGeneration;
-    this.#emit("pv-document-loaded", { pageCount: opened.pageCount });
+    this.#emit("pv-document-loaded", { pageCount: opened.pageCount, pageLabels: opened.pageLabels });
     // A listener may already have navigated or closed the document, and that has to win.
     if (navigation === this.#navigationGeneration) {
       await this.#showPage(firstPage, previousPage);
@@ -251,7 +261,7 @@ export class PdfViewerElement extends HTMLElement {
     return this.#store.add(object, "api");
   }
 
-  updateObject(id: string, patch: Partial<Omit<PageObject, "id">>): PageObject {
+  updateObject(id: string, patch: ObjectPatch): PageObject {
     return this.#store.update(id, patch, "api");
   }
 
@@ -263,8 +273,14 @@ export class PdfViewerElement extends HTMLElement {
     this.#store.replaceAll(objects, "api");
   }
 
+  /** Selects one object, or none when given null. */
   selectObject(id: string | null): void {
-    this.#store.select(id, "api");
+    this.#store.select(id === null ? [] : [id], "api");
+  }
+
+  /** Selects exactly these objects. Handles appear only when one object is selected. */
+  selectObjects(ids: readonly string[]): void {
+    this.#store.select(ids, "api");
   }
 
   /** Reads any object, including those on pages that are not displayed and so have no element. */
@@ -274,6 +290,42 @@ export class PdfViewerElement extends HTMLElement {
 
   getObjects(): PageObject[] {
     return this.#store.all();
+  }
+
+  /** A page's label, and its size and rotation in the coordinates objects use, whether or not it's displayed. */
+  async getPageInfo(pageNumber: number): Promise<PageInfo> {
+    const document = this.#document;
+    if (document === undefined) {
+      throw new Error("No document is open.");
+    }
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > document.pageCount) {
+      throw new RangeError(`Page must be from 1 to ${document.pageCount}, but was ${pageNumber}.`);
+    }
+    const page = await document.getPage(pageNumber);
+    const viewRotation = this.#viewRotation(page, pageNumber);
+    const { width, height } = this.#objectGeometry(page, viewRotation);
+    const label = document.pageLabels?.[pageNumber - 1] ?? null;
+    return { page: pageNumber, label, width, height, rotation: page.geometry(viewRotation).rotation };
+  }
+
+  /**
+   * Where a point on the displayed page is in the browser viewport, in the coordinates of clientX and clientY. Returns
+   * undefined unless that page is the one displayed.
+   */
+  pageToClient(pageNumber: number, point: Point): Point | undefined {
+    const page = this.#enginePage;
+    const element = this.#page;
+    if (page === undefined || element === undefined || pageNumber !== this.#pageNumber) {
+      return undefined;
+    }
+    const geometry = this.#objectGeometry(page, this.#viewRotation(page, pageNumber));
+    const size = displaySize(geometry);
+    const displayed = pageToDisplay(geometry, point);
+    const bounds = element.getBoundingClientRect();
+    return {
+      x: bounds.left + (displayed.x / size.width) * bounds.width,
+      y: bounds.top + (displayed.y / size.height) * bounds.height,
+    };
   }
 
   /** Navigation has its own counter because zooming or resizing while a page loads doesn't count as navigating away. */
@@ -325,7 +377,7 @@ export class PdfViewerElement extends HTMLElement {
     this.#page.className = "pv-page";
     this.#page.dataset.pageNumber = String(pageNumber);
     this.#viewport!.replaceChildren(this.#page);
-    const geometry = this.#objectGeometry(page, this.#viewRotation(page));
+    const geometry = this.#objectGeometry(page, this.#viewRotation(page, pageNumber));
     this.#layer = new ObjectLayer(this.#page, pageNumber, geometry, this.#store);
     this.#applyTool();
   }
@@ -347,8 +399,8 @@ export class PdfViewerElement extends HTMLElement {
   }
 
   /** The rotation to add to the page's own: the viewing rotation, or whatever reaches the setPageRotation value. */
-  #viewRotation(page: EnginePage): Rotation {
-    const final = this.#pageRotations.get(this.#pageNumber);
+  #viewRotation(page: EnginePage, pageNumber: number): Rotation {
+    const final = this.#pageRotations.get(pageNumber);
     return final === undefined ? this.#rotation : normalizeRotation(final - page.geometry(0).rotation);
   }
 
@@ -366,7 +418,7 @@ export class PdfViewerElement extends HTMLElement {
     const generation = ++this.#renderGeneration;
     this.#cancelCanvasRender();
 
-    const viewRotation = this.#viewRotation(page);
+    const viewRotation = this.#viewRotation(page, this.#pageNumber);
     const scale = this.#resolveScale(page, viewRotation);
     if (scale === undefined) {
       // There's no size to fit yet, usually because the viewer is hidden, so the resize observer renders it once there
@@ -482,18 +534,20 @@ export class PdfViewerElement extends HTMLElement {
     this.#viewport!.scrollTop += after.top + fractionY * after.height - event.clientY;
   }
 
-  #onObjectChange(change: ObjectChange): void {
+  /** Brings the layer up to date before listeners hear of the change. Without an id, every object may have changed. */
+  #onObjectChange<Type extends keyof PvEventMap>(type: Type, change: PvEventMap[Type] & { sequence: number },
+    id?: string): void {
     this.dataset.lastChange = String(change.sequence);
-    if (change.kind === "replaced") {
+    if (id === undefined) {
       this.#layer?.sync();
     } else {
-      this.#layer?.syncObject(change.object.id);
+      this.#layer?.syncObject(id);
     }
-    this.#emit("pv-object-change", change);
+    this.#emit(type, change);
   }
 
-  #onSelectionChange(change: SelectionChange): void {
-    this.dataset.selectedObject = change.id ?? "";
+  #onSelectionChanged(change: SelectionChanged): void {
+    this.dataset.selectedObject = change.primaryId ?? "";
     this.#layer?.syncSelection();
     this.#emit("pv-selection-change", change);
   }
@@ -549,7 +603,7 @@ export class PdfViewerElement extends HTMLElement {
     this.#emit("pv-error", { code, message: errorMessage(error), documentFailed: false });
   }
 
-  #emit(type: string, detail: unknown): void {
+  #emit<Type extends keyof PvEventMap>(type: Type, detail: PvEventMap[Type]): void {
     this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true }));
   }
 }

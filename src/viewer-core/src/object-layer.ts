@@ -2,7 +2,7 @@ import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
 import { clampPoint, displaySize, fractionToPage, moveRect, pageRectToPercent, rectFromCorners, resizeRectBy,
   roundRect } from "./geometry.js";
 import { rectAfterArrowKey } from "./keyboard-editing.js";
-import type { ObjectStore, ObjectStyle, PageObject } from "./object-store.js";
+import type { EditGesture, ObjectStore, ObjectStyle, PageObject } from "./object-store.js";
 
 export type ViewerTool = "select" | "draw-rect" | "none";
 
@@ -43,7 +43,7 @@ export class ObjectLayer {
   #drawDefaults: DrawDefaults = {};
   #keyboardEditing = true;
   #roundCoordinates = false;
-  #shownSelection: string | null = null;
+  #shownSelection: readonly string[] = [];
   #drag: Drag | undefined;
   #draft: HTMLElement | undefined;
 
@@ -127,7 +127,7 @@ export class ObjectLayer {
       this.#applyObject(object);
     }
     this.#syncListboxRole(objects.length);
-    this.#shownSelection = this.#store.selectedId;
+    this.#shownSelection = this.#store.selectedIds;
     this.#syncHandles();
   }
 
@@ -145,20 +145,27 @@ export class ObjectLayer {
     const count = this.#objectElements.size;
     this.#page.dataset.objectCount = String(count);
     this.#syncListboxRole(count);
-    if (this.#store.selectedId === id) {
+    if (this.#store.primarySelectedId === id) {
       this.#syncHandles();
     }
   }
 
   /** Updates only the objects whose selected state changed, which matters on pages with hundreds of objects. */
   syncSelection(): void {
-    for (const id of [this.#shownSelection, this.#store.selectedId]) {
-      const object = id === null ? undefined : this.#store.get(id);
+    const changed = new Set(this.#shownSelection);
+    for (const id of this.#store.selectedIds) {
+      // An id in both selections hasn't changed, and one in only the new selection has.
+      if (!changed.delete(id)) {
+        changed.add(id);
+      }
+    }
+    for (const id of changed) {
+      const object = this.#store.get(id);
       if (object?.page === this.#pageNumber) {
         this.#applyObject(object);
       }
     }
-    this.#shownSelection = this.#store.selectedId;
+    this.#shownSelection = this.#store.selectedIds;
     this.#syncHandles();
   }
 
@@ -181,7 +188,7 @@ export class ObjectLayer {
   }
 
   #applyObject(object: PageObject): void {
-    const selected = this.#store.selectedId === object.id;
+    const selected = this.#store.isSelected(object.id);
     const state = JSON.stringify([object, selected, this.#tool]);
     if (this.#appliedStates.get(object.id) === state) {
       return;
@@ -224,9 +231,11 @@ export class ObjectLayer {
     element.style.height = `${percent.height}%`;
   }
 
+  /** Handles appear only when one object is selected, because they resize that object alone. */
   #syncHandles(): void {
     this.#handlesElement.replaceChildren();
-    const selected = this.#store.selectedId === null ? undefined : this.#store.get(this.#store.selectedId);
+    const [id, ...others] = this.#store.selectedIds;
+    const selected = id === undefined || others.length > 0 ? undefined : this.#store.get(id);
     if (selected === undefined || selected.page !== this.#pageNumber || selected.locked || !selected.selectable
       || this.#tool !== "select") {
       return;
@@ -287,14 +296,14 @@ export class ObjectLayer {
 
     const objectElement = target.closest<HTMLElement>("[data-object-id]");
     if (objectElement === null) {
-      this.#store.select(null, "user");
+      this.#store.select([], "user");
       return;
     }
     const object = this.#store.get(objectElement.dataset.objectId!)!;
     if (!object.selectable) {
       return;
     }
-    this.#store.select(object.id, "user");
+    this.#store.select([object.id], "user");
     if (!object.locked) {
       const { id, rect } = object;
       const start = this.#pointerToDisplay(event);
@@ -354,7 +363,7 @@ export class ObjectLayer {
       case "move":
       case "resize":
         if (drag.moved) {
-          this.#commitRect(drag.id, drag.original, drag.rect);
+          this.#commitRect(drag.id, drag.original, drag.rect, drag.kind);
         }
         break;
     }
@@ -369,16 +378,16 @@ export class ObjectLayer {
     }
     const object = { id: newObjectId(), page: this.#pageNumber, rect: this.#finalRect(rect), ...this.#drawDefaults };
     const added = this.#store.add(object, "user");
-    this.#store.select(added.id, "user");
+    this.#store.select([added.id], "user");
   }
 
   /** A change that rounds back to the original isn't a change, so the element also has to return to where it was. */
-  #commitRect(id: string, original: Rect, rect: Rect): void {
+  #commitRect(id: string, original: Rect, rect: Rect, gesture: EditGesture): void {
     const final = this.#finalRect(rect);
     if (rectsEqual(final, original)) {
       this.syncObject(id);
     } else {
-      this.#store.update(id, { rect: final }, "user");
+      this.#store.update(id, { rect: final }, "user", gesture);
     }
   }
 
@@ -408,7 +417,7 @@ export class ObjectLayer {
     const element = (event.target as Element).closest<HTMLElement>("[data-object-id]");
     const object = element === null ? undefined : this.#store.get(element.dataset.objectId!);
     if (object !== undefined && object.selectable && this.#tool === "select") {
-      this.#store.select(object.id, "user");
+      this.#store.select([object.id], "user");
     }
   }
 
@@ -421,14 +430,14 @@ export class ObjectLayer {
       return;
     }
     if (event.key === "Escape") {
-      this.#store.select(null, "user");
+      this.#store.select([], "user");
     } else if (object.locked) {
       return;
     } else if (event.key === "Delete") {
       this.#store.remove(object.id, "user");
     } else if (event.key.startsWith("Arrow")) {
       const rect = rectAfterArrowKey(this.#geometry, object.rect, event, minimumResizeSize);
-      this.#commitRect(object.id, object.rect, rect);
+      this.#commitRect(object.id, object.rect, rect, event.shiftKey ? "resize" : "nudge");
     } else {
       return;
     }

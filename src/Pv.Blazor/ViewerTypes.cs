@@ -111,31 +111,96 @@ public enum ChangeOrigin
     [JsonStringEnumMemberName("api")] Api,
 }
 
-[JsonConverter(typeof(JsonStringEnumConverter<ObjectChangeKind>))]
-public enum ObjectChangeKind
+/// <summary>How the user changed an object's rectangle.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<EditGesture>))]
+public enum EditGesture
 {
-    [JsonStringEnumMemberName("added")] Added,
-    [JsonStringEnumMemberName("updated")] Updated,
-    [JsonStringEnumMemberName("removed")] Removed,
-    [JsonStringEnumMemberName("replaced")] Replaced,
+    /// <summary>Dragging the object.</summary>
+    [JsonStringEnumMemberName("move")] Move,
+
+    /// <summary>Dragging a handle, or pressing Shift with an arrow key.</summary>
+    [JsonStringEnumMemberName("resize")] Resize,
+
+    /// <summary>Pressing an arrow key without Shift.</summary>
+    [JsonStringEnumMemberName("nudge")] Nudge,
+}
+
+/// <summary>A clockwise rotation in quarter turns.</summary>
+public enum PageRotation
+{
+    None = 0,
+    Clockwise90 = 90,
+    Rotate180 = 180,
+    Clockwise270 = 270,
 }
 
 /// <summary>
-/// A change to the viewer's objects. Asynchronous handlers can finish out of order, so <paramref name="Sequence"/>
-/// tells which change is newest. <paramref name="Object"/> is null when <paramref name="Kind"/> is
-/// <see cref="ObjectChangeKind.Replaced"/>.
+/// A page's label, and its size and total clockwise rotation in the coordinates objects use.
+/// <paramref name="Label"/> is the page's label, such as "iv" or "A-3", or null if the document defines none.
 /// </summary>
-public sealed record ViewerObjectChange(long Sequence, ChangeOrigin Origin, ObjectChangeKind Kind,
-    ViewerObject? Object);
+public sealed record PageInfo(int Page, string? Label, double Width, double Height, PageRotation Rotation);
 
-public sealed record ViewerSelectionChange(long Sequence, ChangeOrigin Origin, string? Id);
+/// <summary>
+/// An object was added. Asynchronous handlers can finish out of order, so <paramref name="Sequence"/>, which counts
+/// every change to objects and selection, tells which change is newest.
+/// </summary>
+public sealed record ObjectAddedArgs(long Sequence, ChangeOrigin Origin, ViewerObject Object);
+
+/// <summary>
+/// An object changed. <paramref name="Previous"/> is the object as it was before, and <paramref name="Gesture"/> is
+/// set when the user changed its rectangle.
+/// </summary>
+public sealed record ObjectUpdatedArgs(long Sequence, ChangeOrigin Origin, ViewerObject Object, ViewerObject Previous,
+    EditGesture? Gesture = null);
+
+/// <summary>An object was removed. <paramref name="Object"/> is the object as it was.</summary>
+public sealed record ObjectRemovedArgs(long Sequence, ChangeOrigin Origin, ViewerObject Object);
+
+/// <summary>Every object was replaced in one step.</summary>
+public sealed record ObjectsReplacedArgs(long Sequence, ChangeOrigin Origin);
+
+/// <summary>
+/// The selection changed. <paramref name="PrimaryId"/> is the object selected last, or null when nothing is selected,
+/// and <paramref name="Count"/> is how many are selected. The IDs themselves aren't sent, because any number of
+/// objects can be selected. <see cref="PdfViewer.GetSelectedObjectIdsAsync"/> returns the current selection's IDs,
+/// which can be newer than this notification.
+/// </summary>
+public sealed record SelectionChangedArgs(long Sequence, ChangeOrigin Origin, string? PrimaryId, int Count);
 
 public sealed record DocumentLoadedArgs(int PageCount);
 
+public sealed record PageChangedArgs(int Page);
+
+[JsonConverter(typeof(JsonStringEnumConverter<ViewerErrorCode>))]
+public enum ViewerErrorCode
+{
+    /// <summary>The document couldn't open, for a reason the other codes don't cover.</summary>
+    [JsonStringEnumMemberName("unknown")] Unknown,
+
+    [JsonStringEnumMemberName("invalid-pdf")] InvalidPdf,
+
+    /// <summary>
+    /// The document couldn't be fetched. For a URL source, this also covers any other error from pdf.js, because it
+    /// reports a refused connection as a generic error.
+    /// </summary>
+    [JsonStringEnumMemberName("network")] Network,
+
+    [JsonStringEnumMemberName("password-required")] PasswordRequired,
+
+    [JsonStringEnumMemberName("password-incorrect")] PasswordIncorrect,
+
+    /// <summary>A page couldn't be loaded. The document stays open.</summary>
+    [JsonStringEnumMemberName("page")] Page,
+
+    /// <summary>A page couldn't be painted. The document stays open.</summary>
+    [JsonStringEnumMemberName("render")] Render,
+
+    /// <summary>A command was rejected. The document stays open.</summary>
+    [JsonStringEnumMemberName("command")] Command,
+}
+
 /// <summary>
-/// A viewer failure. <paramref name="Code"/> is a stable value: <c>invalid-pdf</c>, <c>network</c>,
-/// <c>password-required</c>, <c>password-incorrect</c> or <c>unknown</c> when a document couldn't open, <c>page</c> or
-/// <c>render</c> when a page failed, and <c>command</c> when a command was rejected. For a URL source, <c>network</c>
-/// also covers any other error from pdf.js, because it reports a refused connection as a generic error.
+/// A viewer failure. <paramref name="DocumentClosed"/> tells whether the document failed to open and is now closed.
 /// </summary>
-public sealed record ViewerError(string Code, string Message);
+public sealed record ViewerError(ViewerErrorCode Code, string Message,
+    [property: JsonPropertyName("documentFailed")] bool DocumentClosed);

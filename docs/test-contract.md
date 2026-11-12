@@ -16,7 +16,7 @@ Everything sits inside `<pdf-viewer>`, in the light DOM, so ordinary selectors r
 | `data-zoom` | The zoom being displayed or rendered, with 1 meaning 100%. Absent until a page has been sized |
 | `data-tool` | `select`, `draw-rect`, `none` |
 | `data-object-hit-area` | `fill`, or `border` when only an unselected object's edges catch the pointer |
-| `data-selected-object` | ID of the selected object, or empty |
+| `data-selected-object` | ID of the selected object, or empty. With several selected, the one selected last |
 | `data-last-change` | Sequence number of the latest object change |
 
 ## Page: `.pv-page`
@@ -53,10 +53,14 @@ Objects also have `role="option"` and an accessible name, so `getByRole("option"
 `data-object-id` for identity, because names can be localized or repeated.
 
 Objects appear only for the displayed page. To read any object in the document, call `getObject(id)` or `getObjects()` on
-the element. `data-object-count` gives the number on the displayed page.
+the element. `data-object-count` gives the number on the displayed page. The objects these return are frozen, so change
+one with `updateObject`.
 
 The selected object's handles are `[data-handle="nw|n|ne|e|se|s|sw|w"]`, with `data-handle-for` set to its ID. Handles are
-real elements, so a test can drag them with the real mouse.
+real elements, so a test can drag them with the real mouse. They appear only when exactly one object is selected.
+
+`selectObjects(ids)` selects several objects, each with `aria-selected="true"`. `selectedObjectIds` on the element lists
+them in the order selected.
 
 ## Page space
 
@@ -67,20 +71,30 @@ PDF user space, where y grows upward, use `pdfX = cropLeft + x` and `pdfY = crop
 With the `display` coordinates option, rectangles are measured from the top-left corner of the page as presented after
 rotation, and are scaled by its UserUnit. A rectangle keeps its numbers when the page rotates, so it moves relative to the content.
 
+Two methods on the element give geometry without reading attributes. `getPageInfo(page)` resolves to
+`{ page, label, width, height, rotation }` for any page, displayed or not. The size is in the coordinates objects use,
+and `label` is the page's label, or `null` if the document defines none. `pageToClient(page, { x, y })` returns where a
+point on the displayed page is in the browser viewport, as `clientX` and `clientY` would report it, or `undefined` for a
+page that isn't displayed. Use it to aim the real mouse at page coordinates.
+
 ## Events
 
 These are bubbling `CustomEvent`s on `<pdf-viewer>`.
 
 | Event | Detail |
 |---|---|
-| `pv-document-loaded` | `{ pageCount }` |
+| `pv-document-loaded` | `{ pageCount, pageLabels }`, where `pageLabels` has each page's label in page order, or is `null` if the document defines none |
 | `pv-page-rendered` | `{ page, scale }` |
 | `pv-page-change` | `{ page }` |
-| `pv-object-change` | `{ sequence, origin, kind, object }`, where `origin` is `user` or `api` |
-| `pv-selection-change` | `{ sequence, origin, id }` |
+| `pv-object-added` | `{ sequence, origin, object }`, where `origin` is `user` or `api` |
+| `pv-object-updated` | `{ sequence, origin, object, previous, gesture }`. `previous` is the object before the change. `gesture` is set when the user changed the rectangle: `move` for dragging the object, `resize` for dragging a handle or pressing Shift with an arrow key, `nudge` for an arrow key without Shift |
+| `pv-object-removed` | `{ sequence, origin, object }`, with the object as it was |
+| `pv-objects-replaced` | `{ sequence, origin }`, after `setObjects` |
+| `pv-selection-change` | `{ sequence, origin, ids, primaryId }`. `ids` has every selected object in the order selected, and `primaryId` is the last of them, or `null` |
 | `pv-error` | `{ code, message, documentFailed }`, where `code` is one of the `data-error-code` values when `documentFailed` is true. Otherwise it's `page` or `render` for a page that failed, or `command` for a rejected command from .NET. For a URL source, `network` also covers any other error from pdf.js, because it reports a refused connection as a generic error |
 
-Object changes fire when a gesture finishes, never during a drag.
+Object changes fire when a gesture finishes, never during a drag. `sequence` counts every change to objects and selection,
+so it tells which of two events is newer.
 
 ## Writing tests
 

@@ -130,11 +130,13 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
 
         await _viewer.Object("code-1").ClickAsync();
         await Expect(TestId("selected-object")).ToHaveTextAsync("code-1");
+        await Expect(TestId("selected-ids")).ToHaveTextAsync("code-1");
 
         // The page's top-right corner is empty and on screen. In this fit-width layout, the bottom of the page isn't.
         var box = (await _viewer.PageElement().BoundingBoxAsync())!;
         await _viewer.Page.Mouse.ClickAsync(box.X + box.Width - 20, box.Y + 20);
         await Expect(TestId("selected-object")).ToHaveTextAsync("none");
+        await Expect(TestId("selected-ids")).ToHaveTextAsync("");
     }
 
     [Fact]
@@ -207,7 +209,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
 
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-document-state", "error");
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-error-code", "network");
-        await Expect(TestId("last-error")).ToHaveTextAsync("network");
+        await Expect(TestId("last-error")).ToHaveTextAsync("Network");
     }
 
     [Fact]
@@ -403,7 +405,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         });
 
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-document-state", "error");
-        await Expect(TestId("last-error")).ToHaveTextAsync("invalid-pdf");
+        await Expect(TestId("last-error")).ToHaveTextAsync("InvalidPdf");
     }
 
     [Fact]

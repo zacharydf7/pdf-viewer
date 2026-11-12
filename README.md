@@ -7,7 +7,7 @@ Pages and objects are real DOM elements, so tests can find them by selector, ass
 of working out pixel positions on a canvas. See the [test contract](docs/test-contract.md).
 
 ```razor
-<PdfViewer Source="@documentUrl" InitialPage="1" OnDocumentLoaded="HandleLoaded" OnObjectChanged="HandleObjectChanged" />
+<PdfViewer Source="@documentUrl" InitialPage="1" OnDocumentLoaded="HandleLoaded" OnObjectUpdated="HandleObjectUpdated" />
 ```
 
 `Pv` is a placeholder name, and the project will be renamed.

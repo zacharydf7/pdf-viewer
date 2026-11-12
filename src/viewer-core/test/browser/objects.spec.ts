@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import type { ObjectChange } from "../../src/object-store.js";
 import type { PdfViewerElement } from "../../src/viewer-element.js";
 import { expectRectsClose, parseRect, Viewer } from "./support.js";
 
@@ -37,12 +36,12 @@ test.describe("drawing", () => {
   test("drawRect_ShouldWork_WhenBrowserDeliversOnlyOneIntermediateMove", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.setTool("draw-rect");
-    const events = await viewer.recordEvents("pv-object-change");
+    const events = await viewer.recordEvents("pv-object-added");
 
     await viewer.drag(await viewer.pagePoint(0.1, 0.1), await viewer.pagePoint(0.3, 0.3), 1);
 
     await expect(page.locator("[data-object-id]")).toHaveCount(1);
-    expect((await events() as ObjectChange[]).map(({ kind, origin }) => [kind, origin])).toEqual([["added", "user"]]);
+    expect((await events()).map(({ origin }) => origin)).toEqual(["user"]);
   });
 
   test("drawRect_ShouldIgnoreClick_WhenPointerDoesNotMoveFarEnough", async ({ page }) => {
@@ -117,20 +116,20 @@ test.describe("moving and resizing", () => {
   test("object_ShouldMoveByDraggedDistance_WhenDraggedAtZoom", async ({ page }) => {
     const viewer = await openViewer(page, "letter", 2);
     await viewer.addObject({ id: "a", page: 1, rect: start });
-    const events = await viewer.recordEvents("pv-object-change");
+    const events = await viewer.recordEvents("pv-object-updated");
 
     const from = await viewer.center(viewer.object("a"));
     await viewer.drag(from, { x: from.x + 100, y: from.y + 60 });
 
     // Zoom is 2, so 100 by 60 CSS pixels is 50 by 30 page units.
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "150,130,200,100");
-    expect((await events() as ObjectChange[]).map(({ kind, origin }) => [kind, origin])).toEqual([["updated", "user"]]);
+    expect(await events()).toMatchObject([{ origin: "user", gesture: "move", previous: { rect: start } }]);
   });
 
   test("object_ShouldNotReportChange_WhenClickedWithoutMoving", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
-    const events = await viewer.recordEvents("pv-object-change");
+    const events = await viewer.recordEvents("pv-object-updated");
 
     await viewer.object("a").click();
 
@@ -169,11 +168,13 @@ test.describe("moving and resizing", () => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
     await viewer.object("a").click();
+    const events = await viewer.recordEvents("pv-object-updated");
 
     const from = await viewer.center(viewer.handle("se"));
     await viewer.drag(from, { x: from.x + 40, y: from.y + 20 });
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,240,120");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["resize"]);
   });
 
   test("handle_ShouldNotJump_WhenGrabbedOffCenter", async ({ page }) => {
@@ -193,7 +194,7 @@ test.describe("moving and resizing", () => {
       const viewer = await openViewer(page);
       await viewer.setRotation(rotation);
       await viewer.addObject({ id: "a", page: 1, rect: { x: 100.1, y: 200.7, width: 33.3, height: 77.7 } });
-      const events = await viewer.recordEvents("pv-object-change");
+      const events = await viewer.recordEvents("pv-object-updated");
 
       await viewer.object("a").click();
 
@@ -234,21 +235,27 @@ test.describe("keyboard", () => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
+    const events = await viewer.recordEvents("pv-object-updated");
+
     await viewer.object("a").focus();
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Control+ArrowDown");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,110,200,100");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge", "nudge"]);
   });
 
   test("shiftArrowKey_ShouldResizeFocusedObject_WhenPressed", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
+    const events = await viewer.recordEvents("pv-object-updated");
+
     await viewer.object("a").focus();
     await page.keyboard.press("Shift+ArrowRight");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,201,100");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["resize"]);
   });
 
   test("arrowKey_ShouldMoveObjectAsDisplayed_WhenPageIsRotated", async ({ page }) => {
@@ -313,14 +320,71 @@ test.describe("keyboard", () => {
   });
 });
 
+test.describe("removing and replacing", () => {
+  test("removeObject_ShouldReportObjectAsItWas_WhenRemovedByCode", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start, tag: "note" });
+    const events = await viewer.recordEvents("pv-object-removed");
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.removeObject("a"));
+
+    expect(await events()).toMatchObject([{ origin: "api", object: { id: "a", rect: start, tag: "note" } }]);
+  });
+
+  test("setObjects_ShouldReportOneReplacement_WhenGivenSeveralObjects", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const replaced = await viewer.recordEvents("pv-objects-replaced");
+    const added = await viewer.recordEvents("pv-object-added");
+
+    await viewer.host.evaluate((element: PdfViewerElement, rect) => {
+      element.setObjects([{ id: "b", page: 1, rect }, { id: "c", page: 1, rect }]);
+    }, start);
+
+    expect((await replaced()).map(({ origin }) => origin)).toEqual(["api"]);
+    expect(await added()).toEqual([]);
+    await expect(viewer.pageElement()).toHaveAttribute("data-object-count", "2");
+  });
+});
+
+test.describe("selecting several objects", () => {
+  test("selectObjects_ShouldMarkEachAndShowNoHandles_WhenGivenTwo", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    await viewer.addObject({ id: "b", page: 1, rect: { x: 100, y: 300, width: 50, height: 50 } });
+    const events = await viewer.recordEvents("pv-selection-change");
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.selectObjects(["a", "b"]));
+
+    await expect(viewer.object("a")).toHaveAttribute("aria-selected", "true");
+    await expect(viewer.object("b")).toHaveAttribute("aria-selected", "true");
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "b");
+    await expect(page.locator("[data-handle]")).toHaveCount(0);
+    expect(await events()).toMatchObject([{ origin: "api", ids: ["a", "b"], primaryId: "b" }]);
+  });
+
+  test("click_ShouldSelectOnlyThatObject_WhenSeveralWereSelected", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    await viewer.addObject({ id: "b", page: 1, rect: { x: 100, y: 300, width: 50, height: 50 } });
+    await viewer.host.evaluate((element: PdfViewerElement) => element.selectObjects(["a", "b"]));
+
+    await viewer.object("a").click();
+
+    await expect(viewer.object("b")).toHaveAttribute("aria-selected", "false");
+    await expect(page.locator('[data-handle-for="a"]')).toHaveCount(8);
+    expect(await viewer.host.evaluate((element: PdfViewerElement) => element.selectedObjectIds)).toEqual(["a"]);
+  });
+});
+
 test.describe("programmatic changes", () => {
   test("change_ShouldReportApiOrigin_WhenObjectIsAddedByCode", async ({ page }) => {
     const viewer = await openViewer(page);
-    const events = await viewer.recordEvents("pv-object-change");
+    const events = await viewer.recordEvents("pv-object-added");
 
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
-    expect((await events() as ObjectChange[]).map(({ kind, origin }) => [kind, origin])).toEqual([["added", "api"]]);
+    expect((await events()).map(({ origin }) => origin)).toEqual(["api"]);
   });
 
   test("objectCount_ShouldTrackPage_WhenObjectsSpanPages", async ({ page }) => {

@@ -383,6 +383,26 @@
       "height": 100
     }
   ],
+  "page-labels": [
+    {
+      "x": 100,
+      "y": 150,
+      "width": 200,
+      "height": 100
+    },
+    {
+      "x": 100,
+      "y": 150,
+      "width": 200,
+      "height": 100
+    },
+    {
+      "x": 100,
+      "y": 150,
+      "width": 200,
+      "height": 100
+    }
+  ],
   "encrypted-owner": [
     {
       "x": 100,

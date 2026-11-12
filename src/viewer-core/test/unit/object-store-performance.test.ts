@@ -6,6 +6,7 @@ import { ObjectStore } from "../../src/object-store.js";
 // in how the cost grows, such as visiting every object inside a per-object operation, still fails by a wide margin.
 const count = 50_000;
 const pageCount = 50;
+const listener = { onAdded() {}, onUpdated() {}, onRemoved() {}, onReplaced() {}, onSelectionChanged() {} };
 
 function manyObjects(): NewPageObject[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -16,7 +17,7 @@ function manyObjects(): NewPageObject[] {
 }
 
 function filledStore(): ObjectStore {
-  const store = new ObjectStore({ onChange() {}, onSelectionChange() {} });
+  const store = new ObjectStore(listener);
   store.replaceAll(manyObjects(), "api");
   return store;
 }
@@ -28,7 +29,7 @@ function elapsed(action: () => void): number {
 }
 
 test("add_ShouldStayWithinBudget_WhenAdding50000ObjectsOneAtATime", () => {
-  const store = new ObjectStore({ onChange() {}, onSelectionChange() {} });
+  const store = new ObjectStore(listener);
   const objects = manyObjects();
 
   const time = elapsed(() => objects.forEach((object) => store.add(object, "api")));
@@ -37,7 +38,7 @@ test("add_ShouldStayWithinBudget_WhenAdding50000ObjectsOneAtATime", () => {
 });
 
 test("replaceAll_ShouldStayWithinBudget_WhenGiven50000Objects", () => {
-  const store = new ObjectStore({ onChange() {}, onSelectionChange() {} });
+  const store = new ObjectStore(listener);
   const objects = manyObjects();
 
   const time = elapsed(() => store.replaceAll(objects, "api"));
@@ -62,7 +63,20 @@ test("select_ShouldStayWithinBudget_WhenSelectingEachOf50000Objects", () => {
 
   const time = elapsed(() => {
     for (let index = 0; index < count; index++) {
-      store.select(`object-${index}`, "api");
+      store.select([`object-${index}`], "api");
+    }
+  });
+
+  expect(time).toBeLessThan(50);
+});
+
+test("isSelected_ShouldStayWithinBudget_WhenAll50000ObjectsAreSelected", () => {
+  const store = filledStore();
+  store.select(store.all().map(({ id }) => id), "api");
+
+  const time = elapsed(() => {
+    for (let index = 0; index < count; index++) {
+      store.isSelected(`object-${index}`);
     }
   });
 
@@ -74,7 +88,21 @@ test("remove_ShouldStayWithinBudget_WhenRemovingEachOf50000SelectedObjects", () 
 
   const time = elapsed(() => {
     for (let index = 0; index < count; index++) {
-      store.select(`object-${index}`, "api");
+      store.select([`object-${index}`], "api");
+      store.remove(`object-${index}`, "api");
+    }
+  });
+
+  expect(time).toBeLessThan(100);
+});
+
+test("remove_ShouldStayWithinBudget_WhenRemovingUnselectedObjectsWhileHalfAreSelected", () => {
+  const store = filledStore();
+  const half = count / 2;
+  store.select(Array.from({ length: half }, (_, index) => `object-${index}`), "api");
+
+  const time = elapsed(() => {
+    for (let index = half; index < count; index++) {
       store.remove(`object-${index}`, "api");
     }
   });

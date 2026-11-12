@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { PdfViewerElement } from "../../src/viewer-element.js";
-import { expectRectsClose, manifest, parseRect, Viewer } from "./support.js";
+import { expectRectsClose, manifest, openViewer, parseRect, Viewer } from "./support.js";
 
 const inkId = "ink";
 const onePixel = 1;
@@ -113,4 +113,29 @@ test.describe("reported coordinates", () => {
     expect(parseRect(await viewer.object("stable").getAttribute("data-page-rect"))).toEqual(rect);
     expect((await viewer.getObject("stable"))?.rect).toEqual(rect);
   });
+});
+
+// The page rectangle's top-left corner is shown at a different corner of the object's box at each rotation.
+for (const [rotation, cornerX, cornerY] of [[0, 0, 0], [90, 1, 0], [180, 1, 1], [270, 0, 1]] as const) {
+  test(`pageToClient_ShouldGiveWherePointIsShown_WhenRotatedBy${rotation}`, async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1.37 });
+    await viewer.setRotation(rotation);
+    const rect = manifest.letter![0]!;
+    await viewer.addObject({ id: "a", page: 1, rect });
+
+    const point = await viewer.host.evaluate((element: PdfViewerElement, { x, y }) =>
+      element.pageToClient(1, { x, y }), rect);
+
+    const box = (await viewer.object("a").boundingBox())!;
+    expect(point!.x).toBeCloseTo(box.x + box.width * cornerX, 0);
+    expect(point!.y).toBeCloseTo(box.y + box.height * cornerY, 0);
+  });
+}
+
+test("pageToClient_ShouldReturnUndefined_WhenPageIsNotDisplayed", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 });
+
+  const point = await viewer.host.evaluate((element: PdfViewerElement) => element.pageToClient(2, { x: 0, y: 0 }));
+
+  expect(point).toBeUndefined();
 });

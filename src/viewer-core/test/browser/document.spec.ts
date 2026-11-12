@@ -11,7 +11,70 @@ test("open_ShouldUseRealWorkerAndReportPageCount_WhenGivenValidDocument", async 
   await viewer.open("letter");
 
   await expect(viewer.host).toHaveAttribute("data-page-count", "3");
-  expect(await events()).toEqual([{ pageCount: 3 }]);
+  expect(await events()).toEqual([{ pageCount: 3, pageLabels: null }]);
+});
+
+test("open_ShouldReportPageLabels_WhenDocumentDefinesThem", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  const events = await viewer.recordEvents("pv-document-loaded");
+
+  await viewer.open("page-labels");
+
+  expect(await events()).toEqual([{ pageCount: 3, pageLabels: ["i", "ii", "iii"] }]);
+});
+
+test("getPageInfo_ShouldReportUnrotatedSizeAndRotation_WhenPageIsNotDisplayed", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 }, "mixed-sizes");
+
+  const info = await viewer.host.evaluate((element: PdfViewerElement) => element.getPageInfo(3));
+
+  expect(info).toEqual({ page: 3, label: null, width: 400, height: 500, rotation: 90 });
+  await expect(viewer.host).toHaveAttribute("data-current-page", "1");
+});
+
+test("getPageInfo_ShouldReportSizeAsDisplayed_WhenCoordinatesAreDisplay", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1, coordinates: "display" }, "mixed-sizes");
+
+  const info = await viewer.host.evaluate((element: PdfViewerElement) => element.getPageInfo(3));
+
+  expect(info).toEqual({ page: 3, label: null, width: 500, height: 400, rotation: 90 });
+});
+
+test("getPageInfo_ShouldReportPageLabel_WhenDocumentDefinesLabels", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 }, "page-labels");
+
+  const info = await viewer.host.evaluate((element: PdfViewerElement) => element.getPageInfo(2));
+
+  expect(info.label).toBe("ii");
+});
+
+test("getPageInfo_ShouldKeepPageLabel_WhenListenerTriesToChangeReportedLabels", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await viewer.host.evaluate((element: PdfViewerElement) => {
+    element.addEventListener("pv-document-loaded", ({ detail }) => {
+      try {
+        (detail.pageLabels as string[]).reverse();
+      } catch {
+        // A frozen array throws here, which is what keeps the labels intact.
+      }
+    });
+  });
+
+  await viewer.open("page-labels");
+  const info = await viewer.host.evaluate((element: PdfViewerElement) => element.getPageInfo(1));
+
+  expect(info.label).toBe("i");
+});
+
+test("getPageInfo_ShouldReject_WhenPageIsBeyondEnd", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 });
+
+  const message = await viewer.host.evaluate((element: PdfViewerElement) =>
+    element.getPageInfo(4).then(() => "resolved", (error: Error) => error.message));
+
+  expect(message).toContain("from 1 to 3");
 });
 
 test("open_ShouldShowInitialPage_WhenGiven", async ({ page }) => {
@@ -93,7 +156,7 @@ test("open_ShouldKeepOnlyLatestDocument_WhenCalledRapidly", async ({ page }) => 
   await expect(viewer.host).toHaveAttribute("data-page-count", "3");
   await expect(viewer.pageElement(1)).toHaveAttribute("data-page-width", "612");
   await viewer.waitForPage();
-  expect(await events()).toEqual([{ pageCount: 3 }]);
+  expect(await events()).toEqual([{ pageCount: 3, pageLabels: null }]);
 });
 
 test("open_ShouldStartAtFirstPageWithNoObjects_WhenReplacingDocumentWithShorterOne", async ({ page }) => {

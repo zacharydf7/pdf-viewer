@@ -144,6 +144,21 @@ test("selectObject_ShouldStayWithinBudget_WhenPageHas5000Objects", async ({ page
   expectWithinBudget(median(samples), 1);
 });
 
+test("selectObjects_ShouldPaintWithinBudget_WhenSelectingAll5000Objects", async ({ page }) => {
+  const viewer = await openWithObjects(page, 5_000);
+
+  const time = await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    const ids = element.getObjects().map(({ id }) => id);
+    const start = performance.now();
+    element.selectObjects(ids);
+    await window.perf!.nextFrame();
+    return performance.now() - start;
+  });
+
+  await expect(viewer.pageElement().locator('[aria-selected="true"]')).toHaveCount(5_000);
+  expectWithinBudget(time, 250);
+});
+
 test("updateObject_ShouldStayWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
 

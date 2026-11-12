@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 
@@ -12,6 +13,7 @@ public partial class PdfViewer
     private const string ModulePath = "./_content/Pv.Blazor/pv.js";
     private const double ZoomStep = 1.25;
     private const long DefaultMaximumDocumentSize = 1024L * 1024 * 1024;
+    private const long MaximumSelectionSize = 64L * 1024 * 1024;
 
     private ElementReference _host;
     private IJSObjectReference? _module;
@@ -20,7 +22,7 @@ public partial class PdfViewer
     private PdfSource? _openedSource;
     private int _currentPage = 1;
     private int _pageCount;
-    private int _rotation;
+    private PageRotation _rotation;
 
     [Inject] private IJSRuntime JS { get; set; } = default!;
 
@@ -71,15 +73,25 @@ public partial class PdfViewer
     [Parameter] public EventCallback<ViewerError> OnError { get; set; }
 
     /// <summary>
-    /// Raised when a change finishes, never during a drag. Check the origin to tell user edits from your own. Set this
-    /// before the first render, because changes are only sent to .NET if a handler was set by then.
+    /// Raised when an object is added. This and the other object callbacks (<see cref="OnObjectUpdated"/>,
+    /// <see cref="OnObjectRemoved"/> and <see cref="OnObjectsReplaced"/>) are raised when a change finishes, never
+    /// during a drag. Check the origin to tell user edits from your own. Set them before the first render, because
+    /// object changes are only sent to .NET if at least one of the four had a handler by then.
     /// </summary>
-    [Parameter] public EventCallback<ViewerObjectChange> OnObjectChanged { get; set; }
+    [Parameter] public EventCallback<ObjectAddedArgs> OnObjectAdded { get; set; }
+
+    /// <summary>Raised when an object changes, with the object as it was before.</summary>
+    [Parameter] public EventCallback<ObjectUpdatedArgs> OnObjectUpdated { get; set; }
+
+    [Parameter] public EventCallback<ObjectRemovedArgs> OnObjectRemoved { get; set; }
+
+    /// <summary>Raised when every object is replaced in one step.</summary>
+    [Parameter] public EventCallback<ObjectsReplacedArgs> OnObjectsReplaced { get; set; }
 
     /// <summary>
-    /// Raised when the selection changes. As with <see cref="OnObjectChanged"/>, set this before the first render.
+    /// Raised when the selection changes. As with the object callbacks, set this before the first render.
     /// </summary>
-    [Parameter] public EventCallback<ViewerSelectionChange> OnSelectionChanged { get; set; }
+    [Parameter] public EventCallback<SelectionChangedArgs> OnSelectionChanged { get; set; }
 
     [Parameter(CaptureUnmatchedValues = true)]
     public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
@@ -96,12 +108,12 @@ public partial class PdfViewer
 
     public Task SetZoomAsync(ViewerZoomMode mode) => InvokeBridgeAsync("setZoom", mode);
 
-    /// <summary>Sets the viewing rotation in degrees, which is added to any rotation the page already has.</summary>
-    public Task SetRotationAsync(int degrees)
+    /// <summary>Sets the viewing rotation, which is added to any rotation the page already has.</summary>
+    public Task SetRotationAsync(PageRotation rotation)
     {
-        ThrowIfNotQuarterTurn(degrees);
-        _rotation = degrees;
-        return InvokeBridgeAsync("setRotation", degrees);
+        ThrowIfUndefined(rotation);
+        _rotation = rotation;
+        return InvokeBridgeAsync("setRotation", (int)rotation);
     }
 
     /// <summary>
@@ -109,13 +121,22 @@ public partial class PdfViewer
     /// return to its own rotation plus the viewing rotation. The result doesn't depend on any rotation the page already
     /// has.
     /// </summary>
-    public Task SetPageRotationAsync(int page, int? degrees)
+    public Task SetPageRotationAsync(int page, PageRotation? rotation)
     {
-        if (degrees is { } value)
+        if (rotation is { } value)
         {
-            ThrowIfNotQuarterTurn(value);
+            ThrowIfUndefined(value);
         }
-        return InvokeBridgeAsync("setPageRotation", page, degrees);
+        return InvokeBridgeAsync("setPageRotation", page, (int?)rotation);
+    }
+
+    /// <summary>
+    /// A page's label, and its size and rotation in the coordinates objects use, whether or not it's displayed.
+    /// </summary>
+    public async Task<PageInfo> GetPageInfoAsync(int page, CancellationToken cancellationToken = default)
+    {
+        var bridge = _bridge ?? throw NotReady();
+        return await bridge.InvokeAsync<PageInfo>("getPageInfo", cancellationToken, page);
     }
 
     public Task SetToolAsync(ViewerTool tool, ViewerDrawDefaults? drawDefaults = null) =>
@@ -145,7 +166,25 @@ public partial class PdfViewer
     /// <summary>Replaces every object in one step, which is cheaper than many separate changes.</summary>
     public Task SetObjectsAsync(IEnumerable<ViewerObject> objects) => InvokeBridgeAsync("setObjects", objects);
 
-    public Task SelectObjectAsync(string? id) => InvokeBridgeAsync("selectObject", id);
+    /// <summary>Selects one object, or none when given null.</summary>
+    public Task SelectObjectAsync(string? id) => SelectObjectsAsync(id is null ? [] : [id]);
+
+    /// <summary>Selects exactly these objects. Handles appear only when one object is selected.</summary>
+    public Task SelectObjectsAsync(IEnumerable<string> ids) => InvokeBridgeAsync("selectObjects", ids);
+
+    /// <summary>
+    /// Every selected object's ID, in the order selected, as the selection is when the browser answers. That can be
+    /// newer than the <see cref="OnSelectionChanged"/> notification being handled. The IDs cross the circuit as a
+    /// stream, so a large selection needs no change to the hub's message size limit.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetSelectedObjectIdsAsync(CancellationToken cancellationToken = default)
+    {
+        var bridge = _bridge ?? throw NotReady();
+        await using var data =
+            await bridge.InvokeAsync<IJSStreamReference>("getSelectedObjectIds", cancellationToken, []);
+        await using var source = await data.OpenReadStreamAsync(MaximumSelectionSize, cancellationToken);
+        return await JsonSerializer.DeserializeAsync<string[]>(source, cancellationToken: cancellationToken) ?? [];
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -173,7 +212,9 @@ public partial class PdfViewer
             coordinates = Coordinates,
             objectHitArea = ObjectHitArea,
         };
-        var subscriptions = new { objects = OnObjectChanged.HasDelegate, selection = OnSelectionChanged.HasDelegate };
+        var objects = OnObjectAdded.HasDelegate || OnObjectUpdated.HasDelegate || OnObjectRemoved.HasDelegate
+            || OnObjectsReplaced.HasDelegate;
+        var subscriptions = new { objects, selection = OnSelectionChanged.HasDelegate };
         _bridge = await _module.InvokeAsync<IJSObjectReference>("attach", _host, _reference, options, subscriptions);
         await OpenSourceIfChangedAsync();
     }
@@ -202,17 +243,18 @@ public partial class PdfViewer
         _currentPage = 1;
     }
 
-    private static void ThrowIfNotQuarterTurn(int degrees)
+    /// <summary>An integer cast to the enum can hold any number, and only quarter turns are rotations.</summary>
+    private static void ThrowIfUndefined(PageRotation rotation)
     {
-        if (degrees % 90 != 0)
+        if (!Enum.IsDefined(rotation))
         {
-            throw new ArgumentOutOfRangeException(nameof(degrees), degrees, "Rotation must be a multiple of 90 degrees.");
+            throw new ArgumentOutOfRangeException(nameof(rotation), rotation, "Rotation must be a quarter turn.");
         }
     }
 
     private Task ZoomByAsync(double factor) => InvokeBridgeAsync("zoomBy", factor);
 
-    private Task RotateClockwiseAsync() => SetRotationAsync((_rotation + 90) % 360);
+    private Task RotateClockwiseAsync() => SetRotationAsync((PageRotation)(((int)_rotation + 90) % 360));
 
     private async Task InvokeBridgeAsync(string method, params object?[] arguments)
     {
@@ -224,38 +266,47 @@ public partial class PdfViewer
         new("The viewer isn't ready yet. Call this after the component's first render.");
 
     [JSInvokable]
-    public async Task NotifyDocumentLoaded(int pageCount)
+    public async Task NotifyDocumentLoaded(DocumentLoadedArgs args)
     {
-        _pageCount = pageCount;
-        _currentPage = Math.Clamp(InitialPage, 1, Math.Max(pageCount, 1));
-        await OnDocumentLoaded.InvokeAsync(new DocumentLoadedArgs(pageCount));
+        _pageCount = args.PageCount;
+        _currentPage = Math.Clamp(InitialPage, 1, Math.Max(args.PageCount, 1));
+        await OnDocumentLoaded.InvokeAsync(args);
         StateHasChanged();
     }
 
     [JSInvokable]
-    public async Task NotifyPageChanged(int page)
+    public async Task NotifyPageChanged(PageChangedArgs args)
     {
-        _currentPage = page;
-        await OnPageChanged.InvokeAsync(page);
+        _currentPage = args.Page;
+        await OnPageChanged.InvokeAsync(args.Page);
         StateHasChanged();
     }
 
     [JSInvokable]
-    public async Task NotifyError(string code, string message, bool documentFailed)
+    public async Task NotifyError(ViewerError error)
     {
-        if (documentFailed)
+        if (error.DocumentClosed)
         {
             ResetPosition();
         }
-        await OnError.InvokeAsync(new ViewerError(code, message));
+        await OnError.InvokeAsync(error);
         StateHasChanged();
     }
 
     [JSInvokable]
-    public Task NotifyObjectChanged(ViewerObjectChange change) => OnObjectChanged.InvokeAsync(change);
+    public Task NotifyObjectAdded(ObjectAddedArgs args) => OnObjectAdded.InvokeAsync(args);
 
     [JSInvokable]
-    public Task NotifySelectionChanged(ViewerSelectionChange change) => OnSelectionChanged.InvokeAsync(change);
+    public Task NotifyObjectUpdated(ObjectUpdatedArgs args) => OnObjectUpdated.InvokeAsync(args);
+
+    [JSInvokable]
+    public Task NotifyObjectRemoved(ObjectRemovedArgs args) => OnObjectRemoved.InvokeAsync(args);
+
+    [JSInvokable]
+    public Task NotifyObjectsReplaced(ObjectsReplacedArgs args) => OnObjectsReplaced.InvokeAsync(args);
+
+    [JSInvokable]
+    public Task NotifySelectionChanged(SelectionChangedArgs args) => OnSelectionChanged.InvokeAsync(args);
 
     /// <summary>
     /// The custom element destroys the document itself when it leaves the page, which also works if the circuit is

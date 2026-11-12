@@ -1,6 +1,7 @@
 import type { DocumentSource } from "./engine.js";
+import type { PageInfo, PvEventMap } from "./events.js";
 import type { DrawDefaults, ViewerTool } from "./object-layer.js";
-import type { NewPageObject, ObjectChange, PageObject, SelectionChange } from "./object-store.js";
+import type { NewPageObject, PageObject } from "./object-store.js";
 import type { PdfViewerElement, ViewerOptions, ZoomSetting } from "./viewer-element.js";
 import { errorMessage } from "./viewer-element.js";
 
@@ -30,18 +31,27 @@ export class ViewerBridge {
     this.#host = host;
     this.#dotNet = dotNet;
     const { signal } = this.#abort;
-    const on = <T>(type: string, listener: (detail: T) => void) =>
-      host.addEventListener(type, (event) => listener((event as CustomEvent<T>).detail), { signal });
+    // Each event's detail goes to .NET unchanged, as the one argument of the method named here.
+    const forward = (type: keyof PvEventMap, method: string) =>
+      host.addEventListener(type, (event) => this.#notify(method, event.detail), { signal });
 
-    on<{ pageCount: number }>("pv-document-loaded", ({ pageCount }) => this.#notify("NotifyDocumentLoaded", pageCount));
-    on<{ page: number }>("pv-page-change", ({ page }) => this.#notify("NotifyPageChanged", page));
-    on<{ code: string; message: string; documentFailed: boolean }>("pv-error", ({ code, message, documentFailed }) =>
-      this.#notify("NotifyError", code, message, documentFailed));
+    // This one goes without its page labels, which in a long document could exceed the hub's message size limit. .NET
+    // asks for a page's label with getPageInfo.
+    host.addEventListener("pv-document-loaded", ({ detail }) =>
+      this.#notify("NotifyDocumentLoaded", { pageCount: detail.pageCount }), { signal });
+    forward("pv-page-change", "NotifyPageChanged");
+    forward("pv-error", "NotifyError");
     if (subscriptions.objects) {
-      on<ObjectChange>("pv-object-change", (change) => this.#notify("NotifyObjectChanged", change));
+      forward("pv-object-added", "NotifyObjectAdded");
+      forward("pv-object-updated", "NotifyObjectUpdated");
+      forward("pv-object-removed", "NotifyObjectRemoved");
+      forward("pv-objects-replaced", "NotifyObjectsReplaced");
     }
     if (subscriptions.selection) {
-      on<SelectionChange>("pv-selection-change", (change) => this.#notify("NotifySelectionChanged", change));
+      // The ids are left out for the same reason as the page labels: any number of objects can be selected. .NET
+      // gets their count, and asks for the ids with getSelectedObjectIds.
+      host.addEventListener("pv-selection-change", ({ detail: { sequence, origin, primaryId, ids } }) =>
+        this.#notify("NotifySelectionChanged", { sequence, origin, primaryId, count: ids.length }), { signal });
     }
   }
 
@@ -82,7 +92,10 @@ export class ViewerBridge {
     this.#host.updateObject(object.id, { label: undefined, tag: undefined, style: undefined, ...object });
   removeObject = (id: string): void => this.#host.removeObject(id);
   setObjects = (objects: NewPageObject[]): void => this.#host.setObjects(objects);
-  selectObject = (id: string | null): void => this.#host.selectObject(id);
+  selectObjects = (ids: string[]): void => this.#host.selectObjects(ids);
+  /** The selected ids as UTF-8 JSON, which .NET reads as a stream, so their number isn't limited by the hub. */
+  getSelectedObjectIds = (): Uint8Array => new TextEncoder().encode(JSON.stringify(this.#host.selectedObjectIds));
+  getPageInfo = (page: number): Promise<PageInfo> => this.#host.getPageInfo(page);
 
   dispose(): void {
     this.#abort.abort();
@@ -91,7 +104,7 @@ export class ViewerBridge {
   /** Commands aren't awaited by .NET, so a command that fails has to report itself. */
   #run(command: Promise<unknown>): void {
     command.catch((error: unknown) => {
-      const detail = { code: "command", message: errorMessage(error), documentFailed: false };
+      const detail: PvEventMap["pv-error"] = { code: "command", message: errorMessage(error), documentFailed: false };
       this.#host.dispatchEvent(new CustomEvent("pv-error", { detail, bubbles: true }));
     });
   }
