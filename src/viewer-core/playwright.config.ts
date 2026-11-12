@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const screen = { viewport: { width: 1000, height: 800 }, deviceScaleFactor: 1 };
+const performanceTests = "performance.spec.ts";
 
 export default defineConfig({
   testDir: "test/browser",
@@ -18,8 +19,18 @@ export default defineConfig({
     reuseExistingServer: true,
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"], ...screen } },
-    { name: "firefox", use: { ...devices["Desktop Firefox"], ...screen } },
-    { name: "webkit", use: { ...devices["Desktop Safari"], ...screen } },
+    { name: "chromium", use: { ...devices["Desktop Chrome"], ...screen }, testIgnore: performanceTests },
+    { name: "firefox", use: { ...devices["Desktop Firefox"], ...screen }, testIgnore: performanceTests },
+    { name: "webkit", use: { ...devices["Desktop Safari"], ...screen }, testIgnore: performanceTests },
+    // Runs after the other projects, one test at a time: running alongside them would skew the timings, and these
+    // heavy tests would slow theirs past their timeouts. Budgets are set for Chromium only, since each engine would
+    // need its own.
+    {
+      name: "performance",
+      use: { ...devices["Desktop Chrome"], ...screen },
+      testMatch: performanceTests,
+      fullyParallel: false,
+      dependencies: ["chromium", "firefox", "webkit"],
+    },
   ],
 });

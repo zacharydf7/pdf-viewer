@@ -65,7 +65,8 @@ a `FileExtensionContentTypeProvider`.
 cd src/viewer-core
 npm test                      # unit tests
 npx playwright install        # once
-npm run test:browser          # real browsers: Chromium, Firefox and WebKit
+npm run test:browser          # real browsers: Chromium, Firefox and WebKit, then the performance budgets
+npm run test:performance      # Chromium performance budgets only, printing each timing
 
 # .NET
 dotnet test tests/Pv.Blazor.Tests     # bUnit

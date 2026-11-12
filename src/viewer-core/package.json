@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "fixtures": "node ../../tests/fixtures/generate.mjs",
     "test": "vitest run",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:performance": "playwright test --project=performance --no-deps"
   },
   "dependencies": {
     "pdfjs-dist": "6.5.438"
