@@ -2,7 +2,8 @@ import type { PageGeometry, Rect, ResizeHandle } from "./geometry.js";
 import { pageRectToPercent } from "./geometry.js";
 import type { ObjectStore, PageObject } from "./object-store.js";
 import { isOnPage } from "./object-store.js";
-import type { PointerTarget, Preview, ToolPresentation } from "./tool.js";
+import type { DrawDefaults, PointerTarget, Preview, ToolPresentation } from "./tool.js";
+import { respondsToUser } from "./tool.js";
 
 const handles: readonly ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const appDataPrefix = "data-app-";
@@ -129,15 +130,16 @@ export class ObjectView {
         this.#draftElements.delete(id);
       }
     }
-    for (const { id, rect } of drafts) {
+    for (const draft of drafts) {
+      const { id, rect } = draft;
       let element = this.#draftElements.get(id);
       if (element === undefined) {
         element = document.createElement("div");
-        element.className = "pv-draft";
         element.dataset.draftId = id;
         this.#draftElements.set(id, element);
         this.element.append(element);
       }
+      styleDraft(element, draft);
       this.#position(element, rect);
       element.dataset.pageRect = formatRect(rect);
     }
@@ -193,8 +195,8 @@ export class ObjectView {
     if (preview?.kind === "draft" && preview.page === this.#pageNumber) {
       if (this.#draft === undefined) {
         this.#draft = document.createElement("div");
-        this.#draft.className = "pv-draft";
         this.#draft.dataset.draft = "true";
+        styleDraft(this.#draft, preview.defaults);
         this.element.append(this.#draft);
       }
       this.#position(this.#draft, preview.rect);
@@ -235,7 +237,7 @@ export class ObjectView {
 
   #applyObject(object: PageObject): void {
     const selected = this.#store.isSelected(object.id);
-    const focusable = object.selectable && this.#presentation.focusable;
+    const focusable = respondsToUser(object, this.#presentation.readOnly) && this.#presentation.focusable;
     const state = JSON.stringify([object, selected, focusable]);
     if (this.#appliedStates.get(object.id) === state) {
       return;
@@ -265,6 +267,7 @@ export class ObjectView {
     this.#applyAppData(element, object);
     element.dataset.locked = String(object.locked);
     element.dataset.selectable = String(object.selectable);
+    element.dataset.editableWhenReadOnly = String(object.editableWhenReadOnly);
     const label = object.label ?? `Object ${this.#numbers.get(object.id)} on page ${this.#pageNumber}`;
     element.setAttribute("aria-label", label);
     element.setAttribute("aria-selected", String(selected));
@@ -306,8 +309,8 @@ export class ObjectView {
     this.#handlesFor = undefined;
     const [id, ...others] = this.#store.selectedIds;
     const selected = id === undefined || others.length > 0 ? undefined : this.#store.get(id);
-    if (selected === undefined || !isOnPage(selected, this.#pageNumber) || selected.locked || !selected.selectable
-      || selected.hidden || !this.#presentation.handles) {
+    if (selected === undefined || !isOnPage(selected, this.#pageNumber) || selected.locked || selected.hidden
+      || !respondsToUser(selected, this.#presentation.readOnly) || !this.#presentation.handles) {
       return;
     }
     for (const handle of handles) {
@@ -347,6 +350,16 @@ export class ObjectView {
       }
     }
   }
+}
+
+/** Gives a draft the kind, classes, color and border width its object will have, so it looks like that object. */
+function styleDraft(element: HTMLElement, { kind, cssClass, style }: DrawDefaults): void {
+  element.className = cssClass === undefined ? "pv-draft" : `pv-draft ${cssClass}`;
+  if (kind !== undefined) {
+    element.dataset.objectKind = kind;
+  }
+  element.style.setProperty("--pv-object-color", style?.color ?? "");
+  element.style.setProperty("--pv-object-border-width", style?.borderWidth ?? "");
 }
 
 /** A rectangle as data-page-rect shows it: x, y, width and height, to three decimal places at most. */

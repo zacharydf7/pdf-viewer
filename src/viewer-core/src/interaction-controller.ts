@@ -7,7 +7,7 @@ import type { DrawDefaults, PointerInput, Preview, Tool, ToolContext, ToolOption
   from "./tool.js";
 
 /** With no tool, objects ignore the pointer and the keyboard. */
-const inactive: ToolPresentation = { pointer: "none", focusable: false, handles: false };
+const inactive: ToolPresentation = { pointer: "none", focusable: false, handles: false, readOnly: false };
 
 /** A displayed page, as the controller needs it. */
 export interface InteractivePage {
@@ -53,13 +53,18 @@ export class InteractionController {
     this.#context.options = options;
   }
 
-  /** Starts a tool, canceling any gesture the previous tool had under way. The draw tool applies the defaults. */
-  setTool(tool: ViewerTool, drawDefaults: DrawDefaults): void {
+  /**
+   * Starts a tool, canceling any gesture the previous tool had under way. The draw tool applies the defaults. While
+   * the viewer is read-only, whichever tool is chosen, the user can only select and edit the objects marked to stay
+   * editable.
+   */
+  setTool(tool: ViewerTool, drawDefaults: DrawDefaults, readOnly: boolean): void {
     this.#cancelGesture();
     const context = this.#context;
-    this.#tool = tool === "select" ? new SelectTool(context)
-      : tool === "draw-rect" ? new DrawRectTool(context, drawDefaults)
-        : undefined;
+    this.#tool = readOnly ? new SelectTool(context, true)
+      : tool === "select" ? new SelectTool(context)
+        : tool === "draw-rect" ? new DrawRectTool(context, drawDefaults)
+          : undefined;
     for (const page of this.#pages) {
       page.objects.presentation = this.presentation;
     }

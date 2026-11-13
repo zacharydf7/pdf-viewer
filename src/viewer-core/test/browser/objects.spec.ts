@@ -69,8 +69,9 @@ test.describe("drawing", () => {
     }
   });
 
-  test("drawRect_ShouldSelectNewObject_WhenFinished", async ({ page }) => {
+  test("drawRect_ShouldSelectNewObject_WhenSelectOnCreateIsOn", async ({ page }) => {
     const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ selectOnCreate: true }));
     await viewer.setTool("draw-rect");
 
     await viewer.drag(await viewer.pagePoint(0.1, 0.1), await viewer.pagePoint(0.3, 0.3));
@@ -78,9 +79,8 @@ test.describe("drawing", () => {
     await expect(page.getByRole("option", { selected: true })).toHaveCount(1);
   });
 
-  test("drawRect_ShouldNotSelectNewObject_WhenSelectOnCreateIsOff", async ({ page }) => {
+  test("drawRect_ShouldLeaveNewObjectUnselected_WhenSelectOnCreateIsLeftOff", async ({ page }) => {
     const viewer = await openViewer(page);
-    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ selectOnCreate: false }));
     await viewer.setTool("draw-rect");
 
     await viewer.drag(await viewer.pagePoint(0.1, 0.1), await viewer.pagePoint(0.3, 0.3));
@@ -133,8 +133,9 @@ test.describe("drafts", () => {
     expect(await changes()).toEqual([]);
   });
 
-  test("commitDraft_ShouldAddDrawnObjectAsUserChangeAndSelectIt_WhenListenerKeptDraft", async ({ page }) => {
+  test("commitDraft_ShouldAddDrawnObjectAsUserChangeAndSelectIt_WhenSelectOnCreateIsOn", async ({ page }) => {
     const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ selectOnCreate: true }));
     await viewer.keepDrawnObjectsAsDrafts();
     const added = await viewer.recordAdded();
     const id = await viewer.drawDraft();
@@ -164,6 +165,7 @@ test.describe("drafts", () => {
 
   test("addObject_ShouldCommitDraftUnderGivenValues_WhenObjectHasDraftId", async ({ page }) => {
     const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ selectOnCreate: true }));
     await viewer.keepDrawnObjectsAsDrafts();
     const added = await viewer.recordAdded();
     const id = await viewer.drawDraft();
@@ -180,6 +182,7 @@ test.describe("drafts", () => {
   for (const [state, values] of [["Unselectable", { selectable: false }], ["Hidden", { hidden: true }]] as const) {
     test(`addObject_ShouldNotSelectCommittedDraft_WhenObjectIs${state}`, async ({ page }) => {
       const viewer = await openViewer(page);
+      await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ selectOnCreate: true }));
       await viewer.keepDrawnObjectsAsDrafts();
       const id = await viewer.drawDraft();
 
@@ -189,6 +192,29 @@ test.describe("drafts", () => {
       await expect(viewer.host).toHaveAttribute("data-selected-object", "");
     });
   }
+
+  test("draft_ShouldTakeToolsKindClassColorAndWidth_WhenToolHasDefaults", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    await viewer.host.evaluate((element: PdfViewerElement) => element.setTool("draw-rect",
+      { kind: "heading", cssClass: "emphasized", style: { color: "rgb(255, 0, 0)", borderWidth: "5px" } }));
+    const from = await viewer.pagePoint(0.2, 0.2);
+    const border = (element: Element) => {
+      const { borderTopColor, borderTopWidth, borderTopStyle } = getComputedStyle(element);
+      return [borderTopColor, borderTopWidth, borderTopStyle];
+    };
+
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 120, from.y + 80);
+    const whileDrawing = await page.locator("[data-draft]").evaluate(border);
+    await page.mouse.up();
+
+    expect(whileDrawing).toEqual(["rgb(255, 0, 0)", "5px", "dashed"]);
+    expect(await viewer.drafts.evaluate(border)).toEqual(["rgb(255, 0, 0)", "5px", "dashed"]);
+    await expect(viewer.drafts).toHaveAttribute("data-object-kind", "heading");
+    await expect(viewer.drafts).toHaveClass("pv-draft emphasized");
+  });
 
   test("draft_ShouldBeGoneFromPage_WhenObjectsChangedReportsItsCommit", async ({ page }) => {
     const viewer = await openViewer(page);
@@ -971,16 +997,18 @@ test.describe("moving an object by a distance", () => {
     expect(moved.rect).toEqual({ ...start, x: 103 });
   });
 
-  test("moveObjectBy_ShouldLeaveObjectInPlace_WhenLocked", async ({ page }) => {
-    const viewer = await openViewer(page);
-    await viewer.addObject({ id: "a", page: 1, rect: start, locked: true });
-    const events = await viewer.recordUpdated();
+  for (const [state, values] of [["Locked", { locked: true }], ["Hidden", { hidden: true }]] as const) {
+    test(`moveObjectBy_ShouldLeaveObjectInPlace_When${state}`, async ({ page }) => {
+      const viewer = await openViewer(page);
+      await viewer.addObject({ id: "a", page: 1, rect: start, ...values });
+      const events = await viewer.recordUpdated();
 
-    const moved = await moveBy(viewer, "a", 15, 0);
+      const moved = await moveBy(viewer, "a", 15, 0);
 
-    expect(moved.rect).toEqual(start);
-    expect(await events()).toEqual([]);
-  });
+      expect(moved.rect).toEqual(start);
+      expect(await events()).toEqual([]);
+    });
+  }
 
   test("moveObjectBy_ShouldReject_WhenObjectDoesNotExist", async ({ page }) => {
     const viewer = await openViewer(page);

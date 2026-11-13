@@ -64,9 +64,10 @@ public partial class PdfViewer
     [Parameter] public PdfViewerOptions? Options { get; set; }
 
     /// <summary>
-    /// Keeps the user from selecting, drawing and editing objects, for example while a dialog is open. Objects, the
-    /// selection and the tool stay as they are, and the tool works again as soon as this is false. Your own changes
-    /// through <see cref="Objects"/> and the controller still apply.
+    /// Keeps the user from selecting, drawing and editing objects, for example while a dialog is open. Objects with
+    /// <see cref="ViewerObject.EditableWhenReadOnly"/> set are the exception: the user can still select and edit
+    /// those. Objects, the selection and the tool stay as they are, and the tool works again as soon as this is false.
+    /// Your own changes through <see cref="Objects"/> and the controller still apply.
     /// </summary>
     [Parameter] public bool ReadOnly { get; set; }
 

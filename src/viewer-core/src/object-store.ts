@@ -28,6 +28,11 @@ export interface PageObject {
   readonly selectable: boolean;
   /** A hidden object is neither visible nor reachable by pointer or keyboard, and keeps the rest of its state. */
   readonly hidden: boolean;
+  /**
+   * Whether the user can still select and edit the object while the viewer is read-only, as with a rectangle a dialog
+   * puts on the page for the user to adjust.
+   */
+  readonly editableWhenReadOnly: boolean;
   /** The accessible name. Without one, it's "Object 3 on page 2" or similar, with a number unique on its page. */
   readonly label?: string;
   /** Classes from the application's own CSS, separated by spaces, so it can style states such as emphasis. */
@@ -358,6 +363,7 @@ function frozenObject(object: NewPageObject): PageObject {
     locked: false,
     selectable: true,
     hidden: false,
+    editableWhenReadOnly: false,
     ...object,
     rect: Object.freeze({ ...object.rect }),
     ...(object.style !== undefined && { style: Object.freeze({ ...object.style }) }),

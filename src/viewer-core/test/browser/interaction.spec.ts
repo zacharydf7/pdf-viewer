@@ -278,6 +278,92 @@ test.describe("read-only mode", () => {
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
   });
 
+  test("readOnly_ShouldLetUserMoveOnlyObjectMarkedEditable_WhenBothAreDragged", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "plain", page: 1, rect });
+    await viewer.addObject({ id: "editable", page: 1, rect: { ...rect, y: 400 }, editableWhenReadOnly: true });
+    await setReadOnly(viewer, true);
+
+    for (const id of ["plain", "editable"]) {
+      const from = await viewer.center(viewer.object(id));
+      await viewer.drag(from, { x: from.x + 40, y: from.y });
+    }
+
+    await expect(viewer.object("plain")).toHaveAttribute("data-page-rect", "100,100,200,100");
+    await expect(viewer.object("editable")).toHaveAttribute("data-page-rect", "140,400,200,100");
+    await expect(viewer.object("plain")).toHaveAttribute("data-editable-when-read-only", "false");
+    await expect(viewer.object("editable")).toHaveAttribute("data-editable-when-read-only", "true");
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "editable");
+  });
+
+  for (const tool of ["draw-rect", "none"] as const) {
+    test(`readOnly_ShouldLetUserMoveObjectMarkedEditable_WhenChosenToolIs${tool}`, async ({ page }) => {
+      const viewer = await openViewer(page, { initialZoom: 1 });
+      await viewer.setTool(tool);
+      await viewer.addObject({ id: "editable", page: 1, rect, editableWhenReadOnly: true });
+      await setReadOnly(viewer, true);
+
+      const from = await viewer.center(viewer.object("editable"));
+      await viewer.drag(from, { x: from.x + 40, y: from.y });
+
+      await expect(viewer.object("editable")).toHaveAttribute("data-page-rect", "140,100,200,100");
+      await expect(viewer.host).toHaveAttribute("data-selected-object", "editable");
+      await expect(page.locator("[data-object-id]")).toHaveCount(1);
+    });
+  }
+
+  test("readOnly_ShouldShowHandlesAndTakeKeys_WhenSelectedObjectIsMarkedEditable", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "editable", page: 1, rect, editableWhenReadOnly: true });
+    await setReadOnly(viewer, true);
+
+    await viewer.object("editable").click();
+    await page.keyboard.press("ArrowRight");
+
+    await expect(page.locator("[data-handle]")).toHaveCount(8);
+    await expect(viewer.object("editable")).toHaveAttribute("data-page-rect", "101,100,200,100");
+  });
+
+  test("readOnly_ShouldLeaveOnlyEditableObjectAsTabStop_WhenTurnedOn", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "plain", page: 1, rect });
+    await viewer.addObject({ id: "editable", page: 1, rect: { ...rect, y: 400 }, editableWhenReadOnly: true });
+
+    await setReadOnly(viewer, true);
+
+    await expect(viewer.object("plain")).toHaveAttribute("tabindex", "-1");
+    await expect(viewer.object("editable")).toHaveAttribute("tabindex", "0");
+  });
+
+  test("readOnly_ShouldKeepSelection_WhenEmptyPageAreaIsPressed", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.host.evaluate((element: PdfViewerElement) => element.selectObject("a"));
+    await setReadOnly(viewer, true);
+
+    const empty = await viewer.pagePoint(0.9, 0.9);
+    await page.mouse.click(empty.x, empty.y);
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+  });
+
+  for (const hitArea of ["fill", "border"] as const) {
+    const name = `readOnly_ShouldLetPressReachEditableObject_WhenSelectedObjectCoversItAndHitAreaIs${hitArea}`;
+    test(name, async ({ page }) => {
+      const viewer = await openViewer(page, { initialZoom: 1, objectHitArea: hitArea });
+      await viewer.addObject({ id: "editable", page: 1, rect, editableWhenReadOnly: true });
+      await viewer.addObject({ id: "cover", page: 1, rect: { x: 50, y: 50, width: 400, height: 300 } });
+      await viewer.host.evaluate((element: PdfViewerElement) => element.selectObject("cover"));
+      await setReadOnly(viewer, true);
+
+      // The top edge, because in the border hit area an unselected object catches the pointer only along its edges.
+      const box = (await viewer.object("editable").boundingBox())!;
+      await page.mouse.click(box.x + box.width / 2, box.y + 1);
+
+      await expect(viewer.host).toHaveAttribute("data-selected-object", "editable");
+    });
+  }
+
   test("readOnly_ShouldStillApplyChanges_WhenApplicationMakesThem", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
     await viewer.addObject({ id: "a", page: 1, rect });

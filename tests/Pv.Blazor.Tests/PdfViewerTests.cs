@@ -341,17 +341,24 @@ public class PdfViewerTests : BunitContext
     }
 
     [Fact]
+    public void PdfViewerOptions_ShouldLeaveSelectOnCreateOff_WhenNotSet()
+    {
+        Assert.False(new PdfViewerOptions().SelectOnCreate);
+    }
+
+    [Fact]
     public void ViewerObject_ShouldSendOnlyFieldsThatHaveValues_WhenSerialized()
     {
         var viewerObject = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4))
         {
-            Kind = "heading", Hidden = true, AppData = new Dictionary<string, string> { ["section"] = "3" },
+            Kind = "heading", Hidden = true, EditableWhenReadOnly = true,
+            AppData = new Dictionary<string, string> { ["section"] = "3" },
         };
 
         using var json = System.Text.Json.JsonSerializer.SerializeToDocument(viewerObject, InteropJson);
 
         var sent = json.RootElement.EnumerateObject().Select(property => property.Name).ToHashSet();
-        Assert.Superset(new HashSet<string> { "kind", "hidden", "appData" }, sent);
+        Assert.Superset(new HashSet<string> { "kind", "hidden", "editableWhenReadOnly", "appData" }, sent);
         Assert.Empty(sent.Intersect(["label", "cssClass", "style"]));
         Assert.Equal("3", json.RootElement.GetProperty("appData").GetProperty("section").GetString());
     }
@@ -569,7 +576,7 @@ public class PdfViewerTests : BunitContext
         {
             InitialZoom = ViewerZoomMode.FitPage, HideFormFields = true, KeyboardEditing = false,
             KeyboardStep = 0.5, KeyboardLargeStep = 25, KeyboardLargeStepModifier = ViewerStepModifier.Alt,
-            RoundCoordinates = true, SelectOnCreate = false, WheelZoom = false,
+            RoundCoordinates = true, SelectOnCreate = true, WheelZoom = false,
             Coordinates = ViewerCoordinates.Display, ObjectHitArea = ViewerObjectHitArea.Border,
         };
 
@@ -578,7 +585,7 @@ public class PdfViewerTests : BunitContext
         const string expected = """
             {"initialZoom":"fit-page","hideFormFields":true,"keyboardEditing":false,"keyboardStep":0.5,
             "keyboardLargeStep":25,"keyboardLargeStepModifier":"alt","roundCoordinates":true,
-            "selectOnCreate":false,"wheelZoom":false,"coordinates":"display","objectHitArea":"border"}
+            "selectOnCreate":true,"wheelZoom":false,"coordinates":"display","objectHitArea":"border"}
             """;
         Assert.Equal(expected.Replace("\n", "").Replace("\r", ""), json);
     }
@@ -1052,6 +1059,7 @@ public class PdfViewerTests : BunitContext
             [nameof(ViewerObject.Locked)] = true,
             [nameof(ViewerObject.Selectable)] = false,
             [nameof(ViewerObject.Hidden)] = true,
+            [nameof(ViewerObject.EditableWhenReadOnly)] = true,
             [nameof(ViewerObject.Label)] = "other",
             [nameof(ViewerObject.Kind)] = "other",
             [nameof(ViewerObject.CssClass)] = "other",

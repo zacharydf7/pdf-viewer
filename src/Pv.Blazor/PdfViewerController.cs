@@ -100,7 +100,7 @@ public sealed class PdfViewerController
     /// <summary>
     /// Moves an object as an arrow key does: by a distance in page units as displayed, so positive
     /// <paramref name="deltaX"/> is right and positive <paramref name="deltaY"/> is down on screen at any rotation.
-    /// The object stays on its page, and a locked object doesn't move. The move is reported through
+    /// The object stays on its page, and a locked or hidden object doesn't move. The move is reported through
     /// <see cref="PdfViewer.OnObjectsChanged"/> as the user's <see cref="EditGesture.Nudge"/>, which carries the
     /// rectangle it ended up with. Completes once the move has been applied, and fails if the object doesn't exist.
     /// </summary>

@@ -131,6 +131,7 @@
 }
 
 .pv-object[data-selectable="false"],
+.pv-viewer[data-readonly="true"] .pv-object[data-editable-when-read-only="false"],
 .pv-object-layer:not([data-pointer="objects"]) .pv-object {
   pointer-events: none;
 }
@@ -176,12 +177,14 @@
 }
 
 .pv-viewer[data-object-hit-area="border"] .pv-object[data-selectable="false"]::before,
+.pv-viewer[data-readonly="true"] .pv-object[data-editable-when-read-only="false"]::before,
 .pv-object-layer:not([data-pointer="objects"]) .pv-object::before {
   pointer-events: none;
 }
 
+/* A draft is dashed, in the color and width its object will have. */
 .pv-draft {
-  border: 2px dashed #1565c0;
+  border: var(--pv-object-border-width, 2px) dashed var(--pv-object-color, #1565c0);
 }
 
 /* The target is 24 by 24 CSS pixels, which meets WCAG 2.5.8, and only its center is painted. */

@@ -51,6 +51,7 @@ depends on sharp pixels.
 | `class` | `pv-object`, followed by the object's own CSS classes |
 | `data-page-rect` | `x,y,width,height` in the coordinates objects use |
 | `data-locked`, `data-selectable` | `true` or `false` |
+| `data-editable-when-read-only` | `true` if the user can still select and edit the object while the viewer is read-only, otherwise `false` |
 | `aria-selected` | `true` or `false` |
 
 Objects also have `role="option"` and an accessible name, so `getByRole("option", { name: "..." })` works. An object
@@ -74,11 +75,13 @@ real elements, so a test can drag them with the real mouse. They appear only whe
 them in the order selected.
 
 `moveObjectBy(id, deltaX, deltaY)` moves an object as an arrow key does. The distance is in page units as displayed, so
-positive x is right and positive y is down on screen at any rotation. The object stays on its page, a locked object
-doesn't move, and the move is reported as the user's `nudge`. It resolves to the object as it is afterward.
+positive x is right and positive y is down on screen at any rotation. The object stays on its page, a locked or hidden
+object doesn't move, and the move is reported as the user's `nudge`. It resolves to the object as it is afterward.
 
 Setting `readOnly` on the element to `true` keeps the user from selecting, drawing and editing. Objects, the selection
-and the chosen tool stay as they are, and methods such as `updateObject` and `selectObject` still work.
+and the chosen tool stay as they are, and methods such as `updateObject` and `selectObject` still work. An object with
+`editableWhenReadOnly` set is the exception: the user can still select, move, resize and delete it, whichever tool is
+chosen.
 
 ## Draft: `[data-draft-id]`
 
@@ -90,7 +93,11 @@ drawn object is added at once and never shows as a draft.
 |---|---|
 | `data-draft-id` | The ID the object will have if it's kept, a generated version 4 UUID |
 | `data-page-rect` | `x,y,width,height` in the coordinates objects use |
-| `class` | `pv-draft` |
+| `data-object-kind` | The kind the draw tool gives its objects, if it has one |
+| `class` | `pv-draft`, followed by the CSS classes the draw tool gives its objects |
+
+A draft is drawn dashed, in the color and border width the draw tool gives its objects. The rectangle that follows the
+pointer during a draw looks the same.
 
 A draft is visible, but it isn't an object. It has no `data-object-id`, isn't counted in `data-object-count`, isn't
 returned by `getObjects()`, and can't be selected, moved or resized. Like an object, it appears only while its page is

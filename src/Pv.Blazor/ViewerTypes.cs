@@ -69,6 +69,12 @@ public sealed record ViewerObject(string Id, int? Page, PageRect Rect)
     public bool Hidden { get; init; }
 
     /// <summary>
+    /// Whether the user can still select and edit the object while <see cref="PdfViewer.ReadOnly"/> is on. Set it on
+    /// an object a dialog puts on the page for the user to adjust.
+    /// </summary>
+    public bool EditableWhenReadOnly { get; init; }
+
+    /// <summary>
     /// The accessible name. Without one, it's "Object 3 on page 2" or similar, with a number unique on its page.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -103,7 +109,8 @@ public sealed record ViewerObject(string Id, int? Page, PageRect Rect)
     /// </summary>
     public bool Equals(ViewerObject? other) =>
         other is not null && Id == other.Id && Page == other.Page && Rect == other.Rect && Locked == other.Locked
-        && Selectable == other.Selectable && Hidden == other.Hidden && Label == other.Label && Kind == other.Kind
+        && Selectable == other.Selectable && Hidden == other.Hidden
+        && EditableWhenReadOnly == other.EditableWhenReadOnly && Label == other.Label && Kind == other.Kind
         && CssClass == other.CssClass && Style == other.Style && SameEntries(AppData, other.AppData);
 
     public override int GetHashCode() => HashCode.Combine(Id, Page, Rect, Kind, Label);
@@ -206,8 +213,11 @@ public sealed record PdfViewerOptions
     /// <summary>Rounds rectangles the user creates or changes to whole page units.</summary>
     public bool RoundCoordinates { get; init; }
 
-    /// <summary>Whether an object the user draws is selected once it's one of the viewer's objects.</summary>
-    public bool SelectOnCreate { get; init; } = true;
+    /// <summary>
+    /// Whether an object the user draws is selected once it's one of the viewer's objects. Leave it off if your
+    /// application selects new objects itself.
+    /// </summary>
+    public bool SelectOnCreate { get; init; }
 
     /// <summary>Whether Ctrl+wheel and pinch gestures zoom.</summary>
     public bool WheelZoom { get; init; } = true;

@@ -8,11 +8,16 @@ import { at, geometry, recordingContext } from "./tool-support.js";
 const rect = { x: 100, y: 150, width: 200, height: 100 };
 
 /** A select tool, and a page with object "a" on it. */
-function setup(options: Partial<ToolOptions> = {}, object: Partial<NewPageObject> = {}) {
+function setup(options: Partial<ToolOptions> = {}, object: Partial<NewPageObject> = {}, readOnly = false) {
   const { context, store, record } = recordingContext(options);
   store.add({ id: "a", page: 1, rect, ...object }, "api");
-  const tool = new SelectTool(context);
+  const tool = new SelectTool(context, readOnly);
   return { tool, store, record, context };
+}
+
+/** A select tool in a read-only viewer, with object "a" as given. */
+function setupReadOnly(object: Partial<NewPageObject> = {}) {
+  return setup({}, object, true);
 }
 
 function onObject(x: number, y: number, rotation: Rotation = 0): PointerPress {
@@ -439,5 +444,81 @@ describe("focus", () => {
     tool.focus("a");
 
     expect(store.selectedIds).toEqual([]);
+  });
+});
+
+describe("read-only viewer", () => {
+  it("presentation_ShouldSayReadOnly_WhenToolIsForReadOnlyViewer", () => {
+    expect([setupReadOnly().tool.presentation.readOnly, setup().tool.presentation.readOnly]).toEqual([true, false]);
+  });
+
+  it("pointerDown_ShouldSelectAndMoveNothing_WhenObjectIsNotMarkedEditable", () => {
+    const { tool, store, record } = setupReadOnly();
+
+    const result = tool.pointerDown(onObject(150, 150));
+    tool.pointerMove(at(190, 170));
+    tool.pointerUp(at(190, 170));
+
+    expect(result).toEqual({ gesture: false });
+    expect(store.selectedIds).toEqual([]);
+    expect([record.updated, record.selections]).toEqual([[], []]);
+  });
+
+  it("pointerDown_ShouldSelectAndMoveObject_WhenItIsMarkedEditable", () => {
+    const { tool, store, record } = setupReadOnly({ editableWhenReadOnly: true });
+
+    const result = tool.pointerDown(onObject(150, 150));
+    tool.pointerMove(at(190, 170));
+    tool.pointerUp(at(190, 170));
+
+    expect(result).toEqual({ gesture: true, focus: "a" });
+    expect(store.selectedIds).toEqual(["a"]);
+    expect(record.updated[0]).toMatchObject({ origin: "user", gesture: "move" });
+  });
+
+  it("pointerDown_ShouldResizeNothing_WhenHandleBelongsToObjectThatIsNotMarkedEditable", () => {
+    const { tool, record } = setupReadOnly();
+
+    const result = tool.pointerDown(onHandle("se", 300, 200));
+    tool.pointerUp(at(340, 240));
+
+    expect(result).toEqual({ gesture: false });
+    expect(record.updated).toEqual([]);
+  });
+
+  it("pointerDown_ShouldKeepSelection_WhenEmptyPageAreaIsPressed", () => {
+    const { tool, store } = setupReadOnly();
+    store.select(["a"], "api");
+
+    tool.pointerDown({ ...at(500, 700), target: undefined });
+
+    expect(store.selectedIds).toEqual(["a"]);
+  });
+
+  it("focus_ShouldSelectOnlyObjectMarkedEditable_WhenObjectsTakeFocus", () => {
+    const { tool, store } = setupReadOnly();
+    store.add({ id: "b", page: 1, rect, editableWhenReadOnly: true }, "api");
+
+    tool.focus("a");
+    const afterPlainObject = store.selectedIds;
+    tool.focus("b");
+
+    expect([afterPlainObject, store.selectedIds]).toEqual([[], ["b"]]);
+  });
+
+  it.each(["Escape", "Delete", "ArrowRight"])("keyDown_ShouldLeaveKeyToHost_WhenObjectIsNotMarkedEditableAndGiven%s",
+    (name) => {
+      const { tool, store, record } = setupReadOnly();
+      store.select(["a"], "api");
+
+      expect(tool.keyDown(key(name))).toBe(false);
+      expect([store.selectedIds, record.updated, record.deleteRequests]).toEqual([["a"], [], []]);
+    });
+
+  it("keyDown_ShouldNudgeObject_WhenItIsMarkedEditable", () => {
+    const { tool, record } = setupReadOnly({ editableWhenReadOnly: true });
+
+    expect(tool.keyDown(key("ArrowRight"))).toBe(true);
+    expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 101 });
   });
 });

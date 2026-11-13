@@ -3,7 +3,7 @@ import type { ObjectsChanged, SelectionChanged } from "../../src/object-store.js
 import { isOnPage, ObjectStore } from "../../src/object-store.js";
 
 const rect = { x: 1, y: 2, width: 3, height: 4 };
-const defaults = { shape: "rect", locked: false, selectable: true, hidden: false };
+const defaults = { shape: "rect", locked: false, selectable: true, hidden: false, editableWhenReadOnly: false };
 /** A listener that ignores everything, for tests to override the parts they watch. */
 const silent = { onChanged() {}, onSelectionChanged() {}, onDraftAdded() {}, onDraftResolved() {} };
 

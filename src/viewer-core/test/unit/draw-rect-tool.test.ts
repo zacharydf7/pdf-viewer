@@ -23,7 +23,8 @@ describe("drawing", () => {
     const result = tool.pointerDown(press(100, 200));
 
     expect(result).toEqual({ gesture: true });
-    expect(record.shown).toEqual([{ kind: "draft", page: 1, rect: { x: 100, y: 200, width: 0, height: 0 } }]);
+    expect(record.shown)
+      .toEqual([{ kind: "draft", page: 1, rect: { x: 100, y: 200, width: 0, height: 0 }, defaults: {} }]);
   });
 
   it("pointerMove_ShouldShowDraftBetweenPressAndPointer_WhenDragged", () => {
@@ -32,7 +33,8 @@ describe("drawing", () => {
     tool.pointerDown(press(100, 200));
     tool.pointerMove(at(50, 260));
 
-    expect(record.shown.at(-1)).toEqual({ kind: "draft", page: 1, rect: { x: 50, y: 200, width: 50, height: 60 } });
+    expect(record.shown.at(-1))
+      .toMatchObject({ kind: "draft", page: 1, rect: { x: 50, y: 200, width: 50, height: 60 } });
   });
 
   it("pointerUp_ShouldLeaveDraftWithNewIdAndNoObject_WhenDraggedFarEnough", () => {
@@ -117,6 +119,16 @@ describe("drawing", () => {
     tool.pointerUp(at(130, 240));
 
     expect(record.drafts[0]).toMatchObject(drawDefaults);
+  });
+
+  it("pointerMove_ShouldShowDraftWithToolDefaults_WhenToolHasThem", () => {
+    const drawDefaults = { kind: "heading", cssClass: "emphasized", style: { color: "red", borderWidth: "4px" } };
+    const { tool, record } = setup({ drawDefaults });
+
+    tool.pointerDown(press(100, 200));
+    tool.pointerMove(at(150, 250));
+
+    expect(record.shown.at(-1)).toMatchObject({ kind: "draft", defaults: drawDefaults });
   });
 
   it("pointerUp_ShouldRoundToWholeUnits_WhenRoundingIsOn", () => {

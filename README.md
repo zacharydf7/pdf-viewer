@@ -30,9 +30,12 @@ it, or call `CommitDraftAsync` if you don't bind `Objects`. If the handler finis
 discarded.
 
 Set `ReadOnly` to keep the user from selecting, drawing or editing, for example while a dialog is open. It changes
-nothing about the objects, and the tool works again when you turn it off. Arrow keys move the focused object by steps
-you can set in the options, and `MoveObjectByAsync` does the same from code. To confirm a deletion, handle
-`OnDeleteRequested`: the Delete key then removes nothing until you take the object out of your list.
+nothing about the objects, and the tool works again when you turn it off. An object with `EditableWhenReadOnly` set
+stays editable anyway, which suits a rectangle the dialog itself asks the user to adjust.
+
+Arrow keys move the focused object by steps you can set in the options, and `MoveObjectByAsync` does the same from
+code. To confirm a deletion, handle `OnDeleteRequested`: the Delete key then removes nothing until you take the object
+out of your list.
 
 `Pv` is a placeholder name, and the project will be renamed.
 

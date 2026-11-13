@@ -209,8 +209,13 @@ test("selectObjects_ShouldPaintWithinBudget_WhenSelectingAll5000Objects", async 
   expectWithinBudget(time, 250);
 });
 
-test("readOnly_ShouldTurnOnAndOffWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
-  const viewer = await openWithObjects(page, 5_000);
+test("readOnly_ShouldTurnOnAndOffWithinBudget_WhenPageHas5000ObjectsAndEveryTenthStaysEditable", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 });
+  await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    element.setObjects(window.perf!.grid(5_000, 1)
+      .map((object, index) => ({ ...object, editableWhenReadOnly: index % 10 === 0 })));
+    await window.perf!.nextFrame();
+  });
 
   const samples = await viewer.host.evaluate((element: PdfViewerElement) => Array.from({ length: 20 }, (_, index) => {
     const start = performance.now();

@@ -1,7 +1,7 @@
 import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
 import { roundRect } from "./geometry.js";
 import type { ArrowKeyPress, ArrowKeySteps } from "./keyboard-editing.js";
-import type { EditGesture, ObjectStore, ObjectStyle } from "./object-store.js";
+import type { EditGesture, ObjectStore, ObjectStyle, PageObject } from "./object-store.js";
 
 export type ViewerTool = "select" | "draw-rect" | "none";
 
@@ -38,9 +38,12 @@ export interface ObjectKeyPress extends ArrowKeyPress {
   geometry: PageGeometry;
 }
 
-/** What a gesture shows before it finishes: a draft rectangle, or an object away from where the store has it. */
+/**
+ * What a gesture shows before it finishes: a draft rectangle, styled with the defaults the drawn object will get, or
+ * an object away from where the store has it.
+ */
 export type Preview =
-  | { kind: "draft"; page: number; rect: Rect }
+  | { kind: "draft"; page: number; rect: Rect; defaults: DrawDefaults }
   | { kind: "object"; id: string; rect: Rect };
 
 export interface PressResult {
@@ -58,6 +61,16 @@ export interface ToolPresentation {
   focusable: boolean;
   /** Whether the selected object shows resize handles. */
   handles: boolean;
+  /** Whether the viewer is read-only, so that only objects marked editableWhenReadOnly respond. */
+  readOnly: boolean;
+}
+
+/**
+ * Whether an object responds to the user: it's selectable, and while the viewer is read-only it's marked to stay
+ * editable.
+ */
+export function respondsToUser(object: PageObject, readOnly: boolean): boolean {
+  return object.selectable && (!readOnly || object.editableWhenReadOnly);
 }
 
 /** The viewer options that tools use. */

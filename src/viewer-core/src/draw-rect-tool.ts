@@ -12,7 +12,7 @@ const minimumDrawSize = 2;
  * Draws a rectangle from where the pointer is pressed to where it's released, and leaves it with the store as a draft.
  */
 export class DrawRectTool implements Tool {
-  readonly presentation: ToolPresentation = { pointer: "page", focusable: true, handles: false };
+  readonly presentation: ToolPresentation = { pointer: "page", focusable: true, handles: false, readOnly: false };
   readonly #store: ObjectStore;
   readonly #show: (preview: Preview | undefined) => void;
   /** Kept for its options, which are read at each use because they can change. */
@@ -68,7 +68,7 @@ export class DrawRectTool implements Tool {
 
   #showDraft(): void {
     const { page, start, current } = this.#draw!;
-    this.#show({ kind: "draft", page, rect: rectFromCorners(start, current) });
+    this.#show({ kind: "draft", page, rect: rectFromCorners(start, current), defaults: this.#defaults });
   }
 }
 

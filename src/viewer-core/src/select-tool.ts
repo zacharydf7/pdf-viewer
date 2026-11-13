@@ -4,7 +4,7 @@ import { rectAfterArrowKey } from "./keyboard-editing.js";
 import type { ObjectStore } from "./object-store.js";
 import type { ObjectKeyPress, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext, ToolPresentation }
   from "./tool.js";
-import { commitRect } from "./tool.js";
+import { commitRect, respondsToUser } from "./tool.js";
 
 const minimumResizeSize = 1;
 
@@ -23,17 +23,21 @@ type Drag = (DragBase & { kind: "move" }) | (DragBase & { kind: "resize"; handle
 
 /**
  * Selects objects, drags them to move them, drags their handles to resize them, and edits the focused object with the
- * keyboard. Pressing empty page area clears the selection.
+ * keyboard. Pressing empty page area clears the selection. In a read-only viewer it does all that only for objects
+ * marked editableWhenReadOnly, and an empty press leaves the selection alone.
  */
 export class SelectTool implements Tool {
-  readonly presentation: ToolPresentation = { pointer: "objects", focusable: true, handles: true };
+  readonly presentation: ToolPresentation;
+  readonly #readOnly: boolean;
   readonly #store: ObjectStore;
   readonly #show: (preview: Preview | undefined) => void;
   /** Kept for its options, which are read at each use because they can change. */
   readonly #context: ToolContext;
   #drag: Drag | undefined;
 
-  constructor(context: ToolContext) {
+  constructor(context: ToolContext, readOnly = false) {
+    this.presentation = { pointer: "objects", focusable: true, handles: true, readOnly };
+    this.#readOnly = readOnly;
     this.#store = context.store;
     this.#show = context.show;
     this.#context = context;
@@ -41,18 +45,20 @@ export class SelectTool implements Tool {
 
   pointerDown({ geometry, point, target }: PointerPress): PressResult {
     if (target === undefined) {
-      this.#store.select([], "user");
+      if (!this.#readOnly) {
+        this.#store.select([], "user");
+      }
       return { gesture: false };
     }
     const object = this.#store.get(target.id)!;
+    if (!respondsToUser(object, this.#readOnly)) {
+      return { gesture: false };
+    }
     const { id, page, rect } = object;
     const start = pageToDisplay(geometry, point);
     if (target.kind === "handle") {
       this.#drag = { kind: "resize", handle: target.handle, id, page, start, original: rect, rect, moved: false };
       return { gesture: true, focus: id };
-    }
-    if (!object.selectable) {
-      return { gesture: false };
     }
     this.#store.select([id], "user");
     if (object.locked) {
@@ -97,7 +103,8 @@ export class SelectTool implements Tool {
 
   /** Focusing an object, whether by Tab or by a press, selects it. */
   focus(id: string): void {
-    if (this.#store.get(id)?.selectable) {
+    const object = this.#store.get(id);
+    if (object !== undefined && respondsToUser(object, this.#readOnly)) {
       this.#store.select([id], "user");
     }
   }
@@ -116,7 +123,7 @@ export class SelectTool implements Tool {
   keyDown(input: ObjectKeyPress): boolean {
     const object = this.#store.get(input.id);
     if (!this.#context.options.keyboardEditing || this.#drag !== undefined || object === undefined
-      || !object.selectable) {
+      || !respondsToUser(object, this.#readOnly)) {
       return false;
     }
     if (input.key === "Escape") {

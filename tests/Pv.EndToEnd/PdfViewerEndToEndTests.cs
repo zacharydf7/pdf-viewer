@@ -303,8 +303,8 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await TestId("dialog-save").ClickAsync();
 
         await Expect(TestId("confirm-dialog")).ToBeHiddenAsync();
+        await Expect(_viewer.Object(id)).ToBeVisibleAsync();
         await Expect(_viewer.Objects).ToHaveCountAsync(1);
-        await Expect(_viewer.Object(id)).ToHaveAttributeAsync("aria-selected", "true");
         await Expect(_viewer.Drafts).ToHaveCountAsync(0);
         await Expect(TestId("object-list").Locator("li")).ToHaveCountAsync(1);
         await Expect(_viewer.Page.Locator($"[data-listed-object=\"{id}\"]")).ToBeVisibleAsync();

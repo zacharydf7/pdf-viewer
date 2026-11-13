@@ -146,8 +146,9 @@ export class PdfViewerElement extends HTMLElement {
 
   /**
    * Whether the user is kept from selecting, drawing and editing objects, for example while the application shows a
-   * dialog. Objects, the selection and the tool stay as they are, and the tool works again once this is turned off.
-   * The application's own calls still change objects and the selection.
+   * dialog. Objects marked editableWhenReadOnly are the exception: the user can still select and edit those. Objects,
+   * the selection and the tool stay as they are, and the tool works again once this is turned off. The application's
+   * own calls still change objects and the selection.
    */
   get readOnly(): boolean {
     return this.#readOnly;
@@ -338,8 +339,8 @@ export class PdfViewerElement extends HTMLElement {
 
   /**
    * Moves an object as an arrow key does: by a distance as displayed, so positive x is right and positive y is down
-   * on screen at any rotation. The object stays on its page, a locked object doesn't move, and the move is reported
-   * as the user's nudge. Resolves to the object as it is afterward, and rejects if it doesn't exist.
+   * on screen at any rotation. The object stays on its page, a locked or hidden object doesn't move, and the move is
+   * reported as the user's nudge. Resolves to the object as it is afterward, and rejects if it doesn't exist.
    */
   async moveObjectBy(id: string, deltaX: number, deltaY: number): Promise<PageObject> {
     const pageOf = (object: PageObject) => object.page ?? this.#pageNumber;
@@ -351,7 +352,7 @@ export class PdfViewerElement extends HTMLElement {
     if (pageOf(object) !== measured) {
       return this.moveObjectBy(id, deltaX, deltaY);
     }
-    if (!object.locked) {
+    if (!object.locked && !object.hidden) {
       const moved = moveRect(geometry, object.rect, deltaX, deltaY);
       commitRect(this.#store, id, moved, "nudge", geometry, this.#options.roundCoordinates);
     }
@@ -504,9 +505,9 @@ export class PdfViewerElement extends HTMLElement {
     }
   }
 
-  /** While the viewer is read-only no tool is active, and the chosen one is kept for when that ends. */
+  /** The chosen tool is kept while the viewer is read-only, for when that ends. */
   #applyTool(): void {
-    this.#controller?.setTool(this.#readOnly ? "none" : this.#tool, this.#drawDefaults);
+    this.#controller?.setTool(this.#tool, this.#drawDefaults, this.#readOnly);
   }
 
   /** Works out the displayed page's zoom and rotation, and has it repaint. */

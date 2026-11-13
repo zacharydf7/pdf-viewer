@@ -22,7 +22,7 @@ async function attachRecording(viewer: Viewer,
   return () => viewer.page.evaluate(() => (window as unknown as RecordingWindow).dotNetCalls);
 }
 
-/** Draws one rectangle with the real mouse, which adds an object and selects it. */
+/** Draws one rectangle with the real mouse, which adds an object and, when selectOnCreate is on, selects it. */
 async function drawObject(viewer: Viewer): Promise<void> {
   await viewer.setTool("draw-rect");
   await viewer.drag(await viewer.pagePoint(0.2, 0.2), await viewer.pagePoint(0.4, 0.3));
@@ -470,8 +470,8 @@ test.describe("handles", () => {
 });
 
 test.describe("Blazor bridge", () => {
-  test("userChanges_ShouldReachDotNetAsOneMessage_WhenUserDrawsObject", async ({ page }) => {
-    const viewer = await openViewer(page, { initialZoom: 1 });
+  test("userChanges_ShouldReachDotNetAsOneMessage_WhenUserDrawsObjectThatIsSelectedOnCreate", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1, selectOnCreate: true });
     const calls = await attachRecording(viewer, { objects: true, selection: true });
 
     await drawObject(viewer);
@@ -503,7 +503,7 @@ test.describe("Blazor bridge", () => {
 
   for (const [handled, objects, selection] of [["Objects", true, false], ["Selection", false, true]] as const) {
     test(`userChanges_ShouldCarryOnlyHandledKind_WhenDotNetHandlesOnly${handled}`, async ({ page }) => {
-      const viewer = await openViewer(page, { initialZoom: 1 });
+      const viewer = await openViewer(page, { initialZoom: 1, selectOnCreate: true });
       const calls = await attachRecording(viewer, { objects, selection });
 
       await drawObject(viewer);
