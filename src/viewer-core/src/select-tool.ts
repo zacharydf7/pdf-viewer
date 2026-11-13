@@ -1,10 +1,10 @@
-import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
+import type { Point, Rect, ResizeHandle } from "./geometry.js";
 import { moveRect, pageToDisplay, resizeRectBy } from "./geometry.js";
 import { rectAfterArrowKey } from "./keyboard-editing.js";
-import type { EditGesture, ObjectStore } from "./object-store.js";
+import type { ObjectStore } from "./object-store.js";
 import type { ObjectKeyPress, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext, ToolPresentation }
   from "./tool.js";
-import { finalRect } from "./tool.js";
+import { commitRect } from "./tool.js";
 
 const minimumResizeSize = 1;
 
@@ -82,7 +82,7 @@ export class SelectTool implements Tool {
     if (drag.moved) {
       // Cleared first, so listeners of the change see the object where the store has it.
       this.#show(undefined);
-      this.#commit(drag.id, drag.original, drag.rect, drag.kind, input.geometry);
+      commitRect(this.#store, drag.id, drag.rect, drag.kind, input.geometry, this.#context.options.roundCoordinates);
     }
   }
 
@@ -124,10 +124,15 @@ export class SelectTool implements Tool {
     } else if (object.locked) {
       return false;
     } else if (input.key === "Delete") {
-      this.#store.remove(object.id, "user");
+      this.#context.requestDelete(object.id);
     } else if (input.key.startsWith("Arrow")) {
-      const rect = rectAfterArrowKey(input.geometry, object.rect, input, minimumResizeSize);
-      this.#commit(object.id, object.rect, rect, input.shiftKey ? "resize" : "nudge", input.geometry);
+      const { options } = this.#context;
+      const rect = rectAfterArrowKey(input.geometry, object.rect, input, options, minimumResizeSize);
+      if (rect === undefined) {
+        return false;
+      }
+      commitRect(this.#store, object.id, rect, input.shiftKey ? "resize" : "nudge", input.geometry,
+        options.roundCoordinates);
     } else {
       return false;
     }
@@ -147,16 +152,4 @@ export class SelectTool implements Tool {
       ? moveRect(geometry, drag.original, deltaX, deltaY)
       : resizeRectBy(geometry, drag.original, drag.handle, deltaX, deltaY, minimumResizeSize);
   }
-
-  /** A change that rounds back to the original isn't a change, so it doesn't reach the store. */
-  #commit(id: string, original: Rect, rect: Rect, gesture: EditGesture, geometry: PageGeometry): void {
-    const final = finalRect(geometry, rect, this.#context.options.roundCoordinates);
-    if (!rectsEqual(final, original)) {
-      this.#store.update(id, { rect: final }, "user", gesture);
-    }
-  }
-}
-
-function rectsEqual(a: Rect, b: Rect): boolean {
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }

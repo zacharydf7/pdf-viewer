@@ -501,6 +501,98 @@ test.describe("keyboard", () => {
     await expect(viewer.object("a")).toHaveCount(1);
   });
 
+  test("arrowKey_ShouldMoveByConfiguredSteps_WhenStepAndModifierAreSet", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) =>
+      element.configure({ keyboardStep: 5, keyboardLargeStep: 50, keyboardLargeStepModifier: "alt" }));
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const events = await viewer.recordUpdated();
+
+    await viewer.object("a").focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Alt+ArrowDown");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "105,150,200,100");
+    expect((await events()).map(({ origin, gesture }) => [origin, gesture]))
+      .toEqual([["user", "nudge"], ["user", "nudge"]]);
+  });
+
+  test("arrowKey_ShouldStopAtPageEdge_WhenConfiguredStepWouldPassIt", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) =>
+      element.configure({ keyboardLargeStep: 300, keyboardLargeStepModifier: "alt" }));
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+
+    await viewer.object("a").focus();
+    await page.keyboard.press("Alt+ArrowRight");
+    await page.keyboard.press("Alt+ArrowRight");
+
+    // The page is 612 units wide, so an object 200 wide can go no further than 412.
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "412,100,200,100");
+  });
+
+  test("arrowKey_ShouldReachHostAndMoveNothing_WhenHeldWithModifierThatIsNotConfigured", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    await page.evaluate(() => {
+      document.addEventListener("keydown", (event) => {
+        (window as unknown as { lastKey: string }).lastKey = event.key;
+        // Alt with an arrow key can be a browser shortcut, such as going back or forward.
+        event.preventDefault();
+      });
+    });
+
+    await viewer.object("a").focus();
+    await page.keyboard.press("Alt+ArrowUp");
+
+    expect(await page.evaluate(() => (window as unknown as { lastKey: string }).lastKey)).toBe("ArrowUp");
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  test("deleteKey_ShouldAskBeforeRemovingObject_WhenPressed", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.addEventListener("pv-delete-requested", ({ detail: { object } }) => {
+        (window as unknown as { asked: unknown }).asked = { id: object.id, stillThere: element.getObject(object.id) };
+      });
+    });
+    const removed = await viewer.recordRemoved();
+
+    await viewer.object("a").focus();
+    await page.keyboard.press("Delete");
+
+    const asked = await page.evaluate(() => (window as unknown as { asked: Record<string, unknown> }).asked);
+    expect([asked.id, asked.stillThere !== undefined]).toEqual(["a", true]);
+    expect((await removed()).map(({ origin, object }) => [origin, object.id])).toEqual([["user", "a"]]);
+  });
+
+  test("deleteKey_ShouldRemoveNothing_WhenListenerCancelsDeleteRequest", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    await viewer.host.evaluate((element) =>
+      element.addEventListener("pv-delete-requested", (event) => event.preventDefault()));
+    const requests = await viewer.recordEvents("pv-delete-requested");
+
+    await viewer.object("a").focus();
+    await page.keyboard.press("Delete");
+
+    expect((await requests()).map(({ object }) => object.id)).toEqual(["a"]);
+    await expect(viewer.object("a")).toHaveCount(1);
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+  });
+
+  test("deleteKey_ShouldAskNothing_WhenObjectIsLocked", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start, locked: true });
+    const requests = await viewer.recordEvents("pv-delete-requested");
+
+    await viewer.object("a").focus();
+    await page.keyboard.press("Delete");
+
+    expect(await requests()).toEqual([]);
+  });
+
   test("otherKeys_ShouldReachHost_WhenObjectIsFocused", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
@@ -784,5 +876,115 @@ test.describe("objects on every page", () => {
     await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(2));
     await expect(viewer.pageElement(2).locator('[data-object-id="a"]'))
       .toHaveAttribute("data-page-rect", "130,110,200,100");
+  });
+});
+
+test.describe("moving an object by a distance", () => {
+  function moveBy(viewer: Viewer, id: string, deltaX: number, deltaY: number) {
+    return viewer.host.evaluate((element: PdfViewerElement, [object, x, y]) =>
+      element.moveObjectBy(object as string, x as number, y as number), [id, deltaX, deltaY] as const);
+  }
+
+  test("moveObjectBy_ShouldMoveObjectAndReportUserNudge_WhenCalled", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const events = await viewer.recordUpdated();
+
+    const moved = await moveBy(viewer, "a", 15, -20);
+
+    expect(moved.rect).toEqual({ x: 115, y: 80, width: 200, height: 100 });
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "115,80,200,100");
+    expect((await events()).map(({ origin, gesture, previous }) => [origin, gesture, previous.rect]))
+      .toEqual([["user", "nudge", start]]);
+  });
+
+  test("moveObjectBy_ShouldStopAtPageEdge_WhenDistanceWouldPassIt", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+
+    const moved = await moveBy(viewer, "a", -500, 5_000);
+
+    // The page is 792 units high, so an object 100 high can go no lower than 692.
+    expect(moved.rect).toEqual({ x: 0, y: 692, width: 200, height: 100 });
+  });
+
+  test("moveObjectBy_ShouldMoveAsDisplayed_WhenPageIsRotated", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.setRotation(90);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const before = (await viewer.object("a").boundingBox())!;
+
+    await moveBy(viewer, "a", 10, 0);
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,90,200,100");
+    const after = (await viewer.object("a").boundingBox())!;
+    expect([after.x - before.x, after.y - before.y].map(Math.round)).toEqual([10, 0]);
+  });
+
+  test("moveObjectBy_ShouldKeepObjectOnItsOwnPage_WhenThatPageIsNotDisplayed", async ({ page }) => {
+    const viewer = await openViewer(page, "mixed-sizes");
+    const second = await viewer.host.evaluate((element: PdfViewerElement) => element.getPageInfo(2));
+    await viewer.addObject({ id: "a", page: 2, rect: { x: 10, y: 10, width: 50, height: 50 } });
+
+    const moved = await moveBy(viewer, "a", 5_000, 5_000);
+
+    expect(second.width).not.toBe(612);
+    expect(moved.rect).toEqual({ x: second.width - 50, y: second.height - 50, width: 50, height: 50 });
+    await expect(viewer.host).toHaveAttribute("data-current-page", "1");
+  });
+
+  test("moveObjectBy_ShouldKeepObjectOnDisplayedPage_WhenObjectIsOnEveryPage", async ({ page }) => {
+    const viewer = await openViewer(page, "mixed-sizes");
+    await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(2));
+    const second = await viewer.host.evaluate((element: PdfViewerElement) => element.getPageInfo(2));
+    await viewer.addObject({ id: "a", page: null, rect: { x: 10, y: 10, width: 50, height: 50 } });
+
+    const moved = await moveBy(viewer, "a", 5_000, 5_000);
+
+    expect(moved.rect).toEqual({ x: second.width - 50, y: second.height - 50, width: 50, height: 50 });
+  });
+
+  test("moveObjectBy_ShouldKeepObjectOnItsNewPage_WhenItChangesPagesWhileItsPageLoads", async ({ page }) => {
+    const viewer = await openViewer(page, "mixed-sizes");
+    const [second, third] = await viewer.host.evaluate((element: PdfViewerElement) =>
+      Promise.all([element.getPageInfo(2), element.getPageInfo(3)]));
+    await viewer.addObject({ id: "a", page: 3, rect: { x: 10, y: 10, width: 50, height: 50 } });
+
+    const moved = await viewer.host.evaluate((element: PdfViewerElement) => {
+      const moving = element.moveObjectBy("a", 5_000, 5_000);
+      element.updateObject("a", { page: 2 });
+      return moving;
+    });
+
+    expect([second.width, second.height]).not.toEqual([third.width, third.height]);
+    expect(moved.page).toBe(2);
+    expect(moved.rect).toEqual({ x: second.width - 50, y: second.height - 50, width: 50, height: 50 });
+  });
+
+  test("moveObjectBy_ShouldRoundToWholeUnits_WhenRoundingIsOn", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ roundCoordinates: true }));
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+
+    const moved = await moveBy(viewer, "a", 2.6, 0);
+
+    expect(moved.rect).toEqual({ ...start, x: 103 });
+  });
+
+  test("moveObjectBy_ShouldLeaveObjectInPlace_WhenLocked", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start, locked: true });
+    const events = await viewer.recordUpdated();
+
+    const moved = await moveBy(viewer, "a", 15, 0);
+
+    expect(moved.rect).toEqual(start);
+    expect(await events()).toEqual([]);
+  });
+
+  test("moveObjectBy_ShouldReject_WhenObjectDoesNotExist", async ({ page }) => {
+    const viewer = await openViewer(page);
+
+    await expect(moveBy(viewer, "missing", 1, 1)).rejects.toThrow(/No object with id "missing"/);
   });
 });

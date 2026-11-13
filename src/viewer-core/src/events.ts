@@ -45,19 +45,25 @@ export interface ObjectDrawn {
   object: PageObject;
 }
 
+export interface DeleteRequested {
+  /** The object the user asked to delete, which is still one of the viewer's objects. */
+  object: PageObject;
+}
+
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /**
  * Every event the viewer raises, with its detail. All are bubbling CustomEvents on the element. Only pv-object-drawn
- * can be canceled.
+ * and pv-delete-requested can be canceled.
  */
 export interface PvEventMap {
   "pv-document-loaded": DocumentLoaded;
   "pv-page-rendered": PageRendered;
   "pv-page-change": PageChanged;
   "pv-object-drawn": ObjectDrawn;
+  "pv-delete-requested": DeleteRequested;
   "pv-objects-changed": ObjectsChanged;
   "pv-selection-change": SelectionChanged;
   "pv-error": ViewerErrorDetail;

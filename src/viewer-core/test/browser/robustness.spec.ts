@@ -8,7 +8,8 @@ const rect = { x: 100, y: 100, width: 200, height: 100 };
 type RecordingWindow = Window & { dotNetCalls: unknown[][]; bridge: ViewerBridge };
 
 /** Attaches a bridge that records every call it makes to .NET, and returns a way to read them back. */
-async function attachRecording(viewer: Viewer, subscriptions: { objects: boolean; selection: boolean }) {
+async function attachRecording(viewer: Viewer,
+  subscriptions: { objects: boolean; selection: boolean; deleteRequested?: boolean }) {
   await viewer.host.evaluate(async (element: PdfViewerElement, flags) => {
     const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
     const recorder = window as unknown as RecordingWindow;
@@ -16,7 +17,7 @@ async function attachRecording(viewer: Viewer, subscriptions: { objects: boolean
     const dotNet = {
       invokeMethodAsync: (...call: unknown[]) => { recorder.dotNetCalls.push(call); return Promise.resolve(); },
     };
-    recorder.bridge = attach(element, dotNet, {}, { drawn: false, ...flags });
+    recorder.bridge = attach(element, dotNet, {}, { drawn: false, deleteRequested: false, ...flags });
   }, subscriptions);
   return () => viewer.page.evaluate(() => (window as unknown as RecordingWindow).dotNetCalls);
 }
@@ -531,7 +532,7 @@ test.describe("Blazor bridge", () => {
       const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
       const calls: unknown[][] = [];
       const dotNet = { invokeMethodAsync: (...call: unknown[]) => { calls.push(call); return Promise.resolve(); } };
-      attach(element, dotNet, {}, { objects: false, selection: false, drawn: false });
+      attach(element, dotNet, {}, { objects: false, selection: false, drawn: false, deleteRequested: false });
       await element.open({ kind: "url", url }, 7);
       return calls.filter(([method]) => method === "NotifyDocumentLoaded");
     }, fixtureUrl("page-labels"));
@@ -604,7 +605,7 @@ test.describe("Blazor bridge", () => {
     await viewer.host.evaluate(async (element: PdfViewerElement) => {
       const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
       const bridge = attach(element, { invokeMethodAsync: () => Promise.resolve() }, {},
-        { objects: true, selection: true, drawn: false });
+        { objects: true, selection: true, drawn: false, deleteRequested: false });
       bridge.open({ kind: "file-input", input: document.createElement("input") }, 1);
     });
 
@@ -618,7 +619,7 @@ test.describe("Blazor bridge", () => {
     await viewer.host.evaluate(async (element: PdfViewerElement) => {
       const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
       attach(element, { invokeMethodAsync: () => Promise.resolve() }, {},
-        { objects: true, selection: true, drawn: false }).zoomBy(1.25);
+        { objects: true, selection: true, drawn: false, deleteRequested: false }).zoomBy(1.25);
     });
     await viewer.open("letter");
 
@@ -632,7 +633,7 @@ test.describe("Blazor bridge", () => {
     await viewer.host.evaluate(async (element: PdfViewerElement) => {
       const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
       attach(element, { invokeMethodAsync: () => Promise.resolve() }, {},
-        { objects: true, selection: true, drawn: false }).setRotation(45);
+        { objects: true, selection: true, drawn: false, deleteRequested: false }).setRotation(45);
     });
 
     await expect.poll(errors).toHaveLength(1);
@@ -647,7 +648,7 @@ test.describe("Blazor bridge commands", () => {
     const state = await viewer.host.evaluate(async (element: PdfViewerElement) => {
       const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
       const bridge = attach(element, { invokeMethodAsync: () => Promise.resolve() }, {},
-        { objects: false, selection: false, drawn: false });
+        { objects: false, selection: false, drawn: false, deleteRequested: false });
       await bridge.goToPage(2);
       return element.querySelector<HTMLElement>(".pv-page")!.dataset;
     });
@@ -664,7 +665,8 @@ test.describe("Blazor bridge commands", () => {
     await viewer.drag(from, { x: from.x + 10, y: from.y });
     const before = await calls();
     await page.evaluate(() => {
-      (window as unknown as RecordingWindow).bridge.subscribe({ objects: true, selection: false, drawn: false });
+      (window as unknown as RecordingWindow).bridge
+        .subscribe({ objects: true, selection: false, drawn: false, deleteRequested: false });
     });
     await viewer.drag({ x: from.x + 10, y: from.y }, { x: from.x + 20, y: from.y });
 
@@ -678,7 +680,7 @@ test.describe("Blazor bridge commands", () => {
     await viewer.host.evaluate(async (element: PdfViewerElement) => {
       const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
       attach(element, { invokeMethodAsync: () => Promise.resolve() }, {},
-        { objects: false, selection: false, drawn: false })
+        { objects: false, selection: false, drawn: false, deleteRequested: false })
         .rotateBy(90);
     });
 
@@ -691,7 +693,7 @@ test.describe("Blazor bridge commands", () => {
     await viewer.host.evaluate(async (element: PdfViewerElement) => {
       const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
       attach(element, { invokeMethodAsync: () => Promise.resolve() }, {},
-        { objects: false, selection: false, drawn: false })
+        { objects: false, selection: false, drawn: false, deleteRequested: false })
         .configure({ objectHitArea: "border" });
     });
 
@@ -719,7 +721,8 @@ async function attachWaitingOnDrawnHandler(viewer: Viewer) {
         });
       },
     };
-    waiting.bridge = attach(element, dotNet, {}, { objects: true, selection: false, drawn: true });
+    waiting.bridge = attach(element, dotNet, {},
+      { objects: true, selection: false, drawn: true, deleteRequested: false });
   });
   return () => viewer.page.evaluate(() => (window as unknown as WaitingWindow).dotNetCalls);
 }
@@ -827,6 +830,63 @@ test.describe("drawn objects that .NET decides on", () => {
     await page.evaluate(() => (window as unknown as RecordingWindow).bridge.dispose());
 
     await expect(viewer.drafts).toHaveCount(1);
+  });
+});
+
+test.describe("editing that .NET takes part in", () => {
+  test("deleteKey_ShouldAskDotNetAndRemoveNothing_WhenDotNetHandlesDeleteRequests", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect, kind: "heading" });
+    const calls = await attachRecording(viewer, { objects: true, selection: false, deleteRequested: true });
+
+    await viewer.object("a").focus();
+    await page.keyboard.press("Delete");
+
+    const [[method, { object }]] = await calls() as [[string, { object: { id: string; kind: string } }]];
+    expect(await calls()).toHaveLength(1);
+    expect([method, object.id, object.kind]).toEqual(["NotifyDeleteRequested", "a", "heading"]);
+    await expect(viewer.object("a")).toHaveCount(1);
+  });
+
+  test("deleteKey_ShouldRemoveObjectAndReportIt_WhenDotNetHasNoHandlerForDeleteRequests", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    const calls = await attachRecording(viewer, { objects: true, selection: false });
+
+    await viewer.object("a").focus();
+    await page.keyboard.press("Delete");
+
+    await expect(viewer.object("a")).toHaveCount(0);
+    const [[method, { objects }]] = await calls() as [[string, { objects: { removed: { id: string }[] } }]];
+    expect([method, objects.removed.map(({ id }) => id)]).toEqual(["NotifyChanges", ["a"]]);
+  });
+
+  test("setReadOnly_ShouldSuspendAndResumeEditing_WhenSentFromDotNet", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await attachRecording(viewer, { objects: false, selection: false });
+    const from = await viewer.center(viewer.object("a"));
+
+    await page.evaluate(() => (window as unknown as RecordingWindow).bridge.setReadOnly(true));
+    await viewer.drag(from, { x: from.x + 40, y: from.y });
+    const whileReadOnly = await viewer.object("a").getAttribute("data-page-rect");
+    await page.evaluate(() => (window as unknown as RecordingWindow).bridge.setReadOnly(false));
+    await viewer.drag(from, { x: from.x + 40, y: from.y });
+
+    expect(whileReadOnly).toBe("100,100,200,100");
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "140,100,200,100");
+  });
+
+  test("moveObjectBy_ShouldMoveObjectAndReportNudgeToDotNet_WhenSentFromDotNet", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    const calls = await attachRecording(viewer, { objects: true, selection: false });
+
+    await page.evaluate(() => (window as unknown as RecordingWindow).bridge.moveObjectBy("a", 10, 5));
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "110,105,200,100");
+    const [[method, { objects }]] = await calls() as [[string, { objects: { updated: { gesture: string }[] } }]];
+    expect([method, objects.updated.map(({ gesture }) => gesture)]).toEqual(["NotifyChanges", ["nudge"]]);
   });
 });
 

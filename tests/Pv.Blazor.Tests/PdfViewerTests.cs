@@ -522,7 +522,7 @@ public class PdfViewerTests : BunitContext
         Render<PdfViewer>(parameters =>
             parameters.Add(component => component.OnSelectionChanged, (SelectionChangedArgs _) => { }));
 
-        Assert.Equal(new ViewerSubscriptions(Objects: false, Selection: true, Drawn: false), AttachArgument(3));
+        Assert.Equal(new ViewerSubscriptions(false, Selection: true, false, false), AttachArgument(3));
     }
 
     [Fact]
@@ -568,6 +568,7 @@ public class PdfViewerTests : BunitContext
         var options = new PdfViewerOptions
         {
             InitialZoom = ViewerZoomMode.FitPage, HideFormFields = true, KeyboardEditing = false,
+            KeyboardStep = 0.5, KeyboardLargeStep = 25, KeyboardLargeStepModifier = ViewerStepModifier.Alt,
             RoundCoordinates = true, SelectOnCreate = false, WheelZoom = false,
             Coordinates = ViewerCoordinates.Display, ObjectHitArea = ViewerObjectHitArea.Border,
         };
@@ -575,7 +576,8 @@ public class PdfViewerTests : BunitContext
         var json = System.Text.Json.JsonSerializer.Serialize(options, InteropJson);
 
         const string expected = """
-            {"initialZoom":"fit-page","hideFormFields":true,"keyboardEditing":false,"roundCoordinates":true,
+            {"initialZoom":"fit-page","hideFormFields":true,"keyboardEditing":false,"keyboardStep":0.5,
+            "keyboardLargeStep":25,"keyboardLargeStepModifier":"alt","roundCoordinates":true,
             "selectOnCreate":false,"wheelZoom":false,"coordinates":"display","objectHitArea":"border"}
             """;
         Assert.Equal(expected.Replace("\n", "").Replace("\r", ""), json);
@@ -629,7 +631,7 @@ public class PdfViewerTests : BunitContext
 
         var call = Assert.Single(_bridge.Invocations);
         Assert.Equal("subscribe", call.Identifier);
-        Assert.Equal(new ViewerSubscriptions(Objects: true, Selection: false, Drawn: false), call.Arguments[0]);
+        Assert.Equal(new ViewerSubscriptions(Objects: true, false, false, false), call.Arguments[0]);
         Assert.Equal([drawn], received!.Added);
     }
 
@@ -1132,7 +1134,7 @@ public class PdfViewerTests : BunitContext
         Render<PdfViewer>(parameters =>
             parameters.Add(component => component.OnObjectDrawn, (ObjectDrawnArgs _) => { }));
 
-        Assert.Equal(new ViewerSubscriptions(Objects: false, Selection: false, Drawn: true), AttachArgument(3));
+        Assert.Equal(new ViewerSubscriptions(false, false, Drawn: true, false), AttachArgument(3));
     }
 
     [Fact]
@@ -1344,5 +1346,110 @@ public class PdfViewerTests : BunitContext
 
         var call = Assert.Single(_bridge.Invocations);
         Assert.Equal(("discardDraft", "drawn"), (call.Identifier, call.Arguments[0]));
+    }
+
+    [Fact]
+    public void ReadOnly_ShouldBeSentAfterAttaching_WhenTrueOnFirstRender()
+    {
+        Render<PdfViewer>(parameters => parameters.Add(component => component.ReadOnly, true));
+
+        var call = Assert.Single(_bridge.Invocations);
+        Assert.Equal(("setReadOnly", true), (call.Identifier, call.Arguments[0]));
+    }
+
+    [Fact]
+    public void ReadOnly_ShouldSendOnlyChanges_WhenRenderedAgain()
+    {
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.ReadOnly, true));
+
+        viewer.Render(parameters => parameters.Add(component => component.ReadOnly, true));
+        viewer.Render(parameters => parameters.Add(component => component.ReadOnly, false));
+
+        Assert.Equal([true, false], _bridge.Invocations.Select(call => call.Arguments[0]));
+        Assert.All(BridgeCalls, call => Assert.Equal("setReadOnly", call));
+    }
+
+    [Fact]
+    public void PdfViewer_ShouldSubscribeToDeleteRequests_WhenOnDeleteRequestedHasHandler()
+    {
+        Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.OnDeleteRequested, (DeleteRequestedArgs _) => { }));
+
+        var expected = new ViewerSubscriptions(Objects: false, Selection: false, Drawn: false, DeleteRequested: true);
+        Assert.Equal(expected, AttachArgument(3));
+    }
+
+    [Fact]
+    public void DeleteRequestedArgs_ShouldReadObject_WhenDeserializedFromBridge()
+    {
+        const string json = """
+            {"object":{"id":"a","page":2,"rect":{"x":1,"y":2,"width":3,"height":4},"shape":"rect","locked":false,
+                       "selectable":true,"hidden":false}}
+            """;
+
+        var args = System.Text.Json.JsonSerializer.Deserialize<DeleteRequestedArgs>(json, InteropJson)!;
+
+        Assert.Equal(new ViewerObject("a", 2, new PageRect(1, 2, 3, 4)), args.Object);
+    }
+
+    [Fact]
+    public async Task OnDeleteRequested_ShouldReceiveObject_WhenBridgeNotifies()
+    {
+        DeleteRequestedArgs? received = null;
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.OnDeleteRequested, args => received = args));
+        var requested = new DeleteRequestedArgs(new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
+
+        await viewer.InvokeAsync(() => Notifications.NotifyDeleteRequested(requested));
+
+        Assert.Equal(requested, received);
+    }
+
+    [Fact]
+    public async Task OnDeleteRequested_ShouldIgnoreRequestFromPreviousDocument_WhenSourceHasChanged()
+    {
+        var received = new List<DeleteRequestedArgs>();
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Source, "/a.pdf")
+            .Add(component => component.OnDeleteRequested, received.Add));
+        var requested = new DeleteRequestedArgs(new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(3, 1)));
+
+        viewer.Render(parameters => parameters.Add(component => component.Source, "/b.pdf"));
+        await viewer.InvokeAsync(() => Notifications.NotifyDeleteRequested(requested));
+        var whileOpening = received.Count;
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(3, 1)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDeleteRequested(requested));
+
+        Assert.Equal(0, whileOpening);
+        Assert.Single(received);
+    }
+
+    [Fact]
+    public async Task OnDeleteRequested_ShouldNotBeRaised_WhenRequestArrivesAfterViewerIsDisposed()
+    {
+        var received = new List<DeleteRequestedArgs>();
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.OnDeleteRequested, received.Add));
+        var requested = new DeleteRequestedArgs(new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
+        var notifications = Notifications;
+        await viewer.Instance.DisposeAsync();
+
+        await viewer.InvokeAsync(() => notifications.NotifyDeleteRequested(requested));
+
+        Assert.Empty(received);
+    }
+
+    [Fact]
+    public async Task MoveObjectByAsync_ShouldSendIdAndDistance_WhenCalled()
+    {
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+
+        await controller.MoveObjectByAsync("a", 10, -2.5);
+
+        var call = Assert.Single(_bridge.Invocations);
+        Assert.Equal("moveObjectBy", call.Identifier);
+        Assert.Equal(["a", 10d, -2.5], call.Arguments);
     }
 }

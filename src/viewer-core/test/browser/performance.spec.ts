@@ -209,6 +209,20 @@ test("selectObjects_ShouldPaintWithinBudget_WhenSelectingAll5000Objects", async 
   expectWithinBudget(time, 250);
 });
 
+test("readOnly_ShouldTurnOnAndOffWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
+  const viewer = await openWithObjects(page, 5_000);
+
+  const samples = await viewer.host.evaluate((element: PdfViewerElement) => Array.from({ length: 20 }, (_, index) => {
+    const start = performance.now();
+    element.readOnly = index % 2 === 0;
+    window.perf!.layout();
+    return performance.now() - start;
+  }));
+
+  await expect(viewer.host).toHaveAttribute("data-readonly", "false");
+  expectWithinBudget(median(samples), 100);
+});
+
 test("updateObject_ShouldStayWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
 

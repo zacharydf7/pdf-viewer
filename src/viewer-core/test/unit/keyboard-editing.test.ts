@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { PageGeometry, Rect, Rotation } from "../../src/geometry.js";
+import type { ArrowKeySteps } from "../../src/keyboard-editing.js";
 import { rectAfterArrowKey } from "../../src/keyboard-editing.js";
 
 const page = (rotation: Rotation): PageGeometry => ({ width: 600, height: 800, rotation });
 const rect: Rect = { x: 100, y: 150, width: 200, height: 100 };
 
-function press(key: string, rotation: Rotation = 0, modifiers: { shiftKey?: boolean; ctrlKey?: boolean } = {},
-  from = rect): Rect {
-  return rectAfterArrowKey(page(rotation), from, { key, shiftKey: false, ctrlKey: false, ...modifiers }, 1);
+const defaultSteps: ArrowKeySteps = { keyboardStep: 1, keyboardLargeStep: 10, keyboardLargeStepModifier: "ctrl" };
+type Modifiers = { shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean };
+
+function press(key: string, rotation: Rotation = 0, modifiers: Modifiers = {}, from = rect, steps = defaultSteps):
+  Rect | undefined {
+  const keys = { key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...modifiers };
+  return rectAfterArrowKey(page(rotation), from, keys, steps, 1);
 }
 
 describe("moving", () => {
@@ -64,5 +69,40 @@ describe("resizing", () => {
     const small = { ...rect, width: 5 };
 
     expect(press("ArrowLeft", 0, { shiftKey: true, ctrlKey: true }, small)).toEqual({ ...rect, width: 1 });
+  });
+});
+
+describe("configured steps", () => {
+  const steps: ArrowKeySteps = { keyboardStep: 5, keyboardLargeStep: 25, keyboardLargeStepModifier: "alt" };
+
+  it("rectAfterArrowKey_ShouldMoveByConfiguredStep_WhenGivenArrowKeyAlone", () => {
+    expect(press("ArrowRight", 0, {}, rect, steps)).toEqual({ ...rect, x: 105 });
+  });
+
+  it("rectAfterArrowKey_ShouldMoveByLargeStep_WhenGivenConfiguredModifier", () => {
+    expect(press("ArrowDown", 0, { altKey: true }, rect, steps)).toEqual({ ...rect, y: 175 });
+  });
+
+  it("rectAfterArrowKey_ShouldResizeByLargeStep_WhenGivenShiftAndConfiguredModifier", () => {
+    expect(press("ArrowRight", 0, { shiftKey: true, altKey: true }, rect, steps)).toEqual({ ...rect, width: 225 });
+  });
+
+  it("rectAfterArrowKey_ShouldStopAtPageEdge_WhenLargeStepWouldPassIt", () => {
+    const nearEdge = { ...rect, x: 390 };
+
+    expect(press("ArrowRight", 0, { altKey: true }, nearEdge, steps)).toEqual({ ...rect, x: 400 });
+  });
+
+  it.each([
+    ["alt", { ctrlKey: true }], ["alt", { metaKey: true }], ["ctrl", { altKey: true }], ["meta", { ctrlKey: true }],
+    ["ctrl", { ctrlKey: true, altKey: true }],
+  ] as const)("rectAfterArrowKey_ShouldReturnUndefined_WhenModifierIs%sAndGiven%j", (modifier, held) => {
+    expect(press("ArrowRight", 0, held, rect, { ...steps, keyboardLargeStepModifier: modifier })).toBeUndefined();
+  });
+
+  it("rectAfterArrowKey_ShouldMoveByLargeStep_WhenModifierIsMeta", () => {
+    const withMeta: ArrowKeySteps = { ...steps, keyboardLargeStepModifier: "meta" };
+
+    expect(press("ArrowLeft", 0, { metaKey: true }, rect, withMeta)).toEqual({ ...rect, x: 75 });
   });
 });

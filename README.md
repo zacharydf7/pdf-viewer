@@ -29,6 +29,11 @@ handler runs, for example while it waits on a dialog, and the viewer stays usabl
 it, or call `CommitDraftAsync` if you don't bind `Objects`. If the handler finishes without doing either, the draft is
 discarded.
 
+Set `ReadOnly` to keep the user from selecting, drawing or editing, for example while a dialog is open. It changes
+nothing about the objects, and the tool works again when you turn it off. Arrow keys move the focused object by steps
+you can set in the options, and `MoveObjectByAsync` does the same from code. To confirm a deletion, handle
+`OnDeleteRequested`: the Delete key then removes nothing until you take the object out of your list.
+
 `Pv` is a placeholder name, and the project will be renamed.
 
 ## Status
@@ -39,7 +44,7 @@ Early. The foundation works, but this is not yet a complete viewer.
 |---|---|
 | One page at a time, with zoom, Ctrl+wheel zoom, fit modes, and viewer or per-page rotation | Continuous scrolling with virtualization |
 | Text selection through the text layer | Search, thumbnails, outline, print and download |
-| Rectangle objects: draw, select, move, resize, lock, hide, app kinds, CSS classes and app data, styles, keyboard control | Links and existing PDF annotations, which are painted but not clickable |
+| Rectangle objects: draw, select, move, resize, lock, hide, app kinds, CSS classes and app data, styles, keyboard control, read-only mode | Links and existing PDF annotations, which are painted but not clickable |
 | Loading from a URL with range requests and cookies, or from a local file | Server-side stream sources, password prompts |
 | Getting the document's bytes back in .NET as a chunked stream | Tagged structure exposed to screen readers, a verified accessibility baseline |
 | Blazor component and basic toolbar on InteractiveServer | InteractiveWebAssembly and Auto render modes, which are untested |

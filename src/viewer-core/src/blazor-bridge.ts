@@ -23,6 +23,8 @@ export interface ViewerSubscriptions {
   selection: boolean;
   /** Whether .NET decides what becomes of each object the user draws. Without that, a drawn object is added at once. */
   drawn: boolean;
+  /** Whether .NET decides on each object the user asks to delete. Without that, the object is removed at once. */
+  deleteRequested: boolean;
 }
 
 /**
@@ -65,6 +67,12 @@ export class ViewerBridge {
       if (this.#subscriptions.drawn) {
         event.preventDefault();
         this.#hold(event.detail);
+      }
+    }, { signal });
+    host.addEventListener("pv-delete-requested", (event) => {
+      if (this.#subscriptions.deleteRequested) {
+        event.preventDefault();
+        void this.#notify("NotifyDeleteRequested", event.detail);
       }
     }, { signal });
     // .NET hears only of the object changes the user made. It made the others itself, and a whole document's objects
@@ -135,6 +143,13 @@ export class ViewerBridge {
   setTool = (tool: ViewerTool, defaults: DrawDefaults | null): void => this.#host.setTool(tool, defaults ?? {});
   /** Every object .NET sends is whole, so one it changed replaces the stored object, clearing whatever it left out. */
   applyObjects = (batch: ObjectBatch): void => this.#host.applyObjects(batch);
+  setReadOnly = (readOnly: boolean): void => {
+    this.#host.readOnly = readOnly;
+  };
+  /** Resolves once the move has been applied, which waits for its page if that isn't displayed. */
+  moveObjectBy = async (id: string, deltaX: number, deltaY: number): Promise<void> => {
+    await this.#host.moveObjectBy(id, deltaX, deltaY);
+  };
   commitDraft = (id: string): boolean => this.#host.commitDraft(id);
   discardDraft = (id: string): boolean => this.#host.discardDraft(id);
   selectObjects = (ids: string[]): void => this.#host.selectObjects(ids);

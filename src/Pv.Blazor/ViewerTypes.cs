@@ -156,6 +156,17 @@ public enum ViewerObjectHitArea
     [JsonStringEnumMemberName("border")] Border,
 }
 
+/// <summary>A key that, held with an arrow key, takes the large step. Shift isn't one, because it resizes.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ViewerStepModifier>))]
+public enum ViewerStepModifier
+{
+    [JsonStringEnumMemberName("ctrl")] Control,
+    [JsonStringEnumMemberName("alt")] Alt,
+
+    /// <summary>The Command key on a Mac, and the Windows key elsewhere.</summary>
+    [JsonStringEnumMemberName("meta")] Meta,
+}
+
 /// <summary>
 /// How the viewer behaves. Passing a different record takes effect at once, without ending a gesture in progress, and
 /// the page repaints only when <see cref="HideFormFields"/> or <see cref="Coordinates"/> changes.
@@ -176,6 +187,21 @@ public sealed record PdfViewerOptions
     /// application handles those keys, for example to record undo history.
     /// </summary>
     public bool KeyboardEditing { get; init; } = true;
+
+    /// <summary>
+    /// How far an arrow key moves or resizes the focused object, in page units. A value that isn't a positive number
+    /// is ignored.
+    /// </summary>
+    public double KeyboardStep { get; init; } = 1;
+
+    /// <summary>
+    /// How far an arrow key goes while <see cref="KeyboardLargeStepModifier"/> is held, in page units. A value that
+    /// isn't a positive number is ignored.
+    /// </summary>
+    public double KeyboardLargeStep { get; init; } = 10;
+
+    /// <summary>The key that, held with an arrow key, takes the large step.</summary>
+    public ViewerStepModifier KeyboardLargeStepModifier { get; init; } = ViewerStepModifier.Control;
 
     /// <summary>Rounds rectangles the user creates or changes to whole page units.</summary>
     public bool RoundCoordinates { get; init; }
@@ -211,7 +237,9 @@ public enum EditGesture
     /// <summary>Dragging a handle, or pressing Shift with an arrow key.</summary>
     [JsonStringEnumMemberName("resize")] Resize,
 
-    /// <summary>Pressing an arrow key without Shift.</summary>
+    /// <summary>
+    /// Pressing an arrow key without Shift, or a call to <see cref="PdfViewerController.MoveObjectByAsync"/>.
+    /// </summary>
     [JsonStringEnumMemberName("nudge")] Nudge,
 }
 
@@ -253,6 +281,11 @@ public sealed record ObjectsChangedArgs(long Sequence, IReadOnlyList<ViewerObjec
 /// that, or it's added to whatever document is open by then.
 /// </summary>
 public sealed record ObjectDrawnArgs(ViewerObject Object, CancellationToken CancellationToken);
+
+/// <summary>
+/// The user pressed Delete on <paramref name="Object"/>, which is still one of the viewer's objects.
+/// </summary>
+public sealed record DeleteRequestedArgs(ViewerObject Object);
 
 /// <summary>
 /// The selection changed. <paramref name="PrimaryId"/> is the object selected last, or null when nothing is selected,

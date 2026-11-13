@@ -24,6 +24,7 @@ public partial class PdfViewer
     private PdfSource? _openedSource;
     private PdfViewerOptions? _sentOptions;
     private ViewerSubscriptions _sentSubscriptions;
+    private bool _sentReadOnly;
     /// <summary>
     /// The objects the browser has, as far as .NET knows: those last sent, with the user's changes since.
     /// </summary>
@@ -61,6 +62,13 @@ public partial class PdfViewer
     /// How the viewer behaves. Changing it takes effect at once, without ending a gesture in progress.
     /// </summary>
     [Parameter] public PdfViewerOptions? Options { get; set; }
+
+    /// <summary>
+    /// Keeps the user from selecting, drawing and editing objects, for example while a dialog is open. Objects, the
+    /// selection and the tool stay as they are, and the tool works again as soon as this is false. Your own changes
+    /// through <see cref="Objects"/> and the controller still apply.
+    /// </summary>
+    [Parameter] public bool ReadOnly { get; set; }
 
     /// <summary>
     /// Drives the viewer from code. Without one, the viewer uses its own, which only its toolbar reaches. Give each
@@ -104,6 +112,14 @@ public partial class PdfViewer
     [Parameter] public EventCallback<ObjectDrawnArgs> OnObjectDrawn { get; set; }
 
     /// <summary>
+    /// Raised when the user presses Delete on an object that isn't locked, so your handler can decide whether it
+    /// goes. While this has a handler, the viewer removes nothing itself, and removing the object from
+    /// <see cref="Objects"/> is the only way to delete it, so handle this only when <see cref="Objects"/> is set.
+    /// Without a handler, the object is removed at once and reported through <see cref="OnObjectsChanged"/>.
+    /// </summary>
+    [Parameter] public EventCallback<DeleteRequestedArgs> OnDeleteRequested { get; set; }
+
+    /// <summary>
     /// Raised when the selection changes, whoever changed it. Changes cross the circuit only while it has a handler.
     /// </summary>
     [Parameter] public EventCallback<SelectionChangedArgs> OnSelectionChanged { get; set; }
@@ -121,7 +137,7 @@ public partial class PdfViewer
     /// </summary>
     private ViewerSubscriptions CurrentSubscriptions =>
         new(OnObjectsChanged.HasDelegate || Objects is not null, OnSelectionChanged.HasDelegate,
-            OnObjectDrawn.HasDelegate);
+            OnObjectDrawn.HasDelegate, OnDeleteRequested.HasDelegate);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -200,6 +216,11 @@ public partial class PdfViewer
         {
             _sentSubscriptions = CurrentSubscriptions;
             await bridge.InvokeVoidAsync("subscribe", _sentSubscriptions);
+        }
+        if (!_disposed && ReadOnly != _sentReadOnly)
+        {
+            _sentReadOnly = ReadOnly;
+            await bridge.InvokeVoidAsync("setReadOnly", _sentReadOnly);
         }
         if (!_disposed && (Source is null ? _openedSource is not null : !Source.Equals(_openedSource)))
         {
@@ -301,6 +322,10 @@ public partial class PdfViewer
         await Task.Yield();
         await _sendingChanges.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
+
+    /// <summary>A request made on the previous document, or after the viewer was disposed, isn't passed on.</summary>
+    internal Task HandleDeleteRequestedAsync(DeleteRequestedArgs args) =>
+        _awaitingDocument || _disposed ? Task.CompletedTask : OnDeleteRequested.InvokeAsync(args);
 
     internal async Task HandleDocumentLoadedAsync(DocumentLoadedNotification notification)
     {

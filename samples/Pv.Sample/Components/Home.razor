@@ -21,7 +21,21 @@
             <button type="button" data-testid="read-bytes" @onclick="ReadDocumentBytes">Read document bytes</button>
             <button type="button" data-testid="go-to-page-3" @onclick="GoToThirdPage">Go to page 3</button>
             <button type="button" data-testid="border-hit-area" @onclick="UseBorderHitArea">Use border hit area</button>
+            <button type="button" data-testid="toggle-read-only" @onclick="() => _readOnly = !_readOnly">
+                Toggle read-only
+            </button>
+            <button type="button" data-testid="nudge-right" disabled="@(_selectedObject == "none")"
+                    @onclick="NudgeSelectedRight">
+                Nudge selected right
+            </button>
         </div>
+
+        @if (_deleteRequest is not null)
+        {
+            <button type="button" data-testid="confirm-delete" @onclick="DeleteRequestedObject">
+                Delete @_deleteRequest
+            </button>
+        }
 
         @if (_pendingDialog is not null)
         {
@@ -70,7 +84,7 @@
         <PdfViewer Controller="_controller" Source="_source" InitialPage="Page ?? 1" ShowToolbar="!Headless"
                    Options="_options" Objects="_objects" OnDocumentLoaded="() => _loadCount++"
                    OnObjectsChanged="HandleObjectsChanged" OnSelectionChanged="HandleSelectionChanged"
-                   OnObjectDrawn="DrawnObjectHandler"
+                   OnObjectDrawn="DrawnObjectHandler" OnDeleteRequested="DeleteRequestHandler" ReadOnly="_readOnly"
                    OnError="error => _lastError = error.Code.ToString()" />
     </main>
 </div>
@@ -94,6 +108,8 @@
     private long _documentBytes;
     private string _shownPage = "";
     private int _nextObject = 1;
+    private bool _readOnly;
+    private string? _deleteRequest;
 
     [SupplyParameterFromQuery] public string? Doc { get; set; }
 
@@ -113,6 +129,18 @@
     /// </summary>
     private EventCallback<ObjectDrawnArgs> DrawnObjectHandler =>
         ConfirmDraw ? EventCallback.Factory.Create<ObjectDrawnArgs>(this, ConfirmDrawnObject) : default;
+
+    /// <summary>
+    /// Asks before deleting: pressing Delete only shows a button, and the object goes when it's clicked.
+    /// </summary>
+    [SupplyParameterFromQuery] public bool ConfirmDelete { get; set; }
+
+    /// <summary>
+    /// Set only when deletions are confirmed. Without a handler, the viewer deletes the object itself.
+    /// </summary>
+    private EventCallback<DeleteRequestedArgs> DeleteRequestHandler => ConfirmDelete
+        ? EventCallback.Factory.Create<DeleteRequestedArgs>(this, args => _deleteRequest = args.Object.Id)
+        : default;
 
     /// <summary>
     /// Picks the draw tool and turns to page 3 before the viewer has attached. The controller holds the commands until
@@ -181,6 +209,15 @@
         _shownPage = "";
         await _controller.GoToPageAsync(3);
         _shownPage = _controller.CurrentPage.ToString();
+    }
+
+    /// <summary>The move comes back through the change handler, which writes it into the list.</summary>
+    private Task NudgeSelectedRight() => _controller.MoveObjectByAsync(_selectedObject, 10, 0);
+
+    private void DeleteRequestedObject()
+    {
+        _objects.RemoveAll(viewerObject => viewerObject.Id == _deleteRequest);
+        _deleteRequest = null;
     }
 
     private void UseBorderHitArea() => _options = _options with { ObjectHitArea = ViewerObjectHitArea.Border };

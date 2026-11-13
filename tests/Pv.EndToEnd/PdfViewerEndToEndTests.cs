@@ -354,6 +354,57 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     }
 
     [Fact]
+    public async Task ReadOnly_ShouldSuspendEditingAndResumeIt_WhenToggledFromDotNet()
+    {
+        await OpenAsync();
+        await TestId("add-object").ClickAsync();
+        await Expect(_viewer.Object("code-1")).ToBeVisibleAsync();
+
+        await TestId("toggle-read-only").ClickAsync();
+        await Expect(_viewer.Host).ToHaveAttributeAsync("data-readonly", "true");
+        await _viewer.DragObjectAsync("code-1", 40, 20);
+        var whileReadOnly = await _viewer.PageRectAsync("code-1");
+        await TestId("toggle-read-only").ClickAsync();
+        await Expect(_viewer.Host).ToHaveAttributeAsync("data-readonly", "false");
+        await _viewer.DragObjectAsync("code-1", 40, 20);
+
+        Assert.Equal((50, 50, 150, 80), whileReadOnly);
+        await Expect(TestId("last-change")).ToHaveTextAsync("Updated User code-1");
+        Assert.True((await _viewer.PageRectAsync("code-1")).X > 50);
+    }
+
+    [Fact]
+    public async Task DeleteKey_ShouldRemoveObjectOnlyOnceApplicationRemovesIt_WhenDeleteRequestsAreHandled()
+    {
+        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&confirmDelete=true");
+        await _viewer.WaitForPageAsync();
+        await TestId("add-object").ClickAsync();
+        await _viewer.Object("code-1").ClickAsync();
+
+        await _viewer.Page.Keyboard.PressAsync("Delete");
+        await Expect(TestId("confirm-delete")).ToHaveTextAsync("Delete code-1");
+        var afterKey = await _viewer.Objects.CountAsync();
+        await TestId("confirm-delete").ClickAsync();
+
+        Assert.Equal(1, afterKey);
+        await Expect(_viewer.Objects).ToHaveCountAsync(0);
+    }
+
+    [Fact]
+    public async Task MoveObjectByAsync_ShouldNudgeObjectAndReportItAsUserChange_WhenCalledFromDotNet()
+    {
+        await OpenAsync();
+        await TestId("add-object").ClickAsync();
+        await _viewer.Object("code-1").ClickAsync();
+        await Expect(TestId("selected-object")).ToHaveTextAsync("code-1");
+
+        await TestId("nudge-right").ClickAsync();
+
+        await Expect(_viewer.Object("code-1")).ToHaveAttributeAsync("data-page-rect", "60,50,150,80");
+        await Expect(TestId("last-change")).ToHaveTextAsync("Updated User code-1");
+    }
+
+    [Fact]
     public async Task DrawTool_ShouldReturnKindToDotNet_WhenToolHasKind()
     {
         await OpenAsync();

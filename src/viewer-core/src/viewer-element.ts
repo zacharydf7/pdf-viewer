@@ -4,13 +4,14 @@ import { DocumentError, openDocument } from "./engine.js";
 import type { PageInfo, PvEventMap } from "./events.js";
 import { errorMessage } from "./events.js";
 import type { PageGeometry, Point, Rotation } from "./geometry.js";
-import { displaySize, fitScale, normalizeRotation, pageToDisplay } from "./geometry.js";
+import { displaySize, fitScale, moveRect, normalizeRotation, pageToDisplay } from "./geometry.js";
 import { InteractionController } from "./interaction-controller.js";
 import type { NewPageObject, ObjectBatch, ObjectPatch, ObjectsChanged, PageObject, SelectionChanged }
   from "./object-store.js";
 import { checkAppDataKeys, ObjectStore } from "./object-store.js";
 import { PageView } from "./page-view.js";
 import type { DrawDefaults, ToolOptions, ViewerTool } from "./tool.js";
+import { commitRect } from "./tool.js";
 import type { ResolvedOptions, ViewerOptions, ZoomSetting } from "./viewer-options.js";
 import { defaultOptions, mergeOptions, needsRepaint, normalizeZoom } from "./viewer-options.js";
 
@@ -73,6 +74,7 @@ export class PdfViewerElement extends HTMLElement {
   #rotation: Rotation = 0;
   #tool: ViewerTool = "select";
   #drawDefaults: DrawDefaults = {};
+  #readOnly = false;
 
   connectedCallback(): void {
     if (this.#viewport !== undefined) {
@@ -81,6 +83,7 @@ export class PdfViewerElement extends HTMLElement {
     this.classList.add("pv-viewer");
     this.dataset.documentState = "idle";
     this.dataset.tool = this.#tool;
+    this.dataset.readonly = String(this.#readOnly);
     this.dataset.objectHitArea = this.#options.objectHitArea;
     this.dataset.selectedObject = "";
     this.dataset.lastChange = "0";
@@ -91,7 +94,8 @@ export class PdfViewerElement extends HTMLElement {
     this.#resizeObserver.observe(this.#viewport);
     // Not passive, because it has to stop the browser from zooming the whole page.
     this.#viewport.addEventListener("wheel", (event) => this.#onWheel(event), { passive: false });
-    this.#controller = new InteractionController(this.#viewport, this.#store, toolOptions(this.#options));
+    this.#controller = new InteractionController(this.#viewport, this.#store, toolOptions(this.#options),
+      (id) => this.#onDeleteRequested(id));
     this.#applyTool();
   }
 
@@ -138,6 +142,21 @@ export class PdfViewerElement extends HTMLElement {
   /** The viewing rotation, which is added to any rotation a page already has. */
   get rotation(): Rotation {
     return this.#rotation;
+  }
+
+  /**
+   * Whether the user is kept from selecting, drawing and editing objects, for example while the application shows a
+   * dialog. Objects, the selection and the tool stay as they are, and the tool works again once this is turned off.
+   * The application's own calls still change objects and the selection.
+   */
+  get readOnly(): boolean {
+    return this.#readOnly;
+  }
+
+  set readOnly(readOnly: boolean) {
+    this.#readOnly = readOnly;
+    this.dataset.readonly = String(readOnly);
+    this.#applyTool();
   }
 
   /** The object selected last, or null when nothing is selected. */
@@ -221,10 +240,7 @@ export class PdfViewerElement extends HTMLElement {
 
   /** Turns to an object's page if it isn't displayed, then scrolls only as far as it takes to show the object. */
   async scrollObjectIntoView(id: string): Promise<void> {
-    const object = this.#store.get(id);
-    if (object === undefined) {
-      throw new Error(`No object with id "${id}" exists.`);
-    }
+    const object = this.#requireObject(id);
     if (object.page !== null && object.page !== this.#view?.pageNumber) {
       await this.goToPage(object.page);
     }
@@ -318,6 +334,28 @@ export class PdfViewerElement extends HTMLElement {
   /** Drops a drawn object that a pv-object-drawn listener kept as a draft. Returns whether there was such a draft. */
   discardDraft(id: string): boolean {
     return this.#store.discardDraft(id);
+  }
+
+  /**
+   * Moves an object as an arrow key does: by a distance as displayed, so positive x is right and positive y is down
+   * on screen at any rotation. The object stays on its page, a locked object doesn't move, and the move is reported
+   * as the user's nudge. Resolves to the object as it is afterward, and rejects if it doesn't exist.
+   */
+  async moveObjectBy(id: string, deltaX: number, deltaY: number): Promise<PageObject> {
+    const pageOf = (object: PageObject) => object.page ?? this.#pageNumber;
+    const measured = pageOf(this.#requireObject(id));
+    const geometry = await this.#geometryOfPage(measured);
+    // Read again, because the object can change or go while its page loads. If it's on another page by now, that
+    // page is the one to measure.
+    const object = this.#requireObject(id);
+    if (pageOf(object) !== measured) {
+      return this.moveObjectBy(id, deltaX, deltaY);
+    }
+    if (!object.locked) {
+      const moved = moveRect(geometry, object.rect, deltaX, deltaY);
+      commitRect(this.#store, id, moved, "nudge", geometry, this.#options.roundCoordinates);
+    }
+    return this.#requireObject(id);
   }
 
   /** Selects one object, or none when given null. */
@@ -432,6 +470,28 @@ export class PdfViewerElement extends HTMLElement {
     return this.#objectGeometry(view.page, session.viewRotation(view.page, view.pageNumber, this.#rotation));
   }
 
+  /** The space objects on a page are measured in, whether or not the page is displayed. */
+  async #geometryOfPage(pageNumber: number): Promise<PageGeometry> {
+    if (this.#view?.pageNumber === pageNumber) {
+      return this.#view.objects.geometry;
+    }
+    const session = await this.#requireSession();
+    const page = await session.getPage(pageNumber);
+    try {
+      return this.#objectGeometry(page, session.viewRotation(page, pageNumber, this.#rotation));
+    } finally {
+      page.release();
+    }
+  }
+
+  #requireObject(id: string): PageObject {
+    const object = this.#store.get(id);
+    if (object === undefined) {
+      throw new Error(`No object with id "${id}" exists.`);
+    }
+    return object;
+  }
+
   /** Shows a page's view instead of the current one, ending any gesture on the one it replaces. */
   #replaceView(view: PageView | undefined): void {
     if (this.#view !== undefined) {
@@ -444,8 +504,9 @@ export class PdfViewerElement extends HTMLElement {
     }
   }
 
+  /** While the viewer is read-only no tool is active, and the chosen one is kept for when that ends. */
   #applyTool(): void {
-    this.#controller?.setTool(this.#tool, this.#drawDefaults);
+    this.#controller?.setTool(this.#readOnly ? "none" : this.#tool, this.#drawDefaults);
   }
 
   /** Works out the displayed page's zoom and rotation, and has it repaint. */
@@ -529,6 +590,16 @@ export class PdfViewerElement extends HTMLElement {
   }
 
   /**
+   * Asks listeners whether the user may delete an object. One that cancels the event takes the decision over, and
+   * removes the object itself if it agrees. Otherwise the object is removed at once, as the user's change.
+   */
+  #onDeleteRequested(id: string): void {
+    if (this.#emit("pv-delete-requested", { object: this.#requireObject(id) }, true)) {
+      this.#store.remove(id, "user");
+    }
+  }
+
+  /**
    * Shows the draft, then asks listeners what becomes of it. One that cancels the event keeps it as a draft, and
    * commits or discards it later. Otherwise it's committed at once.
    */
@@ -604,8 +675,9 @@ export class PdfViewerElement extends HTMLElement {
   }
 }
 
-function toolOptions({ keyboardEditing, roundCoordinates }: ResolvedOptions): ToolOptions {
-  return { keyboardEditing, roundCoordinates };
+function toolOptions({ keyboardEditing, keyboardStep, keyboardLargeStep, keyboardLargeStepModifier,
+  roundCoordinates }: ResolvedOptions): ToolOptions {
+  return { keyboardEditing, keyboardStep, keyboardLargeStep, keyboardLargeStepModifier, roundCoordinates };
 }
 
 function clampPage(page: number, pageCount: number): number {

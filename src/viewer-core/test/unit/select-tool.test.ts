@@ -23,8 +23,9 @@ function onHandle(handle: ResizeHandle, x: number, y: number): PointerPress {
   return { ...at(x, y), target: { kind: "handle", id: "a", handle } };
 }
 
-function key(key: string, modifiers: { shiftKey?: boolean; ctrlKey?: boolean } = {}) {
-  return { id: "a", geometry: geometry(), key, shiftKey: false, ctrlKey: false, ...modifiers };
+function key(key: string, modifiers: { shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean } = {}) {
+  return { id: "a", geometry: geometry(), key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false,
+    ...modifiers };
 }
 
 describe("pressing", () => {
@@ -335,13 +336,32 @@ describe("keyboard", () => {
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 101 });
   });
 
-  it("keyDown_ShouldRemoveObject_WhenGivenDelete", () => {
-    const { tool, store } = setup();
+  it("keyDown_ShouldGoByConfiguredSteps_WhenArrowKeyIsGivenWithAndWithoutConfiguredModifier", () => {
+    const { tool, record } = setup({ keyboardStep: 5, keyboardLargeStep: 25, keyboardLargeStepModifier: "alt" });
+
+    tool.keyDown(key("ArrowRight"));
+    tool.keyDown(key("ArrowDown", { altKey: true }));
+
+    expect(record.updated.map(({ gesture, object }) => [gesture, object.rect])).toEqual([
+      ["nudge", { ...rect, x: 105 }], ["nudge", { ...rect, x: 105, y: 175 }],
+    ]);
+  });
+
+  it("keyDown_ShouldLeaveKeyToHost_WhenArrowKeyIsGivenWithModifierThatIsNotConfigured", () => {
+    const { tool, record } = setup({ keyboardLargeStepModifier: "alt" });
+
+    expect(tool.keyDown(key("ArrowRight", { ctrlKey: true }))).toBe(false);
+    expect(record.updated).toEqual([]);
+  });
+
+  it("keyDown_ShouldRequestDeleteAndRemoveNothing_WhenGivenDelete", () => {
+    const { tool, store, record } = setup();
 
     const handled = tool.keyDown(key("Delete"));
 
     expect(handled).toBe(true);
-    expect(store.get("a")).toBeUndefined();
+    expect(record.deleteRequests).toEqual(["a"]);
+    expect(store.get("a")).toBeDefined();
   });
 
   it("keyDown_ShouldClearSelection_WhenGivenEscapeOnLockedObject", () => {

@@ -28,8 +28,9 @@ export class InteractionController {
   /** The page a gesture's positions are measured against, and what removes the gesture's window listener. */
   #gesture: { page: InteractivePage; listener: AbortController } | undefined;
 
-  constructor(root: HTMLElement, store: ObjectStore, options: ToolOptions) {
-    this.#context = { store, show: (preview) => this.#show(preview), options };
+  /** A tool that wants an object deleted calls requestDelete with its id. */
+  constructor(root: HTMLElement, store: ObjectStore, options: ToolOptions, requestDelete: (id: string) => void) {
+    this.#context = { store, show: (preview) => this.#show(preview), options, requestDelete };
     root.addEventListener("pointerdown", (event) => this.#onPointerDown(event));
     root.addEventListener("pointermove", (event) => this.#onPointerMove(event));
     root.addEventListener("pointerup", (event) => this.#onPointerUp(event));
@@ -176,8 +177,9 @@ export class InteractionController {
     if (target?.kind !== "object") {
       return;
     }
-    const { key, shiftKey, ctrlKey } = event;
-    if (this.#tool?.keyDown?.({ id: target.id, geometry: page!.objects.geometry, key, shiftKey, ctrlKey })) {
+    const { key, shiftKey, ctrlKey, altKey, metaKey } = event;
+    const press = { id: target.id, geometry: page!.objects.geometry, key, shiftKey, ctrlKey, altKey, metaKey };
+    if (this.#tool?.keyDown?.(press)) {
       event.preventDefault();
       event.stopPropagation();
     }

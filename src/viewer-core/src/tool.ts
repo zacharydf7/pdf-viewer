@@ -1,7 +1,7 @@
 import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
 import { roundRect } from "./geometry.js";
-import type { ArrowKeyPress } from "./keyboard-editing.js";
-import type { ObjectStore, ObjectStyle } from "./object-store.js";
+import type { ArrowKeyPress, ArrowKeySteps } from "./keyboard-editing.js";
+import type { EditGesture, ObjectStore, ObjectStyle } from "./object-store.js";
 
 export type ViewerTool = "select" | "draw-rect" | "none";
 
@@ -61,7 +61,7 @@ export interface ToolPresentation {
 }
 
 /** The viewer options that tools use. */
-export interface ToolOptions {
+export interface ToolOptions extends ArrowKeySteps {
   /** Whether arrow keys and Delete edit the focused object and Escape clears the selection. */
   keyboardEditing: boolean;
   roundCoordinates: boolean;
@@ -74,6 +74,8 @@ export interface ToolContext {
   readonly options: ToolOptions;
   /** Shows a gesture's preview, or clears it when given undefined, which puts objects back where the store has them. */
   show(preview: Preview | undefined): void;
+  /** Asks for an object to be deleted, which the application may decide on itself. */
+  requestDelete(id: string): void;
 }
 
 /**
@@ -102,4 +104,18 @@ export interface Tool {
 /** A rectangle the user made, rounded to whole page units when coordinate rounding is on. */
 export function finalRect(geometry: PageGeometry, rect: Rect, roundCoordinates: boolean): Rect {
   return roundCoordinates ? roundRect(geometry, rect) : rect;
+}
+
+/**
+ * Stores the rectangle the user gave an object. One that rounds back to the rectangle the object has isn't a change,
+ * so it doesn't reach the store.
+ */
+export function commitRect(store: ObjectStore, id: string, rect: Rect, gesture: EditGesture, geometry: PageGeometry,
+  roundCoordinates: boolean): void {
+  const final = finalRect(geometry, rect, roundCoordinates);
+  const current = store.get(id)!.rect;
+  if (final.x !== current.x || final.y !== current.y || final.width !== current.width
+    || final.height !== current.height) {
+    store.update(id, { rect: final }, "user", gesture);
+  }
 }

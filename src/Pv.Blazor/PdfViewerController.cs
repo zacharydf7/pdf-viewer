@@ -98,6 +98,16 @@ public sealed class PdfViewerController
         }, cancellationToken);
 
     /// <summary>
+    /// Moves an object as an arrow key does: by a distance in page units as displayed, so positive
+    /// <paramref name="deltaX"/> is right and positive <paramref name="deltaY"/> is down on screen at any rotation.
+    /// The object stays on its page, and a locked object doesn't move. The move is reported through
+    /// <see cref="PdfViewer.OnObjectsChanged"/> as the user's <see cref="EditGesture.Nudge"/>, which carries the
+    /// rectangle it ended up with. Completes once the move has been applied, and fails if the object doesn't exist.
+    /// </summary>
+    public Task MoveObjectByAsync(string id, double deltaX, double deltaY) =>
+        SendAsync("moveObjectBy", id, deltaX, deltaY);
+
+    /// <summary>
     /// Keeps a draft from <see cref="PdfViewer.OnObjectDrawn"/> as it was drawn. It becomes an object the user added,
     /// so it's reported through <see cref="PdfViewer.OnObjectsChanged"/>, and with <see cref="PdfViewer.Objects"/> set
     /// it has to go into your list like any other. Does nothing if the draft is gone.

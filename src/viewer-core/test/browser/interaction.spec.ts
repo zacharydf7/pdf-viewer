@@ -159,3 +159,136 @@ test.describe("page change during a gesture", () => {
     expect((await viewer.getObject("a"))!.rect).toEqual(rect);
   });
 });
+
+test.describe("read-only mode", () => {
+  async function setReadOnly(viewer: Awaited<ReturnType<typeof openViewer>>, readOnly: boolean): Promise<void> {
+    await viewer.host.evaluate((element: PdfViewerElement, value) => { element.readOnly = value; }, readOnly);
+  }
+
+  test("readOnly_ShouldShowAsAttributeAndKeepTool_WhenTurnedOnAndOff", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.setTool("draw-rect");
+    const initially = await viewer.host.getAttribute("data-readonly");
+
+    await setReadOnly(viewer, true);
+    const whileOn = [await viewer.host.getAttribute("data-readonly"), await viewer.host.getAttribute("data-tool")];
+    await setReadOnly(viewer, false);
+
+    expect([initially, whileOn]).toEqual(["false", ["true", "draw-rect"]]);
+    await expect(viewer.host).toHaveAttribute("data-readonly", "false");
+  });
+
+  test("readOnly_ShouldIgnorePressAndDrag_WhenUserActsOnObject", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    const from = await viewer.center(viewer.object("a"));
+    await setReadOnly(viewer, true);
+
+    await viewer.drag(from, { x: from.x + 40, y: from.y + 40 });
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "");
+  });
+
+  test("readOnly_ShouldIgnoreKeys_WhenObjectHadFocusBeforeItWasTurnedOn", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.object("a").focus();
+    await setReadOnly(viewer, true);
+
+    for (const key of ["ArrowRight", "Shift+ArrowRight", "Delete", "Escape"]) {
+      await page.keyboard.press(key);
+    }
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+  });
+
+  test("readOnly_ShouldDrawNothing_WhenDrawToolIsChosen", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.setTool("draw-rect");
+    await setReadOnly(viewer, true);
+
+    await viewer.drag(await viewer.pagePoint(0.2, 0.2), await viewer.pagePoint(0.4, 0.3));
+
+    await expect(page.locator("[data-object-id], [data-draft-id], [data-draft]")).toHaveCount(0);
+  });
+
+  test("readOnly_ShouldLeaveObjectsAndSelectionUnchanged_WhenTurnedOnAndOff", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.host.evaluate((element: PdfViewerElement, value) => {
+      element.setObjects([
+        { id: "a", page: 1, rect: value }, { id: "locked", page: 1, rect: value, locked: true },
+        { id: "fixed", page: 1, rect: value, selectable: false }, { id: "hidden", page: 2, rect: value, hidden: true },
+      ]);
+      element.selectObjects(["a", "locked"]);
+    }, rect);
+    const before = await viewer.getObjects();
+    const objectChanges = await viewer.recordEvents("pv-objects-changed");
+    const selectionChanges = await viewer.recordEvents("pv-selection-change");
+
+    await setReadOnly(viewer, true);
+    await setReadOnly(viewer, false);
+
+    expect(await viewer.getObjects()).toEqual(before);
+    expect(await viewer.host.evaluate((element: PdfViewerElement) => element.selectedObjectIds))
+      .toEqual(["a", "locked"]);
+    expect([await objectChanges(), await selectionChanges()]).toEqual([[], []]);
+  });
+
+  test("readOnly_ShouldLetChosenToolWorkAgain_WhenTurnedOff", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.setTool("draw-rect");
+    await setReadOnly(viewer, true);
+
+    await setReadOnly(viewer, false);
+    await viewer.drag(await viewer.pagePoint(0.2, 0.2), await viewer.pagePoint(0.4, 0.3));
+
+    await expect(page.locator("[data-object-id]")).toHaveCount(1);
+  });
+
+  test("readOnly_ShouldHideHandlesUntilTurnedOff_WhenObjectIsSelected", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.object("a").click();
+    await expect(page.locator("[data-handle]")).toHaveCount(8);
+
+    await setReadOnly(viewer, true);
+    const whileOn = await page.locator("[data-handle]").count();
+    await setReadOnly(viewer, false);
+
+    expect(whileOn).toBe(0);
+    await expect(page.locator("[data-handle]")).toHaveCount(8);
+  });
+
+  test("readOnly_ShouldEndDragWithoutChange_WhenTurnedOnDuringIt", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    const events = await viewer.recordUpdated();
+    const from = await viewer.center(viewer.object("a"));
+
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 40, from.y + 40);
+    await setReadOnly(viewer, true);
+    await page.mouse.move(from.x + 60, from.y + 60);
+    await page.mouse.up();
+
+    expect(await events()).toEqual([]);
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  test("readOnly_ShouldStillApplyChanges_WhenApplicationMakesThem", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await setReadOnly(viewer, true);
+
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.updateObject("a", { rect: { x: 5, y: 5, width: 20, height: 20 } });
+      element.selectObject("a");
+    });
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "5,5,20,20");
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+  });
+});

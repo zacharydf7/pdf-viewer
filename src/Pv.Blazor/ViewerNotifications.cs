@@ -25,6 +25,9 @@ internal sealed class ViewerNotifications(PdfViewer viewer)
     [JSInvokable]
     public Task NotifyObjectDrawn(ObjectDrawnNotification notification) =>
         viewer.HandleObjectDrawnAsync(notification);
+
+    [JSInvokable]
+    public Task NotifyDeleteRequested(DeleteRequestedArgs args) => viewer.HandleDeleteRequestedAsync(args);
 }
 
 /// <summary>
@@ -52,7 +55,8 @@ internal sealed record ObjectBatch(IReadOnlyList<ViewerObject> Upsert, IReadOnly
 internal sealed record DocumentLoadedNotification(int PageCount, int Page);
 
 /// <summary>
-/// Which notifications .NET has handlers for. Each one sent costs a message over the circuit, and with
-/// <paramref name="Drawn"/> the browser also keeps each drawn object as a draft until its handler has finished.
+/// Which notifications .NET has handlers for. Each one sent costs a message over the circuit. With
+/// <paramref name="Drawn"/> the browser also keeps each drawn object as a draft until its handler has finished, and
+/// with <paramref name="DeleteRequested"/> it leaves an object the user asks to delete where it is.
 /// </summary>
-internal readonly record struct ViewerSubscriptions(bool Objects, bool Selection, bool Drawn);
+internal readonly record struct ViewerSubscriptions(bool Objects, bool Selection, bool Drawn, bool DeleteRequested);

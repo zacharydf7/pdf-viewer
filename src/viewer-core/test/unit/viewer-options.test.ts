@@ -27,11 +27,25 @@ describe("merging", () => {
     });
 });
 
+describe("keyboard steps", () => {
+  it("mergeOptions_ShouldTakeStepsAndModifier_WhenGivenThem", () => {
+    const given = { keyboardStep: 0.5, keyboardLargeStep: 25, keyboardLargeStepModifier: "alt" } as const;
+
+    expect(mergeOptions(defaultOptions, given)).toEqual({ ...defaultOptions, ...given });
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])("mergeOptions_ShouldKeepSteps_WhenGivenStepOf%s", (step) => {
+    const current: ResolvedOptions = { ...defaultOptions, keyboardStep: 2, keyboardLargeStep: 20 };
+
+    expect(mergeOptions(current, { keyboardStep: step, keyboardLargeStep: step })).toEqual(current);
+  });
+});
+
 describe("repainting", () => {
   it.each([
     ["hideFormFields", true, true], ["coordinates", "display", true],
     ["keyboardEditing", false, false], ["roundCoordinates", true, false], ["wheelZoom", false, false],
-    ["objectHitArea", "border", false], ["initialZoom", 2, false],
+    ["objectHitArea", "border", false], ["initialZoom", 2, false], ["keyboardStep", 5, false],
   ] as const)("needsRepaint_ShouldBe%3$s_WhenOnly%1$sChanges", (option, value, expected) => {
     expect(needsRepaint(defaultOptions, { ...defaultOptions, [option]: value })).toBe(expected);
   });
