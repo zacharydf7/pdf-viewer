@@ -13,7 +13,7 @@ Everything sits inside `<pdf-viewer>`, in the light DOM, so ordinary selectors r
 | `data-error-code` | Present only in the `error` state: `invalid-pdf`, `network`, `password-required`, `password-incorrect`, `unknown` |
 | `data-page-count` | Number of pages, once the document is open |
 | `data-current-page` | The displayed page, starting at 1 |
-| `data-zoom` | The zoom being displayed or rendered, with 1 meaning 100%. Absent until a page has been sized |
+| `data-zoom` | The zoom being displayed or rendered, with 1 meaning 100%. Absent until a page has been sized. The element's `zoom` property gives the same number |
 | `data-tool` | `select`, `draw-rect`, `none` |
 | `data-object-hit-area` | `fill`, or `border` when only an unselected object's edges catch the pointer |
 | `data-selected-object` | ID of the selected object, or empty. With several selected, the one selected last |

@@ -68,6 +68,44 @@ test("getPageInfo_ShouldKeepPageLabel_WhenListenerTriesToChangeReportedLabels", 
   expect(info.label).toBe("i");
 });
 
+test("getPageInfo_ShouldFreePageOnlyAfterItsViewIsGone_WhenAskedAboutDisplayedPage", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 });
+  // pdf.js uses the same page class for every document, so a page from a second document gives access to the method
+  // that frees a page's resources. Wrapping that method records every page the viewer frees.
+  await page.evaluate(async (url) => {
+    const pdfJs = await import("/dist/pdfjs/pdf.min.mjs" as string) as typeof import("pdfjs-dist");
+    const task = pdfJs.getDocument({ url });
+    const pageClass = Object.getPrototypeOf(await (await task.promise).getPage(1)) as { cleanup(): boolean };
+    await task.destroy();
+    const freed: number[] = [];
+    (window as unknown as { freed: number[] }).freed = freed;
+    const cleanup = pageClass.cleanup;
+    pageClass.cleanup = function (this: { pageNumber: number }) {
+      freed.push(this.pageNumber);
+      return cleanup.call(this);
+    };
+  }, fixtureUrl("a4"));
+  const freedPages = () => page.evaluate(() => (window as unknown as { freed: number[] }).freed);
+
+  await viewer.host.evaluate((element: PdfViewerElement) => element.getPageInfo(1));
+  expect(await freedPages()).toEqual([]);
+
+  await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(2));
+  expect(await freedPages()).toEqual([1]);
+});
+
+test("zoom_ShouldReportDisplayedScale_WhenZoomIsFitMode", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  expect(await viewer.host.evaluate((element: PdfViewerElement) => element.zoom)).toBeUndefined();
+
+  await viewer.open("letter");
+
+  const zoom = await viewer.host.evaluate((element: PdfViewerElement) => element.zoom);
+  expect(zoom).toBeGreaterThan(1);
+  await expect(viewer.host).toHaveAttribute("data-zoom", String(zoom));
+});
+
 test("getPageInfo_ShouldReject_WhenPageIsBeyondEnd", async ({ page }) => {
   const viewer = await openViewer(page, { initialZoom: 1 });
 

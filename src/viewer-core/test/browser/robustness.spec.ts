@@ -415,6 +415,23 @@ test.describe("listeners of the document loaded event", () => {
   });
 });
 
+test.describe("listeners that navigate while a document is replaced", () => {
+  // Closing the old document clears its objects, which listeners hear about while that document is still open.
+  test("open_ShouldShowFirstPageOfNewDocument_WhenListenerNavigatesAsOldObjectsAreCleared", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+
+    await viewer.host.evaluate(async (element: PdfViewerElement, url) => {
+      element.addEventListener("pv-objects-replaced", () => void element.goToPage(2), { once: true });
+      await element.open({ kind: "url", url });
+    }, fixtureUrl("a4"));
+
+    await viewer.waitForPage(1);
+    await expect(viewer.pageElement(1)).toHaveAttribute("data-page-width", "595");
+    await expect(viewer.host).toHaveAttribute("data-current-page", "1");
+  });
+});
+
 test.describe("handles", () => {
   test("handles_ShouldHide_WhenSelectedObjectStopsBeingSelectable", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });

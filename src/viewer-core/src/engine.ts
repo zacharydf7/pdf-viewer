@@ -4,6 +4,7 @@ import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import type { TextContent } from "pdfjs-dist/types/src/display/api.js";
 import type { PageGeometry, Rotation } from "./geometry.js";
 import { normalizeRotation } from "./geometry.js";
+import { UseCounter } from "./use-counter.js";
 
 type PdfJs = typeof import("pdfjs-dist");
 
@@ -52,6 +53,7 @@ export interface EnginePage {
   renderCanvas(canvas: HTMLCanvasElement, scale: number, viewRotation: Rotation, options: CanvasOptions): RenderHandle;
   /** Lays out selectable text. Extraction can take seconds on some documents, so its result is cached per page. */
   renderText(container: HTMLElement, scale: number, viewRotation: Rotation): TextRender;
+  /** Lets go of the page. Its resources are freed once everything that got this page has let go. */
   release(): void;
 }
 
@@ -108,10 +110,15 @@ export async function openDocument(source: DocumentSource): Promise<EngineDocume
   }
 
   const textCache = new Map<number, Promise<TextContent>>();
+  // pdf.js gives every caller the same object for a page, so freeing a page's resources has to wait for its last user.
+  const pageUsers = new UseCounter<number>();
   return {
     pageCount: document.numPages,
     pageLabels,
-    getPage: async (pageNumber) => wrapPage(pdfJs, await document.getPage(pageNumber), textCache),
+    async getPage(pageNumber) {
+      const page = await document.getPage(pageNumber);
+      return wrapPage(pdfJs, page, textCache, pageUsers.acquire(pageNumber, () => page.cleanup()));
+    },
     getData: () => document.getData(),
     destroy: () => task.destroy(),
   };
@@ -130,7 +137,8 @@ function cachedTextContent(page: PDFPageProxy, cache: Map<number, Promise<TextCo
   return content;
 }
 
-function wrapPage(pdfJs: PdfJs, page: PDFPageProxy, textCache: Map<number, Promise<TextContent>>): EnginePage {
+function wrapPage(pdfJs: PdfJs, page: PDFPageProxy, textCache: Map<number, Promise<TextContent>>,
+  release: () => void): EnginePage {
   const viewport = (scale: number, viewRotation: Rotation) =>
     page.getViewport({ scale, rotation: normalizeRotation(page.rotate + viewRotation) });
   // The layer is laid out unrotated, and pv.css rotates it from the attribute pdf.js sets.
@@ -190,7 +198,7 @@ function wrapPage(pdfJs: PdfJs, page: PDFPageProxy, textCache: Map<number, Promi
         },
       };
     },
-    release: () => page.cleanup(),
+    release,
   };
 }
 

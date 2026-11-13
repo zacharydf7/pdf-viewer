@@ -1,9 +1,9 @@
 import type { DocumentSource } from "./engine.js";
 import type { PageInfo, PvEventMap } from "./events.js";
+import { errorMessage } from "./events.js";
 import type { DrawDefaults, ViewerTool } from "./object-layer.js";
 import type { NewPageObject, PageObject } from "./object-store.js";
 import type { PdfViewerElement, ViewerOptions, ZoomSetting } from "./viewer-element.js";
-import { errorMessage } from "./viewer-element.js";
 
 /** The part of Blazor's DotNetObjectReference this module needs. */
 interface DotNetReference {
@@ -82,7 +82,11 @@ export class ViewerBridge {
   goToPage = (page: number): void => this.#run(this.#host.goToPage(page));
   setZoom = (zoom: ZoomSetting): void => this.#run(this.#host.setZoom(zoom));
   /** Does nothing until a page has been sized, because until then there's no zoom to multiply. */
-  zoomBy = (factor: number): void => this.#run(this.#host.setZoom(Number(this.#host.dataset.zoom) * factor));
+  zoomBy = (factor: number): void => {
+    if (this.#host.zoom !== undefined) {
+      this.#run(this.#host.setZoom(this.#host.zoom * factor));
+    }
+  };
   setRotation = (degrees: number): void => this.#run(this.#host.setRotation(degrees));
   setPageRotation = (page: number, degrees: number | null): void => this.#run(this.#host.setPageRotation(page, degrees));
   setTool = (tool: ViewerTool, defaults: DrawDefaults | null): void => this.#host.setTool(tool, defaults ?? {});

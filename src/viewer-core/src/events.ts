@@ -40,6 +40,10 @@ export interface PageInfo {
   rotation: Rotation;
 }
 
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Every event the viewer raises, with its detail. All are bubbling CustomEvents on the element. */
 export interface PvEventMap {
   "pv-document-loaded": DocumentLoaded;
