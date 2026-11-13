@@ -100,8 +100,9 @@ A draft is drawn dashed, in the color and border width the draw tool gives its o
 pointer during a draw looks the same.
 
 A draft is visible, but it isn't an object. It has no `data-object-id`, isn't counted in `data-object-count`, isn't
-returned by `getObjects()`, and can't be selected, moved or resized. Like an object, it appears only while its page is
-displayed.
+returned by `getObjects()`, and can't be selected, moved or resized. Because it carries its draw tool's
+`data-object-kind`, a selector on that attribute alone matches drafts too; add `[data-object-id]` to match only objects.
+Like an object, it appears only while its page is displayed.
 
 `commitDraft(id)` on the element adds the draft as an object and reports it as a change the user made.
 `discardDraft(id)` drops it. Each returns whether there was such a draft. Adding an object with a draft's ID, through
