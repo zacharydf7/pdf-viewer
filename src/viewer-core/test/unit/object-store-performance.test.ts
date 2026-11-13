@@ -65,7 +65,7 @@ test("replaceAll_ShouldStayWithinBudget_WhenAll50000ObjectsAreUnchanged", () => 
   expect(time).toBeLessThan(300);
 });
 
-test("apply_ShouldStayWithinBudget_WhenBatchChanges1000Of50000Objects", () => {
+test("apply_ShouldStayWithinBudget_WhenBatchChanges2000Of50000Objects", () => {
   const store = filledStore();
   const upsert = manyObjects().slice(0, 1_000).map((object) => ({ ...object, locked: true }));
   const remove = Array.from({ length: 1_000 }, (_, index) => `object-${count - 1 - index}`);
