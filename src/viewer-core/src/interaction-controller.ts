@@ -3,7 +3,8 @@ import { fractionToPage } from "./geometry.js";
 import type { ObjectStore } from "./object-store.js";
 import type { ObjectView } from "./object-view.js";
 import { SelectTool } from "./select-tool.js";
-import type { PointerInput, Preview, Tool, ToolContext, ToolOptions, ToolPresentation, ViewerTool } from "./tool.js";
+import type { DrawDefaults, PointerInput, Preview, Tool, ToolContext, ToolOptions, ToolPresentation, ViewerTool }
+  from "./tool.js";
 
 /** With no tool, objects ignore the pointer and the keyboard. */
 const inactive: ToolPresentation = { pointer: "none", focusable: false, handles: false };
@@ -22,13 +23,13 @@ export interface InteractivePage {
  */
 export class InteractionController {
   readonly #pages = new Set<InteractivePage>();
-  readonly #context: ToolContext;
+  readonly #context: ToolContext & { options: ToolOptions };
   #tool: Tool | undefined;
   /** The page a gesture's positions are measured against, and what removes the gesture's window listener. */
   #gesture: { page: InteractivePage; listener: AbortController } | undefined;
 
-  constructor(root: HTMLElement, store: ObjectStore) {
-    this.#context = { store, show: (preview) => this.#show(preview) };
+  constructor(root: HTMLElement, store: ObjectStore, options: ToolOptions) {
+    this.#context = { store, show: (preview) => this.#show(preview), options };
     root.addEventListener("pointerdown", (event) => this.#onPointerDown(event));
     root.addEventListener("pointermove", (event) => this.#onPointerMove(event));
     root.addEventListener("pointerup", (event) => this.#onPointerUp(event));
@@ -46,12 +47,17 @@ export class InteractionController {
     return this.#tool?.presentation ?? inactive;
   }
 
-  /** Starts a tool with these options, canceling any gesture the previous tool had under way. */
-  setTool(tool: ViewerTool, options: ToolOptions): void {
+  /** Takes effect at once, even during a gesture, which carries on under the new options. */
+  set options(options: ToolOptions) {
+    this.#context.options = options;
+  }
+
+  /** Starts a tool, canceling any gesture the previous tool had under way. The draw tool applies the defaults. */
+  setTool(tool: ViewerTool, drawDefaults: DrawDefaults): void {
     this.#cancelGesture();
     const context = this.#context;
-    this.#tool = tool === "select" ? new SelectTool(context, options)
-      : tool === "draw-rect" ? new DrawRectTool(context, options)
+    this.#tool = tool === "select" ? new SelectTool(context)
+      : tool === "draw-rect" ? new DrawRectTool(context, drawDefaults)
         : undefined;
     for (const page of this.#pages) {
       page.objects.presentation = this.presentation;

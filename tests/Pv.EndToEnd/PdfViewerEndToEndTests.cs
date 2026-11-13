@@ -409,6 +409,40 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     }
 
     [Fact]
+    public async Task GoToPageAsync_ShouldCompleteAfterPageHasRendered_WhenAwaited()
+    {
+        await OpenAsync();
+
+        await TestId("go-to-page-3").ClickAsync();
+        await Expect(TestId("shown-page")).ToHaveTextAsync("3");
+
+        // Read once, without retrying: the sample shows the page only after the await, so it has rendered by then.
+        Assert.Equal("rendered", await _viewer.PageElement(3).GetAttributeAsync("data-page-state"));
+    }
+
+    [Fact]
+    public async Task Controller_ShouldRunCommandsOnOpeningDocument_WhenIssuedBeforeViewerAttached()
+    {
+        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&earlyCommands=true");
+
+        await Expect(_viewer.Host).ToHaveAttributeAsync("data-tool", "draw-rect");
+        await _viewer.WaitForPageAsync(3);
+        await Expect(_viewer.Page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 3 of 3");
+    }
+
+    [Fact]
+    public async Task Options_ShouldTakeEffect_WhenChangedAfterViewerAttached()
+    {
+        await OpenAsync();
+        await Expect(_viewer.Host).ToHaveAttributeAsync("data-object-hit-area", "fill");
+
+        await TestId("border-hit-area").ClickAsync();
+
+        await Expect(_viewer.Host).ToHaveAttributeAsync("data-object-hit-area", "border");
+        await Expect(_viewer.PageElement()).ToHaveAttributeAsync("data-page-state", "rendered");
+    }
+
+    [Fact]
     public async Task Viewer_ShouldWorkAgainWithoutErrors_WhenPageIsReloaded()
     {
         await OpenAsync();

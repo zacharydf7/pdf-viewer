@@ -11,13 +11,16 @@
         </label>
 
         <div>
-            <button type="button" data-testid="tool-select" @onclick="() => _viewer!.SetToolAsync(ViewerTool.Select)">
+            <button type="button" data-testid="tool-select"
+                    @onclick="() => _controller.SetToolAsync(ViewerTool.Select)">
                 Select
             </button>
             <button type="button" data-testid="tool-draw" @onclick="DrawHeading">Draw heading</button>
             <button type="button" data-testid="add-object" @onclick="AddObject">Add from code</button>
             <button type="button" data-testid="rotate-page" @onclick="RotateCurrentPage">Rotate page to 180</button>
             <button type="button" data-testid="read-bytes" @onclick="ReadDocumentBytes">Read document bytes</button>
+            <button type="button" data-testid="go-to-page-3" @onclick="GoToThirdPage">Go to page 3</button>
+            <button type="button" data-testid="border-hit-area" @onclick="UseBorderHitArea">Use border hit area</button>
         </div>
 
         @if (_pendingDialog is not null)
@@ -57,17 +60,15 @@
             <dd data-testid="load-count">@_loadCount</dd>
             <dt>Document bytes</dt>
             <dd data-testid="document-bytes">@_documentBytes</dd>
+            <dt>Page shown after turning</dt>
+            <dd data-testid="shown-page">@_shownPage</dd>
         </dl>
     </aside>
 
     <main class="sample-viewer">
         @* The headless query option shows the settings an application with its own controls would use. *@
-        <PdfViewer @ref="_viewer" Source="_source" InitialPage="Page ?? 1" ShowToolbar="!Headless"
-                   InitialZoom="Headless ? ViewerZoomMode.FitPage : ViewerZoomMode.FitWidth"
-                   HideFormFields="Headless" KeyboardEditing="!Headless" RoundCoordinates="Headless"
-                   Coordinates="Headless ? ViewerCoordinates.Display : ViewerCoordinates.Page"
-                   ObjectHitArea="Headless ? ViewerObjectHitArea.Border : ViewerObjectHitArea.Fill"
-                   OnDocumentLoaded="HandleDocumentLoaded" OnObjectAdded="HandleObjectAdded"
+        <PdfViewer Controller="_controller" Source="_source" InitialPage="Page ?? 1" ShowToolbar="!Headless"
+                   Options="_options" OnDocumentLoaded="HandleDocumentLoaded" OnObjectAdded="HandleObjectAdded"
                    OnObjectUpdated="HandleObjectUpdated" OnObjectRemoved="HandleObjectRemoved"
                    OnSelectionChanged="HandleSelectionChanged"
                    OnError="error => _lastError = error.Code.ToString()" />
@@ -75,7 +76,8 @@
 </div>
 
 @code {
-    private PdfViewer? _viewer;
+    private readonly PdfViewerController _controller = new();
+    private PdfViewerOptions _options = new();
     private ElementReference _fileInput;
     private PdfSource? _source;
     private TaskCompletionSource<bool>? _pendingDialog;
@@ -87,6 +89,7 @@
     private string _lastError = "";
     private int _loadCount;
     private long _documentBytes;
+    private string _shownPage = "";
     private int _nextObject = 1;
 
     [SupplyParameterFromQuery] public string? Doc { get; set; }
@@ -100,14 +103,38 @@
     /// </summary>
     [SupplyParameterFromQuery] public bool ConfirmDraw { get; set; }
 
+    /// <summary>
+    /// Picks the draw tool and turns to page 3 before the viewer has attached. The controller holds the commands until
+    /// it does, and the page turn applies to the document as it opens.
+    /// </summary>
+    [SupplyParameterFromQuery] public bool EarlyCommands { get; set; }
+
+    protected override void OnInitialized()
+    {
+        if (EarlyCommands)
+        {
+            _ = DrawHeading();
+            _ = _controller.GoToPageAsync(3);
+        }
+    }
+
     protected override void OnParametersSet()
     {
         _source = Doc is null ? null : PdfSource.FromUrl($"/{Doc}");
+        _options = _options with
+        {
+            InitialZoom = Headless ? ViewerZoomMode.FitPage : ViewerZoomMode.FitWidth,
+            HideFormFields = Headless,
+            KeyboardEditing = !Headless,
+            RoundCoordinates = Headless,
+            Coordinates = Headless ? ViewerCoordinates.Display : ViewerCoordinates.Page,
+            ObjectHitArea = Headless ? ViewerObjectHitArea.Border : ViewerObjectHitArea.Fill,
+        };
     }
 
     private void OpenSelectedFile() => _source = PdfSource.FromFileInput(_fileInput);
 
-    private Task DrawHeading() => _viewer!.SetToolAsync(ViewerTool.DrawRectangle, new ViewerDrawDefaults
+    private Task DrawHeading() => _controller.SetToolAsync(ViewerTool.DrawRectangle, new ViewerDrawDefaults
     {
         Tag = "heading",
         Label = "Heading region",
@@ -117,22 +144,34 @@
     {
         var id = $"code-{_nextObject++}";
         var rect = new PageRect(50, 50, 150, 80);
-        await _viewer!.AddObjectAsync(new ViewerObject(id, _viewer.CurrentPage, rect) { Label = $"Region {id}" });
+        var viewerObject = new ViewerObject(id, _controller.CurrentPage, rect) { Label = $"Region {id}" };
+        await _controller.AddObjectAsync(viewerObject);
     }
 
-    private Task RotateCurrentPage() => _viewer!.SetPageRotationAsync(_viewer.CurrentPage, PageRotation.Rotate180);
+    private Task RotateCurrentPage() =>
+        _controller.SetPageRotationAsync(_controller.CurrentPage, PageRotation.Rotate180);
 
     private async Task ReadDocumentBytes()
     {
         using var stream = new MemoryStream();
-        await _viewer!.CopyDocumentToAsync(stream);
+        await _controller.CopyDocumentToAsync(stream);
         _documentBytes = stream.Length;
     }
+
+    /// <summary>Shows the page reached only once the turn has finished, which is when the page has rendered.</summary>
+    private async Task GoToThirdPage()
+    {
+        _shownPage = "";
+        await _controller.GoToPageAsync(3);
+        _shownPage = _controller.CurrentPage.ToString();
+    }
+
+    private void UseBorderHitArea() => _options = _options with { ObjectHitArea = ViewerObjectHitArea.Border };
 
     private async Task HandleSelectionChanged(SelectionChangedArgs args)
     {
         _selectedObject = args.PrimaryId ?? "none";
-        _selectedIds = string.Join(" ", await _viewer!.GetSelectedObjectIdsAsync());
+        _selectedIds = string.Join(" ", await _controller.GetSelectedObjectIdsAsync());
     }
 
     private void HandleDocumentLoaded()
@@ -154,7 +193,7 @@
             _pendingDialog = null;
             if (!keep)
             {
-                await _viewer!.RemoveObjectAsync(args.Object.Id);
+                await _controller.RemoveObjectAsync(args.Object.Id);
             }
         }
     }

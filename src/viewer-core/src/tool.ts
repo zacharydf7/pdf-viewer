@@ -63,13 +63,13 @@ export interface ToolOptions {
   /** Whether arrow keys and Delete edit the focused object and Escape clears the selection. */
   keyboardEditing: boolean;
   roundCoordinates: boolean;
-  /** Applied to every rectangle drawn. */
-  drawDefaults: DrawDefaults;
 }
 
 /** What a tool works with. It reads and changes objects only through the store, and never touches the DOM. */
 export interface ToolContext {
   store: ObjectStore;
+  /** The viewer's options as they are now. They can change while a tool is active, even during a gesture. */
+  readonly options: ToolOptions;
   /** Shows a gesture's preview, or clears it when given undefined, which puts objects back where the store has them. */
   show(preview: Preview | undefined): void;
 }

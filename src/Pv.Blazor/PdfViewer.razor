@@ -3,24 +3,26 @@
 <div class="pv-root" @attributes="AdditionalAttributes">
     @if (ShowToolbar)
     {
+        var controller = ActiveController;
+        var noDocument = !controller.IsDocumentOpen;
         <div class="pv-toolbar" role="toolbar" aria-label="PDF viewer controls">
-            <button type="button" aria-label="Previous page" disabled="@(_currentPage <= 1)"
-                    @onclick="() => GoToPageAsync(_currentPage - 1)">&#8249;</button>
+            <button type="button" aria-label="Previous page" disabled="@(controller.CurrentPage <= 1)"
+                    @onclick="() => controller.GoToPageAsync(controller.CurrentPage - 1)">&#8249;</button>
             <span class="pv-page-status" role="status">
-                @(_pageCount == 0 ? "No document" : $"Page {_currentPage} of {_pageCount}")
+                @(noDocument ? "No document" : $"Page {controller.CurrentPage} of {controller.PageCount}")
             </span>
-            <button type="button" aria-label="Next page" disabled="@(_currentPage >= _pageCount)"
-                    @onclick="() => GoToPageAsync(_currentPage + 1)">&#8250;</button>
-            <button type="button" aria-label="Zoom out" disabled="@NoDocument"
-                    @onclick="() => ZoomByAsync(1 / ZoomStep)">&#8722;</button>
-            <button type="button" aria-label="Zoom in" disabled="@NoDocument"
-                    @onclick="() => ZoomByAsync(ZoomStep)">+</button>
-            <button type="button" disabled="@NoDocument"
-                    @onclick="() => SetZoomAsync(ViewerZoomMode.FitWidth)">Fit width</button>
-            <button type="button" disabled="@NoDocument"
-                    @onclick="() => SetZoomAsync(ViewerZoomMode.FitPage)">Fit page</button>
-            <button type="button" aria-label="Rotate clockwise" disabled="@NoDocument"
-                    @onclick="RotateClockwiseAsync">&#8635;</button>
+            <button type="button" aria-label="Next page" disabled="@(controller.CurrentPage >= controller.PageCount)"
+                    @onclick="() => controller.GoToPageAsync(controller.CurrentPage + 1)">&#8250;</button>
+            <button type="button" aria-label="Zoom out" disabled="@noDocument"
+                    @onclick="() => controller.ZoomByAsync(1 / ZoomStep)">&#8722;</button>
+            <button type="button" aria-label="Zoom in" disabled="@noDocument"
+                    @onclick="() => controller.ZoomByAsync(ZoomStep)">+</button>
+            <button type="button" disabled="@noDocument"
+                    @onclick="() => controller.SetZoomAsync(ViewerZoomMode.FitWidth)">Fit width</button>
+            <button type="button" disabled="@noDocument"
+                    @onclick="() => controller.SetZoomAsync(ViewerZoomMode.FitPage)">Fit page</button>
+            <button type="button" aria-label="Rotate clockwise" disabled="@noDocument"
+                    @onclick="() => controller.RotateByAsync(90)">&#8635;</button>
         </div>
     }
     @* Blazor renders only this empty element. Everything inside it belongs to the viewer's JavaScript. *@

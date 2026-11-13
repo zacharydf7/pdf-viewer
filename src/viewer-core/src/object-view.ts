@@ -84,6 +84,11 @@ export class ObjectView {
     this.#objectElements.get(id)?.focus({ preventScroll: true });
   }
 
+  /** Scrolls the viewport only as far as it takes to show the object. */
+  scrollIntoView(id: string): void {
+    this.#objectElements.get(id)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
   /** Brings the DOM in line with the store, keeping existing elements so focus survives updates. */
   sync(): void {
     const objects = this.#store.forPage(this.#pageNumber);

@@ -7,8 +7,18 @@ Pages and objects are real DOM elements, so tests can find them by selector, ass
 of working out pixel positions on a canvas. See the [test contract](docs/test-contract.md).
 
 ```razor
-<PdfViewer Source="@documentUrl" InitialPage="1" OnDocumentLoaded="HandleLoaded" OnObjectUpdated="HandleObjectUpdated" />
+<PdfViewer Source="@documentUrl" Controller="_viewer" Options="_options" OnObjectUpdated="HandleObjectUpdated" />
+
+@code {
+    private readonly PdfViewerController _viewer = new();
+    private PdfViewerOptions _options = new() { RoundCoordinates = true };
+
+    private Task ShowPageThree() => _viewer.GoToPageAsync(3);   // completes once page 3 is shown
+}
 ```
+
+The controller drives the viewer from code, including from other components, and holds commands issued before the viewer
+is ready. Options can change at any time.
 
 `Pv` is a placeholder name, and the project will be renamed.
 

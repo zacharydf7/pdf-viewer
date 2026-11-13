@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import type { PvEventMap } from "../../src/events.js";
 import type { NewPageObject, PageObject } from "../../src/object-store.js";
 import type { Rect } from "../../src/geometry.js";
-import type { PdfViewerElement, ViewerOptions, ZoomSetting } from "../../src/viewer-element.js";
+import type { PdfViewerElement } from "../../src/viewer-element.js";
+import type { ViewerOptions, ZoomSetting } from "../../src/viewer-options.js";
 
 const fixturesDirectory = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "tests", "fixtures");
 

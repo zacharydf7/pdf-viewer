@@ -1,27 +1,29 @@
 import type { Point } from "./geometry.js";
 import { clampPoint, rectFromCorners } from "./geometry.js";
 import type { ObjectStore } from "./object-store.js";
-import type { PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext, ToolOptions, ToolPresentation }
+import type { DrawDefaults, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext, ToolPresentation }
   from "./tool.js";
 import { finalRect } from "./tool.js";
 
 /** The smallest width and height a drawn rectangle can have, in page units, so a click doesn't make one. */
 const minimumDrawSize = 2;
 
-export type DrawRectOptions = Pick<ToolOptions, "drawDefaults" | "roundCoordinates">;
-
 /** Draws a rectangle from where the pointer is pressed to where it's released, then selects it. */
 export class DrawRectTool implements Tool {
   readonly presentation: ToolPresentation = { pointer: "page", focusable: true, handles: false };
   readonly #store: ObjectStore;
   readonly #show: (preview: Preview | undefined) => void;
-  readonly #options: DrawRectOptions;
+  /** Kept for its options, which are read at each use because they can change. */
+  readonly #context: ToolContext;
+  readonly #defaults: DrawDefaults;
   #draw: { page: number; start: Point; current: Point } | undefined;
 
-  constructor({ store, show }: ToolContext, options: DrawRectOptions) {
-    this.#store = store;
-    this.#show = show;
-    this.#options = options;
+  /** The defaults are applied to every rectangle drawn. */
+  constructor(context: ToolContext, defaults: DrawDefaults) {
+    this.#store = context.store;
+    this.#show = context.show;
+    this.#context = context;
+    this.#defaults = defaults;
   }
 
   pointerDown({ page, geometry, point }: PointerPress): PressResult {
@@ -49,9 +51,8 @@ export class DrawRectTool implements Tool {
     if (rect.width < minimumDrawSize || rect.height < minimumDrawSize) {
       return;
     }
-    const { drawDefaults, roundCoordinates } = this.#options;
-    const object = { id: newObjectId(), page: draw.page, rect: finalRect(geometry, rect, roundCoordinates) };
-    const added = this.#store.add({ ...object, ...drawDefaults }, "user");
+    const final = finalRect(geometry, rect, this.#context.options.roundCoordinates);
+    const added = this.#store.add({ id: newObjectId(), page: draw.page, rect: final, ...this.#defaults }, "user");
     this.#store.select([added.id], "user");
   }
 

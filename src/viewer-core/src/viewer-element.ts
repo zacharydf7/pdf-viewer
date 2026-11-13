@@ -9,42 +9,12 @@ import { InteractionController } from "./interaction-controller.js";
 import type { NewPageObject, ObjectPatch, PageObject, SelectionChanged } from "./object-store.js";
 import { ObjectStore } from "./object-store.js";
 import { PageView } from "./page-view.js";
-import type { DrawDefaults, ViewerTool } from "./tool.js";
-
-export type ZoomSetting = number | "fit-width" | "fit-page";
-
-export interface ViewerOptions {
-  /** The zoom to start with. Defaults to fit-width. */
-  initialZoom?: ZoomSetting;
-  /** Leaves form fields unpainted, while other annotations still appear. Defaults to false. */
-  hideFormFields?: boolean;
-  /**
-   * Whether arrow keys and Delete edit the focused object and Escape clears the selection. Turn off if the application
-   * handles them. Defaults to true.
-   */
-  keyboardEditing?: boolean;
-  /** Rounds rectangles the user creates or changes to whole page units. Defaults to false. */
-  roundCoordinates?: boolean;
-  /** Whether Ctrl+wheel and pinch gestures zoom. Defaults to true. */
-  wheelZoom?: boolean;
-  /**
-   * What object rectangles are measured against. "page" stays attached to the page's content at any rotation. "display"
-   * is the page as presented after rotation, including its UserUnit, so a rectangle keeps its numbers when a page
-   * rotates. Defaults to "page".
-   */
-  coordinates?: "page" | "display";
-  /**
-   * Where an object catches the pointer. "fill" is its whole area. "border" is a band along its edges, so objects inside
-   * or behind it stay reachable, while a selected or very small object still catches the pointer everywhere. Defaults
-   * to "fill".
-   */
-  objectHitArea?: "fill" | "border";
-}
+import type { DrawDefaults, ToolOptions, ViewerTool } from "./tool.js";
+import type { ResolvedOptions, ViewerOptions, ZoomSetting } from "./viewer-options.js";
+import { defaultOptions, mergeOptions, needsRepaint, normalizeZoom } from "./viewer-options.js";
 
 /** How fast Ctrl+wheel zooms, as a power of the wheel distance. A wheel notch of 100 changes zoom by about 22%. */
 const wheelZoomRate = 0.002;
-const minimumZoom = 0.1;
-const maximumZoom = 10;
 const stylesUrl = new URL("./pv.css", import.meta.url).href;
 let stylesLoaded: Promise<void> | undefined;
 
@@ -89,21 +59,20 @@ export class PdfViewerElement extends HTMLElement {
   #view: PageView | undefined;
   /** Stands for the latest open() or close(). An open that finds another here has been replaced. */
   #openAttempt = {};
+  /** The latest open(), so commands sent while its document loads can wait for it. close() forgets it. */
+  #opening: Promise<void> | undefined;
+  /** A page turn asked for while a document loads. The document opens on it instead of its initial page. */
+  #requestedPage: number | undefined;
   /** Stands for the latest page turn, in the same way. Zooming or resizing while a page loads doesn't replace it. */
   #navigation: object | undefined;
   #pageNumber = 1;
-  #zoom: ZoomSetting = "fit-width";
+  #options = defaultOptions;
+  #zoom: ZoomSetting = defaultOptions.initialZoom;
   /** The zoom being displayed or rendered, as a number: #zoom itself, or the scale a fit mode worked out to. */
   #scale: number | undefined;
   #rotation: Rotation = 0;
   #tool: ViewerTool = "select";
   #drawDefaults: DrawDefaults = {};
-  #hideFormFields = false;
-  #keyboardEditing = true;
-  #roundCoordinates = false;
-  #wheelZoom = true;
-  #coordinates: "page" | "display" = "page";
-  #objectHitArea: "fill" | "border" = "fill";
 
   connectedCallback(): void {
     if (this.#viewport !== undefined) {
@@ -112,7 +81,7 @@ export class PdfViewerElement extends HTMLElement {
     this.classList.add("pv-viewer");
     this.dataset.documentState = "idle";
     this.dataset.tool = this.#tool;
-    this.dataset.objectHitArea = this.#objectHitArea;
+    this.dataset.objectHitArea = this.#options.objectHitArea;
     this.dataset.selectedObject = "";
     this.dataset.lastChange = "0";
     this.#viewport = document.createElement("div");
@@ -122,24 +91,29 @@ export class PdfViewerElement extends HTMLElement {
     this.#resizeObserver.observe(this.#viewport);
     // Not passive, because it has to stop the browser from zooming the whole page.
     this.#viewport.addEventListener("wheel", (event) => this.#onWheel(event), { passive: false });
-    this.#controller = new InteractionController(this.#viewport, this.#store);
+    this.#controller = new InteractionController(this.#viewport, this.#store, toolOptions(this.#options));
     this.#applyTool();
   }
 
-  /** Applies options. Set them before opening a document, or the page repaints to apply them. */
+  /**
+   * Applies the options given. Any left out keep their current values. They take effect at once without ending a
+   * gesture, and the page repaints only for options that change how it's painted or measured. A new initial zoom takes
+   * effect only while no document is open. The zoom carries over from one document to the next, so a change made while
+   * one is open has no effect.
+   */
   configure(options: ViewerOptions): void {
-    if (options.initialZoom !== undefined) {
-      this.#zoom = normalizeZoom(options.initialZoom) ?? this.#zoom;
+    const before = this.#options;
+    const after = this.#options = mergeOptions(before, options);
+    if (this.#session === undefined && after.initialZoom !== before.initialZoom) {
+      this.#zoom = after.initialZoom;
     }
-    this.#keyboardEditing = options.keyboardEditing ?? this.#keyboardEditing;
-    this.#roundCoordinates = options.roundCoordinates ?? this.#roundCoordinates;
-    this.#wheelZoom = options.wheelZoom ?? this.#wheelZoom;
-    this.#hideFormFields = options.hideFormFields ?? this.#hideFormFields;
-    this.#coordinates = options.coordinates ?? this.#coordinates;
-    this.#objectHitArea = options.objectHitArea ?? this.#objectHitArea;
-    this.dataset.objectHitArea = this.#objectHitArea;
-    this.#applyTool();
-    void this.#renderCurrentPage();
+    this.dataset.objectHitArea = after.objectHitArea;
+    if (this.#controller !== undefined) {
+      this.#controller.options = toolOptions(after);
+    }
+    if (needsRepaint(before, after)) {
+      void this.#renderCurrentPage();
+    }
   }
 
   /** Moving the element in the DOM also disconnects it, so teardown only happens if it stays disconnected. */
@@ -161,6 +135,11 @@ export class PdfViewerElement extends HTMLElement {
     return this.#scale;
   }
 
+  /** The viewing rotation, which is added to any rotation a page already has. */
+  get rotation(): Rotation {
+    return this.#rotation;
+  }
+
   /** The object selected last, or null when nothing is selected. */
   get selectedObjectId(): string | null {
     return this.#store.primarySelectedId;
@@ -171,8 +150,17 @@ export class PdfViewerElement extends HTMLElement {
     return this.#store.selectedIds;
   }
 
-  /** Opens a document, replacing any open one. An open() or close() before it finishes discards this document. */
-  async open(source: DocumentSource, initialPage = 1): Promise<void> {
+  /**
+   * Opens a document, replacing any open one. An open() or close() before it finishes discards this document.
+   * Commands that need a document, sent while this one loads, wait for it and apply to it.
+   */
+  open(source: DocumentSource, initialPage = 1): Promise<void> {
+    this.#requestedPage = undefined;
+    this.#opening = this.#open(source, initialPage);
+    return this.#opening;
+  }
+
+  async #open(source: DocumentSource, initialPage: number): Promise<void> {
     const attempt = this.#openAttempt = {};
     // Set first, so a test waiting for "ready" can't be satisfied by the previous document.
     this.#setDocumentState("loading");
@@ -199,7 +187,7 @@ export class PdfViewerElement extends HTMLElement {
     const session = this.#session = new DocumentSession(opened);
     this.dataset.pageCount = String(session.pageCount);
     const previousPage = this.#pageNumber;
-    const firstPage = clampPage(initialPage, session.pageCount);
+    const firstPage = clampPage(this.#requestedPage ?? initialPage, session.pageCount);
     this.#pageNumber = firstPage;
     this.dataset.currentPage = String(firstPage);
     this.#setDocumentState("ready");
@@ -213,14 +201,34 @@ export class PdfViewerElement extends HTMLElement {
 
   async close(): Promise<void> {
     this.#openAttempt = {};
+    this.#opening = undefined;
     this.#setDocumentState("idle");
     await this.#closeDocument();
   }
 
+  /**
+   * Turns to a page, and resolves once it's shown. While a document is opening, it opens on this page instead, and this
+   * resolves once that document is shown.
+   */
   async goToPage(pageNumber: number): Promise<void> {
-    if (this.#session !== undefined) {
+    if (this.#session === undefined && this.#opening !== undefined) {
+      this.#requestedPage = pageNumber;
+      await this.#opening;
+    } else if (this.#session !== undefined) {
       await this.#showPage(this.#session, clampPage(pageNumber, this.#session.pageCount));
     }
+  }
+
+  /** Turns to an object's page if it isn't displayed, then scrolls only as far as it takes to show the object. */
+  async scrollObjectIntoView(id: string): Promise<void> {
+    const object = this.#store.get(id);
+    if (object === undefined) {
+      throw new Error(`No object with id "${id}" exists.`);
+    }
+    if (object.page !== this.#view?.pageNumber) {
+      await this.goToPage(object.page);
+    }
+    this.#view?.objects.scrollIntoView(id);
   }
 
   /** Sets the zoom. A number that isn't finite is ignored, since there's no page size it could produce. */
@@ -244,7 +252,7 @@ export class PdfViewerElement extends HTMLElement {
    */
   async setPageRotation(pageNumber: number, degrees: number | null): Promise<void> {
     const rotation = degrees === null ? null : normalizeRotation(degrees);
-    this.#session?.setPageRotation(pageNumber, rotation);
+    (await this.#openedSession())?.setPageRotation(pageNumber, rotation);
     if (pageNumber === this.#pageNumber) {
       await this.#renderCurrentPage();
     }
@@ -252,7 +260,7 @@ export class PdfViewerElement extends HTMLElement {
 
   /** The original document's bytes. For a URL source, this fetches whatever hasn't been fetched yet. */
   async getDocumentData(): Promise<Uint8Array> {
-    return this.#requireSession().getData();
+    return (await this.#requireSession()).getData();
   }
 
   setTool(tool: ViewerTool, defaults: DrawDefaults = {}): void {
@@ -299,7 +307,7 @@ export class PdfViewerElement extends HTMLElement {
 
   /** A page's label, and its size and rotation in the coordinates objects use, whether or not it's displayed. */
   async getPageInfo(pageNumber: number): Promise<PageInfo> {
-    const session = this.#requireSession();
+    const session = await this.#requireSession();
     if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > session.pageCount) {
       throw new RangeError(`Page must be from 1 to ${session.pageCount}, but was ${pageNumber}.`);
     }
@@ -381,7 +389,7 @@ export class PdfViewerElement extends HTMLElement {
 
   /** The space object rectangles are measured in. Display space is just a page that isn't rotated any further. */
   #objectGeometry(page: EnginePage, viewRotation: Rotation): PageGeometry {
-    return this.#coordinates === "display"
+    return this.#options.coordinates === "display"
       ? { ...page.cssSize(1, viewRotation), rotation: 0 }
       : page.geometry(viewRotation);
   }
@@ -403,9 +411,7 @@ export class PdfViewerElement extends HTMLElement {
   }
 
   #applyTool(): void {
-    const options = { keyboardEditing: this.#keyboardEditing, roundCoordinates: this.#roundCoordinates,
-      drawDefaults: this.#drawDefaults };
-    this.#controller?.setTool(this.#tool, options);
+    this.#controller?.setTool(this.#tool, this.#drawDefaults);
   }
 
   /** Works out the displayed page's zoom and rotation, and has it repaint. */
@@ -431,7 +437,7 @@ export class PdfViewerElement extends HTMLElement {
     this.#scale = scale;
     this.dataset.zoom = String(scale);
     const geometry = this.#objectGeometry(view.page, viewRotation);
-    await view.render({ scale, viewRotation, geometry, hideFormFields: this.#hideFormFields });
+    await view.render({ scale, viewRotation, geometry, hideFormFields: this.#options.hideFormFields });
   }
 
   /** Returns undefined if the page should fit a size the viewer doesn't have yet, which usually means it's hidden. */
@@ -455,7 +461,7 @@ export class PdfViewerElement extends HTMLElement {
   /** Zooms around the pointer, so whatever is under it stays there. */
   #onWheel(event: WheelEvent): void {
     const element = this.#view?.element;
-    if (!event.ctrlKey || !this.#wheelZoom || element === undefined) {
+    if (!event.ctrlKey || !this.#options.wheelZoom || element === undefined) {
       return;
     }
     event.preventDefault();
@@ -507,11 +513,20 @@ export class PdfViewerElement extends HTMLElement {
     await closing?.destroy();
   }
 
-  #requireSession(): DocumentSession {
+  /** The open document, after waiting for one being opened, so a command sent while it loads applies to it. */
+  async #openedSession(): Promise<DocumentSession | undefined> {
     if (this.#session === undefined) {
-      throw new Error("No document is open.");
+      await this.#opening;
     }
     return this.#session;
+  }
+
+  async #requireSession(): Promise<DocumentSession> {
+    const session = await this.#openedSession();
+    if (session === undefined) {
+      throw new Error("No document is open.");
+    }
+    return session;
   }
 
   #setDocumentState(state: "idle" | "loading" | "ready" | "error"): void {
@@ -537,12 +552,8 @@ export class PdfViewerElement extends HTMLElement {
   }
 }
 
-/** Keeps a zoom within limits, or returns undefined for a number that isn't finite. */
-function normalizeZoom(zoom: ZoomSetting): ZoomSetting | undefined {
-  if (typeof zoom !== "number") {
-    return zoom;
-  }
-  return Number.isFinite(zoom) ? Math.min(Math.max(zoom, minimumZoom), maximumZoom) : undefined;
+function toolOptions({ keyboardEditing, roundCoordinates }: ResolvedOptions): ToolOptions {
+  return { keyboardEditing, roundCoordinates };
 }
 
 function clampPage(page: number, pageCount: number): number {

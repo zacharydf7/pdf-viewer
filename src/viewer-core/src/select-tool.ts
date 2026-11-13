@@ -2,13 +2,11 @@ import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
 import { moveRect, pageToDisplay, resizeRectBy } from "./geometry.js";
 import { rectAfterArrowKey } from "./keyboard-editing.js";
 import type { EditGesture, ObjectStore } from "./object-store.js";
-import type { ObjectKeyPress, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext, ToolOptions,
-  ToolPresentation } from "./tool.js";
+import type { ObjectKeyPress, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext, ToolPresentation }
+  from "./tool.js";
 import { finalRect } from "./tool.js";
 
 const minimumResizeSize = 1;
-
-export type SelectOptions = Pick<ToolOptions, "keyboardEditing" | "roundCoordinates">;
 
 interface DragBase {
   id: string;
@@ -31,13 +29,14 @@ export class SelectTool implements Tool {
   readonly presentation: ToolPresentation = { pointer: "objects", focusable: true, handles: true };
   readonly #store: ObjectStore;
   readonly #show: (preview: Preview | undefined) => void;
-  readonly #options: SelectOptions;
+  /** Kept for its options, which are read at each use because they can change. */
+  readonly #context: ToolContext;
   #drag: Drag | undefined;
 
-  constructor({ store, show }: ToolContext, options: SelectOptions) {
-    this.#store = store;
-    this.#show = show;
-    this.#options = options;
+  constructor(context: ToolContext) {
+    this.#store = context.store;
+    this.#show = context.show;
+    this.#context = context;
   }
 
   pointerDown({ geometry, point, target }: PointerPress): PressResult {
@@ -113,7 +112,7 @@ export class SelectTool implements Tool {
 
   keyDown(input: ObjectKeyPress): boolean {
     const object = this.#store.get(input.id);
-    if (!this.#options.keyboardEditing || this.#drag !== undefined || object === undefined
+    if (!this.#context.options.keyboardEditing || this.#drag !== undefined || object === undefined
       || !object.selectable) {
       return false;
     }
@@ -148,7 +147,7 @@ export class SelectTool implements Tool {
 
   /** A change that rounds back to the original isn't a change, so it doesn't reach the store. */
   #commit(id: string, original: Rect, rect: Rect, gesture: EditGesture, geometry: PageGeometry): void {
-    const final = finalRect(geometry, rect, this.#options.roundCoordinates);
+    const final = finalRect(geometry, rect, this.#context.options.roundCoordinates);
     if (!rectsEqual(final, original)) {
       this.#store.update(id, { rect: final }, "user", gesture);
     }

@@ -13,4 +13,4 @@ export type { Point, Rect, Rotation } from "./geometry.js";
 export type { ChangeOrigin, EditGesture, NewPageObject, ObjectAdded, ObjectPatch, ObjectRemoved, ObjectsReplaced,
   ObjectStyle, ObjectUpdated, PageObject, SelectionChanged } from "./object-store.js";
 export type { DrawDefaults, ViewerTool } from "./tool.js";
-export type { ViewerOptions, ZoomSetting } from "./viewer-element.js";
+export type { ViewerOptions, ZoomSetting } from "./viewer-options.js";

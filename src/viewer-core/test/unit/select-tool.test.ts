@@ -1,19 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { ResizeHandle, Rotation } from "../../src/geometry.js";
 import type { NewPageObject } from "../../src/object-store.js";
-import type { SelectOptions } from "../../src/select-tool.js";
 import { SelectTool } from "../../src/select-tool.js";
-import type { PointerPress } from "../../src/tool.js";
+import type { PointerPress, ToolOptions } from "../../src/tool.js";
 import { at, geometry, recordingContext } from "./tool-support.js";
 
 const rect = { x: 100, y: 150, width: 200, height: 100 };
 
 /** A select tool, and a page with object "a" on it. */
-function setup(options: Partial<SelectOptions> = {}, object: Partial<NewPageObject> = {}) {
-  const { context, store, record } = recordingContext();
+function setup(options: Partial<ToolOptions> = {}, object: Partial<NewPageObject> = {}) {
+  const { context, store, record } = recordingContext(options);
   store.add({ id: "a", page: 1, rect, ...object }, "api");
-  const tool = new SelectTool(context, { keyboardEditing: true, roundCoordinates: false, ...options });
-  return { tool, store, record };
+  const tool = new SelectTool(context);
+  return { tool, store, record, context };
 }
 
 function onObject(x: number, y: number, rotation: Rotation = 0): PointerPress {
@@ -156,6 +155,17 @@ describe("moving", () => {
     const { tool, record } = setup({ roundCoordinates: true });
 
     tool.pointerDown(onObject(150, 200));
+    tool.pointerUp(at(160.4, 200.6));
+
+    expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 110, y: 151 });
+  });
+
+  it("pointerUp_ShouldRoundToWholeUnits_WhenRoundingIsTurnedOnDuringDrag", () => {
+    const { tool, record, context } = setup();
+    tool.pointerDown(onObject(150, 200));
+    tool.pointerMove(at(155.2, 200));
+
+    context.options = { ...context.options, roundCoordinates: true };
     tool.pointerUp(at(160.4, 200.6));
 
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 110, y: 151 });
@@ -348,6 +358,15 @@ describe("keyboard", () => {
       expect(store.get("a")!.rect).toEqual(rect);
       expect(store.selectedIds).toEqual(["a"]);
     });
+
+  it("keyDown_ShouldLeaveKeyToHost_WhenKeyboardEditingIsTurnedOffAfterToolStarted", () => {
+    const { tool, store, context } = setup();
+
+    context.options = { ...context.options, keyboardEditing: false };
+
+    expect(tool.keyDown(key("Delete"))).toBe(false);
+    expect(store.get("a")).toBeDefined();
+  });
 
   it("keyDown_ShouldLeaveKeyToHost_WhenObjectIsNotSelectable", () => {
     const { tool, store } = setup({}, { selectable: false });

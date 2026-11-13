@@ -478,7 +478,7 @@ test.describe("Blazor bridge", () => {
       .toEqual(["NotifySelectionChanged", "NotifySelectionChanged"]);
   });
 
-  test("documentLoaded_ShouldReachDotNetWithoutPageLabels_WhenDocumentDefinesThem", async ({ page }) => {
+  test("documentLoaded_ShouldReachDotNetWithFirstPageButNoPageLabels_WhenDocumentDefinesThem", async ({ page }) => {
     const viewer = new Viewer(page);
     await viewer.goto();
 
@@ -487,11 +487,11 @@ test.describe("Blazor bridge", () => {
       const calls: unknown[][] = [];
       const dotNet = { invokeMethodAsync: (...call: unknown[]) => { calls.push(call); return Promise.resolve(); } };
       attach(element, dotNet, {}, { objects: false, selection: false });
-      await element.open({ kind: "url", url });
+      await element.open({ kind: "url", url }, 7);
       return calls.filter(([method]) => method === "NotifyDocumentLoaded");
     }, fixtureUrl("page-labels"));
 
-    expect(loaded).toEqual([["NotifyDocumentLoaded", { pageCount: 3 }]]);
+    expect(loaded).toEqual([["NotifyDocumentLoaded", { pageCount: 3, page: 3 }]]);
   });
 
   test("selectionChange_ShouldReachDotNetAsCountWithoutIds_WhenSeveralAreSelected", async ({ page }) => {
@@ -569,5 +569,120 @@ test.describe("Blazor bridge", () => {
 
     await expect.poll(errors).toHaveLength(1);
     expect((await errors())[0]).toMatchObject({ code: "command", documentFailed: false });
+  });
+});
+
+test.describe("Blazor bridge commands", () => {
+  test("goToPage_ShouldResolveAfterPageHasRendered_WhenSentFromDotNet", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 }, "mixed-sizes");
+
+    const state = await viewer.host.evaluate(async (element: PdfViewerElement) => {
+      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
+      const bridge = attach(element, { invokeMethodAsync: () => Promise.resolve() }, {},
+        { objects: false, selection: false });
+      await bridge.goToPage(2);
+      return element.querySelector<HTMLElement>(".pv-page")!.dataset;
+    });
+
+    expect([state.pageNumber, state.pageState]).toEqual(["2", "rendered"]);
+  });
+
+  test("subscribe_ShouldStartObjectNotifications_WhenDotNetGainsHandlerLater", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+
+    const calls = await viewer.host.evaluate(async (element: PdfViewerElement, value) => {
+      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
+      const methods: string[] = [];
+      const dotNet = { invokeMethodAsync: (method: string) => { methods.push(method); return Promise.resolve(); } };
+      const bridge = attach(element, dotNet, {}, { objects: false, selection: false });
+      element.addObject({ id: "a", page: 1, rect: value });
+      bridge.subscribe({ objects: true, selection: false });
+      element.removeObject("a");
+      return methods;
+    }, rect);
+
+    expect(calls).toEqual(["NotifyObjectRemoved"]);
+  });
+
+  test("rotateBy_ShouldAddToCurrentRotation_WhenSentFromDotNet", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.setRotation(90);
+
+    await viewer.host.evaluate(async (element: PdfViewerElement) => {
+      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
+      attach(element, { invokeMethodAsync: () => Promise.resolve() }, {}, { objects: false, selection: false })
+        .rotateBy(90);
+    });
+
+    await expect(viewer.pageElement()).toHaveAttribute("data-rotation", "180");
+  });
+
+  test("configure_ShouldApplyOptionsLive_WhenSentFromDotNet", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+
+    await viewer.host.evaluate(async (element: PdfViewerElement) => {
+      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
+      attach(element, { invokeMethodAsync: () => Promise.resolve() }, {}, { objects: false, selection: false })
+        .configure({ objectHitArea: "border" });
+    });
+
+    await expect(viewer.host).toHaveAttribute("data-object-hit-area", "border");
+  });
+});
+
+test.describe("commands sent while a document opens", () => {
+  test("goToPage_ShouldOpenOnThatPageAndResolveOnceShown_WhenSentBeforeDocumentLoads", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+
+    const result = await viewer.host.evaluate(async (element: PdfViewerElement, url) => {
+      const rendered: number[] = [];
+      element.addEventListener("pv-page-rendered", (event) => rendered.push((event as CustomEvent).detail.page));
+      void element.open({ kind: "url", url });
+      await element.goToPage(3);
+      return { rendered, state: element.querySelector<HTMLElement>(".pv-page")!.dataset.pageState };
+    }, fixtureUrl("mixed-sizes"));
+
+    expect(result).toEqual({ rendered: [3], state: "rendered" });
+    await expect(viewer.host).toHaveAttribute("data-current-page", "3");
+  });
+
+  test("setPageRotation_ShouldApply_WhenSentBeforeDocumentLoads", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+
+    await viewer.host.evaluate(async (element: PdfViewerElement, url) => {
+      void element.open({ kind: "url", url });
+      await element.setPageRotation(1, 90);
+    }, fixtureUrl("letter"));
+
+    await expect(viewer.pageElement()).toHaveAttribute("data-rotation", "90");
+  });
+
+  test("getPageInfo_ShouldAnswer_WhenAskedBeforeDocumentLoads", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+
+    const info = await viewer.host.evaluate((element: PdfViewerElement, url) => {
+      void element.open({ kind: "url", url });
+      return element.getPageInfo(2);
+    }, fixtureUrl("mixed-sizes"));
+
+    expect(info.page).toBe(2);
+  });
+
+  test("goToPage_ShouldNotWaitForDiscardedDocument_WhenSentAfterCloseDuringLoad", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+
+    const result = await viewer.host.evaluate(async (element: PdfViewerElement, url) => {
+      let discardedLoadFinished = false;
+      void element.open({ kind: "url", url }).then(() => { discardedLoadFinished = true; });
+      void element.close();
+      await element.goToPage(2);
+      return { discardedLoadFinished, state: element.dataset.documentState };
+    }, fixtureUrl("mixed-sizes"));
+
+    expect(result).toEqual({ discardedLoadFinished: false, state: "idle" });
   });
 });

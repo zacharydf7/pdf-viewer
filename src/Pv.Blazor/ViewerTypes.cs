@@ -103,6 +103,40 @@ public enum ViewerObjectHitArea
     [JsonStringEnumMemberName("border")] Border,
 }
 
+/// <summary>
+/// How the viewer behaves. Passing a different record takes effect at once, without ending a gesture in progress, and
+/// the page repaints only when <see cref="HideFormFields"/> or <see cref="Coordinates"/> changes.
+/// </summary>
+public sealed record PdfViewerOptions
+{
+    /// <summary>
+    /// The zoom to start with. Only a change made while no document is open takes effect, because the zoom carries over
+    /// from one document to the next.
+    /// </summary>
+    public ViewerZoomMode InitialZoom { get; init; } = ViewerZoomMode.FitWidth;
+
+    /// <summary>Leaves form fields unpainted, while other annotations still appear.</summary>
+    public bool HideFormFields { get; init; }
+
+    /// <summary>
+    /// Whether arrow keys and Delete edit the focused object and Escape clears the selection. Turn this off if your
+    /// application handles those keys, for example to record undo history.
+    /// </summary>
+    public bool KeyboardEditing { get; init; } = true;
+
+    /// <summary>Rounds rectangles the user creates or changes to whole page units.</summary>
+    public bool RoundCoordinates { get; init; }
+
+    /// <summary>Whether Ctrl+wheel and pinch gestures zoom.</summary>
+    public bool WheelZoom { get; init; } = true;
+
+    /// <summary>What object rectangles are measured against.</summary>
+    public ViewerCoordinates Coordinates { get; init; } = ViewerCoordinates.Page;
+
+    /// <summary>Where objects catch the pointer.</summary>
+    public ViewerObjectHitArea ObjectHitArea { get; init; } = ViewerObjectHitArea.Fill;
+}
+
 /// <summary>Whether a change came from the person using the viewer or from the application's code.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<ChangeOrigin>))]
 public enum ChangeOrigin

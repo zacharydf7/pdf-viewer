@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { DrawRectOptions } from "../../src/draw-rect-tool.js";
 import { DrawRectTool } from "../../src/draw-rect-tool.js";
-import type { PointerPress } from "../../src/tool.js";
+import type { DrawDefaults, PointerPress } from "../../src/tool.js";
 import { at, recordingContext } from "./tool-support.js";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-function setup(options: Partial<DrawRectOptions> = {}) {
-  const { context, store, record } = recordingContext();
-  const tool = new DrawRectTool(context, { drawDefaults: {}, roundCoordinates: false, ...options });
-  return { tool, store, record };
+function setup({ drawDefaults = {}, roundCoordinates = false }: { drawDefaults?: DrawDefaults;
+  roundCoordinates?: boolean } = {}) {
+  const { context, store, record } = recordingContext({ roundCoordinates });
+  const tool = new DrawRectTool(context, drawDefaults);
+  return { tool, store, record, context };
 }
 
 function press(x: number, y: number): PointerPress {
@@ -123,6 +123,16 @@ describe("drawing", () => {
     const { tool, record } = setup({ roundCoordinates: true });
 
     tool.pointerDown(press(100.4, 200.6));
+    tool.pointerUp(at(130.2, 240.7));
+
+    expect(record.added[0]!.object.rect).toEqual({ x: 100, y: 201, width: 30, height: 40 });
+  });
+
+  it("pointerUp_ShouldRoundToWholeUnits_WhenRoundingIsTurnedOnDuringDraw", () => {
+    const { tool, record, context } = setup();
+    tool.pointerDown(press(100.4, 200.6));
+
+    context.options = { ...context.options, roundCoordinates: true };
     tool.pointerUp(at(130.2, 240.7));
 
     expect(record.added[0]!.object.rect).toEqual({ x: 100, y: 201, width: 30, height: 40 });

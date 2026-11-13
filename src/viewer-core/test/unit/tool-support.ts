@@ -1,7 +1,7 @@
 import type { PageGeometry, Rotation } from "../../src/geometry.js";
 import type { ObjectAdded, ObjectUpdated, SelectionChanged } from "../../src/object-store.js";
 import { ObjectStore } from "../../src/object-store.js";
-import type { PointerInput, Preview, ToolContext } from "../../src/tool.js";
+import type { PointerInput, Preview, ToolContext, ToolOptions } from "../../src/tool.js";
 
 /** What a tool did, in order: "show:draft", "show:object" or "show:none" for previews, and the store changes. */
 export interface ToolRecord {
@@ -12,7 +12,11 @@ export interface ToolRecord {
   selections: SelectionChanged[];
 }
 
-export function recordingContext(): { context: ToolContext; store: ObjectStore; record: ToolRecord } {
+/** A tool context whose options a test can change, as the viewer does, while a tool is active. */
+export type TestContext = ToolContext & { options: ToolOptions };
+
+export function recordingContext(options: Partial<ToolOptions> = {}):
+  { context: TestContext; store: ObjectStore; record: ToolRecord } {
   const record: ToolRecord = { log: [], shown: [], added: [], updated: [], selections: [] };
   const store = new ObjectStore({
     onAdded: (change) => { record.log.push("add"); record.added.push(change); },
@@ -25,7 +29,8 @@ export function recordingContext(): { context: ToolContext; store: ObjectStore; 
     record.log.push(`show:${preview?.kind ?? "none"}`);
     record.shown.push(preview);
   };
-  return { context: { store, show }, store, record };
+  const context = { store, show, options: { keyboardEditing: true, roundCoordinates: false, ...options } };
+  return { context, store, record };
 }
 
 export function geometry(rotation: Rotation = 0): PageGeometry {

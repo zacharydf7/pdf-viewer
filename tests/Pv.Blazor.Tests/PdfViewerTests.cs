@@ -1,4 +1,6 @@
+using System.Reflection;
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
 namespace Pv.Blazor.Tests;
@@ -25,6 +27,47 @@ public class PdfViewerTests : BunitContext
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
+    /// <summary>
+    /// Stands in for the browser: imports a module whose attach call returns <paramref name="bridge"/> once that task
+    /// completes. bUnit's own interop can't hold attach back, and records calls later than they're sent.
+    /// </summary>
+    private sealed class StubRuntime(Task<IJSObjectReference> bridge) : IJSRuntime, IJSObjectReference
+    {
+        public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) =>
+            identifier == "import" ? (TValue)(object)this : (TValue)await bridge;
+
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken,
+            object?[]? args) => InvokeAsync<TValue>(identifier, args);
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>A bridge that records each call as it's made, which is when a real circuit sends it.</summary>
+    private sealed class RecordingBridge : IJSObjectReference
+    {
+        public List<string> Calls { get; } = [];
+
+        /// <summary>
+        /// Holds back the answer to every call of a method until a task completes, like a slow circuit.
+        /// </summary>
+        public (string Method, Task Answered)? Held { get; set; }
+
+        public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args)
+        {
+            Calls.Add(identifier);
+            if (Held is { } held && held.Method == identifier)
+            {
+                await held.Answered;
+            }
+            return default!;
+        }
+
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken,
+            object?[]? args) => InvokeAsync<TValue>(identifier, args);
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     public PdfViewerTests()
     {
         // Strict mode fails any JavaScript call a test didn't plan for.
@@ -33,6 +76,14 @@ public class PdfViewerTests : BunitContext
         _bridge = _module.SetupModule("attach", _ => true);
         _bridge.SetupVoid(_ => true).SetVoidResult();
     }
+
+    /// <summary>What JavaScript notifies, as the viewer handed it over when attaching.</summary>
+    private ViewerNotifications Notifications =>
+        Assert.IsType<DotNetObjectReference<ViewerNotifications>>(AttachArgument(1)).Value;
+
+    private object? AttachArgument(int index) => Assert.Single(_module.Invocations["attach"]).Arguments[index];
+
+    private IEnumerable<string> BridgeCalls => _bridge.Invocations.Select(call => call.Identifier);
 
     [Fact]
     public void PdfViewer_ShouldOpenSourceAtInitialPage_WhenFirstRendered()
@@ -79,7 +130,7 @@ public class PdfViewerTests : BunitContext
 
         viewer.Render(parameters => parameters.Add(component => component.Source, "/b.pdf"));
 
-        Assert.Equal(["open", "open"], _bridge.Invocations.Select(call => call.Identifier));
+        Assert.Equal(["open", "open"], BridgeCalls);
     }
 
     [Fact]
@@ -91,13 +142,13 @@ public class PdfViewerTests : BunitContext
     }
 
     [Fact]
-    public async Task Toolbar_ShouldShowPosition_WhenDocumentLoads()
+    public async Task Toolbar_ShouldShowPositionTheViewerReports_WhenDocumentLoads()
     {
-        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.InitialPage, 2));
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.InitialPage, 9));
 
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(new DocumentLoadedArgs(5)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 5)));
 
-        Assert.Equal("Page 2 of 5", viewer.Find("[role=status]").TextContent);
+        Assert.Equal("Page 5 of 5", viewer.Find("[role=status]").TextContent);
     }
 
     [Fact]
@@ -105,7 +156,7 @@ public class PdfViewerTests : BunitContext
     {
         var viewer = Render<PdfViewer>();
 
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(new DocumentLoadedArgs(5)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 1)));
 
         Assert.True(viewer.Find("[aria-label='Previous page']").HasAttribute("disabled"));
         Assert.False(viewer.Find("[aria-label='Next page']").HasAttribute("disabled"));
@@ -115,7 +166,7 @@ public class PdfViewerTests : BunitContext
     public async Task NextButton_ShouldGoToFollowingPage_WhenClicked()
     {
         var viewer = Render<PdfViewer>();
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(new DocumentLoadedArgs(5)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 1)));
 
         await viewer.Find("[aria-label='Next page']").ClickAsync(new());
 
@@ -125,17 +176,16 @@ public class PdfViewerTests : BunitContext
     }
 
     [Fact]
-    public async Task RotateButton_ShouldAddQuarterTurnEachClick_WhenClickedRepeatedly()
+    public async Task RotateButton_ShouldSendQuarterTurn_WhenClicked()
     {
         var viewer = Render<PdfViewer>();
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(new DocumentLoadedArgs(5)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 1)));
 
-        for (var i = 0; i < 5; i++)
-        {
-            await viewer.Find("[aria-label='Rotate clockwise']").ClickAsync(new());
-        }
+        await viewer.Find("[aria-label='Rotate clockwise']").ClickAsync(new());
 
-        Assert.Equal<object?>([90, 180, 270, 0, 90], _bridge.Invocations.Select(call => call.Arguments[0]));
+        var call = Assert.Single(_bridge.Invocations);
+        Assert.Equal("rotateBy", call.Identifier);
+        Assert.Equal(90, call.Arguments[0]);
     }
 
     [Fact]
@@ -148,7 +198,7 @@ public class PdfViewerTests : BunitContext
         var moved = previous with { Rect = new PageRect(5, 2, 3, 4) };
         var change = new ObjectUpdatedArgs(7, ChangeOrigin.User, moved, previous, EditGesture.Move);
 
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyObjectUpdated(change));
+        await viewer.InvokeAsync(() => Notifications.NotifyObjectUpdated(change));
 
         Assert.Equal(change, received);
     }
@@ -185,9 +235,10 @@ public class PdfViewerTests : BunitContext
     public async Task GetSelectedObjectIdsAsync_ShouldReadIdsFromStream_WhenViewerHasSelection()
     {
         _bridge.Setup<IJSStreamReference>("getSelectedObjectIds").SetResult(new JsonStream("""["a","b"]"""));
-        var viewer = Render<PdfViewer>();
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
 
-        var ids = await viewer.Instance.GetSelectedObjectIdsAsync();
+        var ids = await controller.GetSelectedObjectIdsAsync();
 
         Assert.Equal(["a", "b"], ids);
     }
@@ -200,7 +251,7 @@ public class PdfViewerTests : BunitContext
             parameters.Add(component => component.OnObjectRemoved, args => received = args));
         var change = new ObjectRemovedArgs(9, ChangeOrigin.User, new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
 
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyObjectRemoved(change));
+        await viewer.InvokeAsync(() => Notifications.NotifyObjectRemoved(change));
 
         Assert.Equal(change, received);
     }
@@ -213,7 +264,7 @@ public class PdfViewerTests : BunitContext
             parameters.Add(component => component.OnObjectsReplaced, args => received = args));
         var change = new ObjectsReplacedArgs(10, ChangeOrigin.Api);
 
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyObjectsReplaced(change));
+        await viewer.InvokeAsync(() => Notifications.NotifyObjectsReplaced(change));
 
         Assert.Equal(change, received);
     }
@@ -243,9 +294,10 @@ public class PdfViewerTests : BunitContext
     {
         var expected = new PageInfo(3, "iii", 400, 500, PageRotation.Clockwise90);
         _bridge.Setup<PageInfo>("getPageInfo", 3).SetResult(expected);
-        var viewer = Render<PdfViewer>();
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
 
-        var info = await viewer.Instance.GetPageInfoAsync(3);
+        var info = await controller.GetPageInfoAsync(3);
 
         Assert.Equal(expected, info);
     }
@@ -253,9 +305,10 @@ public class PdfViewerTests : BunitContext
     [Fact]
     public async Task SelectObjectAsync_ShouldSendEmptySelection_WhenGivenNull()
     {
-        var viewer = Render<PdfViewer>();
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
 
-        await viewer.Instance.SelectObjectAsync(null);
+        await controller.SelectObjectAsync(null);
 
         var call = Assert.Single(_bridge.Invocations);
         Assert.Equal("selectObjects", call.Identifier);
@@ -268,10 +321,9 @@ public class PdfViewerTests : BunitContext
         ViewerError? received = null;
         var viewer = Render<PdfViewer>(parameters =>
             parameters.Add(component => component.OnError, error => received = error));
-
         var error = new ViewerError(ViewerErrorCode.InvalidPdf, "Bad file", DocumentClosed: true);
 
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyError(error));
+        await viewer.InvokeAsync(() => Notifications.NotifyError(error));
 
         Assert.Equal(error, received);
     }
@@ -285,7 +337,7 @@ public class PdfViewerTests : BunitContext
         var viewer = Render<PdfViewer>();
 
         Assert.True(viewer.Find($"[aria-label='{label}']").HasAttribute("disabled"));
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(new DocumentLoadedArgs(5)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 1)));
         Assert.False(viewer.Find($"[aria-label='{label}']").HasAttribute("disabled"));
     }
 
@@ -301,10 +353,10 @@ public class PdfViewerTests : BunitContext
     public async Task Toolbar_ShouldResetPosition_WhenOpeningDocumentFails()
     {
         var viewer = Render<PdfViewer>();
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(new DocumentLoadedArgs(5)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 1)));
 
         var error = new ViewerError(ViewerErrorCode.InvalidPdf, "Bad file", DocumentClosed: true);
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyError(error));
+        await viewer.InvokeAsync(() => Notifications.NotifyError(error));
 
         Assert.Equal("No document", viewer.Find("[role=status]").TextContent);
     }
@@ -313,10 +365,10 @@ public class PdfViewerTests : BunitContext
     public async Task Toolbar_ShouldKeepPosition_WhenOnlyPageFails()
     {
         var viewer = Render<PdfViewer>();
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(new DocumentLoadedArgs(5)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 1)));
 
         var error = new ViewerError(ViewerErrorCode.Render, "Bad page", DocumentClosed: false);
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyError(error));
+        await viewer.InvokeAsync(() => Notifications.NotifyError(error));
 
         Assert.Equal("Page 1 of 5", viewer.Find("[role=status]").TextContent);
     }
@@ -328,29 +380,28 @@ public class PdfViewerTests : BunitContext
 
         viewer.Render(parameters => parameters.Add(component => component.Source, (string?)null));
 
-        Assert.Equal(["open", "close"], _bridge.Invocations.Select(call => call.Identifier));
+        Assert.Equal(["open", "close"], BridgeCalls);
     }
 
     [Fact]
-    public async Task SetRotationAsync_ShouldThrowAndKeepRotation_WhenGivenUndefinedEnumValue()
+    public async Task SetRotationAsync_ShouldThrowAndSendNothing_WhenGivenUndefinedEnumValue()
     {
-        var viewer = Render<PdfViewer>();
-        await viewer.InvokeAsync(() => viewer.Instance.NotifyDocumentLoaded(new DocumentLoadedArgs(5)));
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
 
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
-            () => viewer.Instance.SetRotationAsync((PageRotation)45));
-        await viewer.Find("[aria-label='Rotate clockwise']").ClickAsync(new());
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => controller.SetRotationAsync((PageRotation)45));
 
-        Assert.Equal(90, Assert.Single(_bridge.Invocations).Arguments[0]);
+        Assert.Empty(_bridge.Invocations);
     }
 
     [Fact]
     public async Task SetPageRotationAsync_ShouldThrowAndSendNothing_WhenGivenUndefinedEnumValue()
     {
-        var viewer = Render<PdfViewer>();
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
-            () => viewer.Instance.SetPageRotationAsync(1, (PageRotation)45));
+            () => controller.SetPageRotationAsync(1, (PageRotation)45));
 
         Assert.Empty(_bridge.Invocations);
     }
@@ -358,10 +409,11 @@ public class PdfViewerTests : BunitContext
     [Fact]
     public async Task SetPageRotationAsync_ShouldSendDegreesOrNull_WhenGivenRotationOrNull()
     {
-        var viewer = Render<PdfViewer>();
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
 
-        await viewer.Instance.SetPageRotationAsync(2, PageRotation.Clockwise270);
-        await viewer.Instance.SetPageRotationAsync(2, null);
+        await controller.SetPageRotationAsync(2, PageRotation.Clockwise270);
+        await controller.SetPageRotationAsync(2, null);
 
         Assert.Equal<object?>([270, null], _bridge.Invocations.Select(call => call.Arguments[1]));
     }
@@ -393,8 +445,7 @@ public class PdfViewerTests : BunitContext
             }
         });
 
-        var subscriptions = Assert.Single(_module.Invocations["attach"]).Arguments[3]!;
-        Assert.Equal(expected, subscriptions.GetType().GetProperty("objects")!.GetValue(subscriptions));
+        Assert.Equal(expected, Assert.IsType<ViewerSubscriptions>(AttachArgument(3)).Objects);
     }
 
     [Fact]
@@ -403,9 +454,7 @@ public class PdfViewerTests : BunitContext
         Render<PdfViewer>(parameters =>
             parameters.Add(component => component.OnSelectionChanged, (SelectionChangedArgs _) => { }));
 
-        var subscriptions = Assert.Single(_module.Invocations["attach"]).Arguments[3]!;
-        Assert.Equal(false, subscriptions.GetType().GetProperty("objects")!.GetValue(subscriptions));
-        Assert.Equal(true, subscriptions.GetType().GetProperty("selection")!.GetValue(subscriptions));
+        Assert.Equal(new ViewerSubscriptions(Objects: false, Selection: true), AttachArgument(3));
     }
 
     [Fact]
@@ -425,5 +474,301 @@ public class PdfViewerTests : BunitContext
         _bridge.SetupVoid("dispose").SetException(new JSDisconnectedException("The circuit is gone."));
 
         await viewer.Instance.DisposeAsync();
+    }
+    [Fact]
+    public void PdfViewer_ShouldExposeNoMethodsForJavaScript_WhenInspected()
+    {
+        var invokable = typeof(PdfViewer).GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(method => method.GetCustomAttribute<JSInvokableAttribute>() is not null);
+
+        Assert.Empty(invokable);
+    }
+
+    [Fact]
+    public void DocumentLoadedNotification_ShouldReadPageCountAndPage_WhenDeserializedFromBridgeNotification()
+    {
+        var notification =
+            System.Text.Json.JsonSerializer.Deserialize<DocumentLoadedNotification>("""{"pageCount":5,"page":2}""",
+                InteropJson);
+
+        Assert.Equal(new DocumentLoadedNotification(5, 2), notification);
+    }
+
+    [Fact]
+    public void PdfViewerOptions_ShouldSerializeAsViewerReadsThem_WhenSent()
+    {
+        var options = new PdfViewerOptions
+        {
+            InitialZoom = ViewerZoomMode.FitPage, HideFormFields = true, KeyboardEditing = false,
+            RoundCoordinates = true, WheelZoom = false, Coordinates = ViewerCoordinates.Display,
+            ObjectHitArea = ViewerObjectHitArea.Border,
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(options, InteropJson);
+
+        const string expected = """
+            {"initialZoom":"fit-page","hideFormFields":true,"keyboardEditing":false,"roundCoordinates":true,
+            "wheelZoom":false,"coordinates":"display","objectHitArea":"border"}
+            """;
+        Assert.Equal(expected.Replace("\n", "").Replace("\r", ""), json);
+    }
+
+    [Fact]
+    public void Options_ShouldGoWithAttach_WhenFirstRendered()
+    {
+        var options = new PdfViewerOptions { KeyboardEditing = false };
+
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Options, options));
+
+        Assert.Equal(options, AttachArgument(2));
+    }
+
+    [Fact]
+    public void Options_ShouldBeAppliedThroughConfigure_WhenChangedAfterFirstRender()
+    {
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Options, new()));
+        var changed = new PdfViewerOptions { RoundCoordinates = true };
+
+        viewer.Render(parameters => parameters.Add(component => component.Options, changed));
+
+        var call = Assert.Single(_bridge.Invocations);
+        Assert.Equal("configure", call.Identifier);
+        Assert.Equal(changed, call.Arguments[0]);
+    }
+
+    [Fact]
+    public void Options_ShouldSendNothing_WhenEqualRecordIsSetAgain()
+    {
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.Options, new PdfViewerOptions { WheelZoom = false }));
+
+        viewer.Render(parameters =>
+            parameters.Add(component => component.Options, new PdfViewerOptions { WheelZoom = false }));
+
+        Assert.Empty(_bridge.Invocations);
+    }
+
+    [Fact]
+    public async Task Subscriptions_ShouldBeSentAgainAndReachHandler_WhenHandlerIsSetAfterFirstRender()
+    {
+        ObjectAddedArgs? received = null;
+        var viewer = Render<PdfViewer>();
+
+        viewer.Render(parameters => parameters.Add(component => component.OnObjectAdded, args => received = args));
+        var change = new ObjectAddedArgs(1, ChangeOrigin.User, new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
+        await viewer.InvokeAsync(() => Notifications.NotifyObjectAdded(change));
+
+        var call = Assert.Single(_bridge.Invocations);
+        Assert.Equal("subscribe", call.Identifier);
+        Assert.Equal(new ViewerSubscriptions(Objects: true, Selection: false), call.Arguments[0]);
+        Assert.Equal(change, received);
+    }
+
+    [Fact]
+    public async Task Controller_ShouldRunWaitingCommandsInOrderAfterOpening_WhenIssuedBeforeViewerAttaches()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var controller = new PdfViewerController();
+        var tool = controller.SetToolAsync(ViewerTool.DrawRectangle);
+        var zoom = controller.SetZoomAsync(2);
+
+        Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Controller, controller)
+            .Add(component => component.Source, "/a.pdf"));
+        await Task.WhenAll(tool, zoom);
+
+        Assert.Equal(["open", "setTool", "setZoom"], bridge.Calls);
+    }
+
+    [Fact]
+    public async Task Controller_ShouldCancelWaitingCommand_WhenTokenIsCanceledBeforeViewerAttaches()
+    {
+        var controller = new PdfViewerController();
+        using var cancellation = new CancellationTokenSource();
+        var turn = controller.GoToPageAsync(2, cancellation.Token);
+
+        await cancellation.CancelAsync();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => turn);
+        Assert.Empty(_bridge.Invocations);
+    }
+
+    [Fact]
+    public async Task GoToPageAsync_ShouldCompleteOnlyOnceBrowserHasShownPage_WhenCalled()
+    {
+        var shown = _bridge.SetupVoid("goToPage", 4);
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+
+        var turn = controller.GoToPageAsync(4);
+        Assert.False(turn.IsCompleted);
+        shown.SetVoidResult();
+
+        await turn;
+    }
+
+    [Fact]
+    public async Task Controller_ShouldTrackStateFromNotifications_WhenViewerReports()
+    {
+        var controller = new PdfViewerController();
+        var changes = 0;
+        controller.StateChanged += () => changes++;
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 2)));
+        var loaded = (controller.IsDocumentOpen, controller.PageCount, controller.CurrentPage);
+        await viewer.InvokeAsync(() => Notifications.NotifyPageChanged(new PageChangedArgs(4)));
+
+        Assert.Equal((true, 5, 2), loaded);
+        Assert.Equal((true, 5, 4), (controller.IsDocumentOpen, controller.PageCount, controller.CurrentPage));
+        Assert.Equal(2, changes);
+    }
+
+    [Fact]
+    public async Task Controller_ShouldReportNoDocument_WhenNewSourceIsOpening()
+    {
+        var controller = new PdfViewerController();
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Controller, controller)
+            .Add(component => component.Source, "/a.pdf"));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 2)));
+
+        viewer.Render(parameters => parameters.Add(component => component.Source, "/b.pdf"));
+
+        Assert.Equal((false, 0, 0), (controller.IsDocumentOpen, controller.PageCount, controller.CurrentPage));
+    }
+
+    [Fact]
+    public async Task Controller_ShouldMoveStateToNewController_WhenParameterChanges()
+    {
+        var first = new PdfViewerController();
+        var second = new PdfViewerController();
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, first));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(5, 2)));
+
+        viewer.Render(parameters => parameters.Add(component => component.Controller, second));
+        await second.SetZoomAsync(2);
+        var waiting = first.SetZoomAsync(3);
+
+        Assert.Equal((5, 2), (second.PageCount, second.CurrentPage));
+        Assert.Equal((0, 0), (first.PageCount, first.CurrentPage));
+        Assert.Equal(["setZoom"], BridgeCalls);
+        Assert.False(waiting.IsCompleted);
+    }
+
+    [Fact]
+    public void Controller_ShouldRefuseSecondViewer_WhenOneAlreadyHasIt()
+    {
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+
+        var refusal = Record.Exception(() =>
+            Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller)));
+
+        Assert.IsType<InvalidOperationException>(refusal?.InnerException ?? refusal);
+    }
+
+    [Fact]
+    public async Task Controller_ShouldWaitForNextViewer_WhenItsViewerIsDisposed()
+    {
+        var controller = new PdfViewerController();
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+        await viewer.Instance.DisposeAsync();
+
+        var zoom = controller.SetZoomAsync(2);
+
+        Assert.Equal(["dispose"], BridgeCalls);
+        Assert.False(zoom.IsCompleted);
+    }
+
+    [Fact]
+    public async Task Controller_ShouldOpenNewSourceBeforeRunningWaitingCommands_WhenControllerAndSourceChangeTogether()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var first = new PdfViewerController();
+        var second = new PdfViewerController();
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Controller, first)
+            .Add(component => component.Source, "/a.pdf"));
+        var added = second.AddObjectAsync(new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
+
+        viewer.Render(parameters => parameters
+            .Add(component => component.Controller, second)
+            .Add(component => component.Source, "/b.pdf"));
+        await added;
+
+        Assert.Equal(["open", "open", "addObject"], bridge.Calls);
+    }
+
+    [Fact]
+    public async Task Controller_ShouldNotTakeOver_WhenReplacedAgainBeforeItsSourceOpened()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var first = new PdfViewerController();
+        var second = new PdfViewerController();
+        var third = new PdfViewerController();
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Controller, first)
+            .Add(component => component.Source, "/a.pdf"));
+        await viewer.InvokeAsync(() => viewer.Instance.HandleDocumentLoadedAsync(new DocumentLoadedNotification(5, 2)));
+        var answered = new TaskCompletionSource();
+        bridge.Held = ("open", answered.Task);
+        var added = second.AddObjectAsync(new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
+
+        viewer.Render(parameters => parameters
+            .Add(component => component.Controller, second)
+            .Add(component => component.Source, "/b.pdf"));
+        viewer.Render(parameters => parameters
+            .Add(component => component.Controller, third)
+            .Add(component => component.Source, "/c.pdf"));
+        await viewer.InvokeAsync(answered.SetResult);
+        await third.SetZoomAsync(2);
+
+        Assert.Equal(["open", "open", "open", "setZoom"], bridge.Calls);
+        Assert.False(added.IsCompleted);
+    }
+
+    [Fact]
+    public async Task Controller_ShouldGiveUpCopiedState_WhenReplacedAgainWhileOptionsWereBeingSent()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var first = new PdfViewerController();
+        var second = new PdfViewerController();
+        var third = new PdfViewerController();
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, first));
+        await viewer.InvokeAsync(() => viewer.Instance.HandleDocumentLoadedAsync(new DocumentLoadedNotification(5, 2)));
+        var answered = new TaskCompletionSource();
+        bridge.Held = ("configure", answered.Task);
+
+        viewer.Render(parameters => parameters
+            .Add(component => component.Controller, second)
+            .Add(component => component.Options, new PdfViewerOptions { WheelZoom = false }));
+        viewer.Render(parameters => parameters.Add(component => component.Controller, third));
+        await viewer.InvokeAsync(answered.SetResult);
+
+        Assert.Equal((false, 0, 0), (second.IsDocumentOpen, second.PageCount, second.CurrentPage));
+        Assert.Equal((5, 2), (third.PageCount, third.CurrentPage));
+    }
+
+    [Fact]
+    public async Task Controller_ShouldStayFreeForAnotherViewer_WhenViewerIsDisposedWhileAttaching()
+    {
+        var attach = new TaskCompletionSource<IJSObjectReference>();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(attach.Task));
+        var bridge = new RecordingBridge();
+        var controller = new PdfViewerController();
+        var first = Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+
+        await first.Instance.DisposeAsync();
+        await first.InvokeAsync(() => attach.SetResult(bridge));
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+        await controller.SetZoomAsync(2);
+
+        Assert.Equal(["dispose", "setZoom"], bridge.Calls);
     }
 }

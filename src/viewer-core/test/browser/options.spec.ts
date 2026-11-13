@@ -354,3 +354,101 @@ test.describe("document bytes", () => {
     expect(message).toContain("No document");
   });
 });
+
+test.describe("options changed after opening", () => {
+  test("configure_ShouldTurnOffKeyboardEditing_WhenCalledAfterOpen", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    await viewer.object("a").focus();
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ keyboardEditing: false }));
+    await page.keyboard.press("ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  test("configure_ShouldRoundDragWithoutEndingIt_WhenRoundingIsTurnedOnDuringDrag", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1.37 });
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const events = await viewer.recordEvents("pv-object-updated");
+
+    const from = await viewer.center(viewer.object("a"));
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 20, from.y + 20);
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ roundCoordinates: true }));
+    await page.mouse.move(from.x + 31, from.y + 17);
+    await page.mouse.up();
+
+    const [change] = await events();
+    expect(change?.gesture).toBe("move");
+    const { x, y } = change!.object.rect;
+    expect([Number.isInteger(x), Number.isInteger(y), x > start.x]).toEqual([true, true, true]);
+  });
+
+  test("configure_ShouldNotRepaint_WhenOnlyBehaviorOptionsChange", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+
+    const state = await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.configure({ keyboardEditing: false, roundCoordinates: true, wheelZoom: false, objectHitArea: "border" });
+      return element.querySelector<HTMLElement>(".pv-page")!.dataset.pageState;
+    });
+
+    expect(state).toBe("rendered");
+    await expect(viewer.host).toHaveAttribute("data-object-hit-area", "border");
+  });
+
+  test("configure_ShouldRepaint_WhenHideFormFieldsChanges", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+
+    const state = await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.configure({ hideFormFields: true });
+      return element.querySelector<HTMLElement>(".pv-page")!.dataset.pageState;
+    });
+
+    expect(state).toBe("rendering");
+    await viewer.waitForPage();
+  });
+
+  test("configure_ShouldKeepZoom_WhenInitialZoomChangesWhileDocumentIsOpen", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ initialZoom: 2 }));
+
+    await expect(viewer.host).toHaveAttribute("data-zoom", "1");
+    await expect(viewer.pageElement()).toHaveAttribute("data-page-state", "rendered");
+  });
+});
+
+test.describe("scrolling an object into view", () => {
+  test("scrollObjectIntoView_ShouldScrollUntilObjectIsVisible_WhenObjectIsOutsideViewport", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 3 });
+    await viewer.addObject({ id: "a", page: 1, rect: { x: 520, y: 720, width: 40, height: 40 } });
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.scrollObjectIntoView("a"));
+
+    const viewport = (await page.locator(".pv-viewport").boundingBox())!;
+    const box = (await viewer.object("a").boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(viewport.y + viewport.height);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.x + viewport.width);
+  });
+
+  test("scrollObjectIntoView_ShouldTurnToObjectPage_WhenObjectIsOnAnotherPage", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 }, "mixed-sizes");
+    await viewer.addObject({ id: "b", page: 2, rect: start });
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.scrollObjectIntoView("b"));
+
+    await expect(viewer.host).toHaveAttribute("data-current-page", "2");
+    await expect(viewer.object("b")).toBeInViewport();
+  });
+
+  test("scrollObjectIntoView_ShouldReject_WhenObjectDoesNotExist", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+
+    const message = await viewer.host.evaluate((element: PdfViewerElement) =>
+      element.scrollObjectIntoView("missing").then(() => "", (error: Error) => error.message));
+
+    expect(message).toContain("missing");
+  });
+});
