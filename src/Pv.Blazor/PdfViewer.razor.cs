@@ -32,6 +32,25 @@ public partial class PdfViewer
     /// <summary>The sequence of the latest change the browser has reported.</summary>
     private long _lastSequence;
     /// <summary>
+    /// The value of <see cref="SelectedObjectId"/> last acted on, kept to tell when the parameter changes.
+    /// </summary>
+    private string? _requestedSelectedId;
+    /// <summary>The object selected in the browser, as far as .NET knows: the one last sent or reported.</summary>
+    private string? _knownSelectedId;
+    /// <summary>
+    /// Whether the application has asked for <see cref="_selectionToSend"/> and it hasn't been sent yet. It's sent
+    /// after the objects, and the parameter can change again before then: removing the selected object or opening a
+    /// document makes the browser report that nothing is selected, and a bound value follows that report.
+    /// </summary>
+    private bool _selectionWaiting;
+    private string? _selectionToSend;
+    /// <summary>
+    /// Whether the browser has reported a selection since the waiting one was asked for. If it has, a parameter that
+    /// has come back to the known selection is a bound value following that report, and the request still stands. If
+    /// it hasn't, the application has taken its request back.
+    /// </summary>
+    private bool _reportedWhileWaiting;
+    /// <summary>
     /// Whether a document has been asked for and hasn't loaded yet. Object changes arriving meanwhile were made in the
     /// document before it, which has gone.
     /// </summary>
@@ -85,6 +104,21 @@ public partial class PdfViewer
     /// </summary>
     [Parameter] public IReadOnlyCollection<ViewerObject>? Objects { get; set; }
 
+    /// <summary>
+    /// The object to select, or null for none. The viewer selects it when this value changes, after it has applied
+    /// <see cref="Objects"/>, so one render can add an object and select it. An ID the viewer has no object for
+    /// selects nothing, and a bound value becomes null. Bind it with <c>@bind-SelectedObjectId</c> so that it follows
+    /// the user's selections too. Without the binding, the value stays the same when the user selects another
+    /// object, and setting it to that same value again doesn't reselect its object. A newly opened document starts
+    /// with this object selected.
+    /// </summary>
+    [Parameter] public string? SelectedObjectId { get; set; }
+
+    /// <summary>
+    /// Raised whenever the selection changes, with the ID of the object selected last, or null when none is.
+    /// </summary>
+    [Parameter] public EventCallback<string?> SelectedObjectIdChanged { get; set; }
+
     /// <summary>Raised when the document has opened, which can be before its first page has painted.</summary>
     [Parameter] public EventCallback<DocumentLoadedArgs> OnDocumentLoaded { get; set; }
 
@@ -121,7 +155,8 @@ public partial class PdfViewer
     [Parameter] public EventCallback<DeleteRequestedArgs> OnDeleteRequested { get; set; }
 
     /// <summary>
-    /// Raised when the selection changes, whoever changed it. Changes cross the circuit only while it has a handler.
+    /// Raised when the selection changes, whoever changed it. Changes cross the circuit only while this or
+    /// <see cref="SelectedObjectIdChanged"/> has a handler.
     /// </summary>
     [Parameter] public EventCallback<SelectionChangedArgs> OnSelectionChanged { get; set; }
 
@@ -137,8 +172,9 @@ public partial class PdfViewer
     /// has.
     /// </summary>
     private ViewerSubscriptions CurrentSubscriptions =>
-        new(OnObjectsChanged.HasDelegate || Objects is not null, OnSelectionChanged.HasDelegate,
-            OnObjectDrawn.HasDelegate, OnDeleteRequested.HasDelegate);
+        new(OnObjectsChanged.HasDelegate || Objects is not null,
+            OnSelectionChanged.HasDelegate || SelectedObjectIdChanged.HasDelegate, OnObjectDrawn.HasDelegate,
+            OnDeleteRequested.HasDelegate);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -208,6 +244,7 @@ public partial class PdfViewer
     /// <summary>Sends whatever changed since it was last sent, stopping if the viewer is disposed meanwhile.</summary>
     private async Task SendChangesCoreAsync(IJSObjectReference bridge)
     {
+        NoteSelectionRequest();
         if (!_disposed && CurrentOptions != _sentOptions)
         {
             _sentOptions = CurrentOptions;
@@ -227,9 +264,13 @@ public partial class PdfViewer
         {
             _openedSource = Source;
             // Opening or closing ends the document on display at once, so there's nothing to wait for. It also clears
-            // the browser's objects, so whatever the list holds is sent again for the next document.
+            // the browser's objects and selection, so whatever the list holds is sent again for the next document, and
+            // so is the selected object.
             ActiveController.SetState(0, 0);
             _knownObjects = [];
+            _requestedSelectedId = null;
+            _knownSelectedId = null;
+            NoteSelectionRequest();
             _awaitingDocument = true;
             _draftsDiscarded.Cancel();
             _draftsDiscarded = new();
@@ -245,6 +286,44 @@ public partial class PdfViewer
         if (!_disposed && Objects is not null && TakeObjectChanges(Objects) is { } batch)
         {
             await bridge.InvokeVoidAsync("applyObjects", batch);
+        }
+        if (!_disposed && _selectionWaiting)
+        {
+            _selectionWaiting = false;
+            var id = _knownSelectedId = _selectionToSend;
+            var present = await bridge.InvokeAsync<bool>("selectObjectIfPresent", id);
+            // Nothing got selected, and the browser reports that only if something was selected before, so it's
+            // raised here unless the browser has reported a newer selection meanwhile.
+            if (!present && !_disposed && _knownSelectedId == id)
+            {
+                _knownSelectedId = null;
+                await SelectedObjectIdChanged.InvokeAsync(null);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Notes a new value of <see cref="SelectedObjectId"/> as a selection to send, before anything is awaited.
+    /// </summary>
+    private void NoteSelectionRequest()
+    {
+        if (SelectedObjectId == _requestedSelectedId)
+        {
+            return;
+        }
+        _requestedSelectedId = SelectedObjectId;
+        // A bound value that has just caught up with the browser's selection is what the browser already has.
+        // Sending it back would reduce a selection of several objects to that one.
+        if (SelectedObjectId != _knownSelectedId)
+        {
+            _selectionToSend = SelectedObjectId;
+            _selectionWaiting = true;
+            _reportedWhileWaiting = false;
+        }
+        else if (!_reportedWhileWaiting)
+        {
+            // There was no report to follow, so the application itself went back to what is already selected.
+            _selectionWaiting = false;
         }
     }
 
@@ -292,9 +371,14 @@ public partial class PdfViewer
         }
         // Raised without waiting for the objects handler, which may wait on the user for a long time. Otherwise this
         // selection would be held back and arrive after newer ones.
-        var selectionHandled = notification.Selection is var (origin, primaryId, count)
-            ? RaiseAsync(OnSelectionChanged, new SelectionChangedArgs(notification.Sequence, origin, primaryId, count))
-            : Task.CompletedTask;
+        var selectionHandled = Task.CompletedTask;
+        if (notification.Selection is var (origin, primaryId, count))
+        {
+            _knownSelectedId = primaryId;
+            _reportedWhileWaiting = true;
+            selectionHandled = Task.WhenAll(RaiseAsync(SelectedObjectIdChanged, primaryId), RaiseAsync(
+                OnSelectionChanged, new SelectionChangedArgs(notification.Sequence, origin, primaryId, count)));
+        }
         return Task.WhenAll(objectsHandled, selectionHandled);
     }
 

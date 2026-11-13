@@ -140,6 +140,17 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     }
 
     [Fact]
+    public async Task SelectedObjectId_ShouldSelectObject_WhenSetInRenderThatAddsIt()
+    {
+        await OpenAsync();
+
+        await TestId("add-selected-object").ClickAsync();
+
+        await Expect(_viewer.Object("code-1")).ToHaveAttributeAsync("aria-selected", "true");
+        await Expect(TestId("selected-ids")).ToHaveTextAsync("code-1");
+    }
+
+    [Fact]
     public async Task Object_ShouldHaveAccessibleRoleAndName_WhenAddedFromDotNet()
     {
         await OpenAsync();

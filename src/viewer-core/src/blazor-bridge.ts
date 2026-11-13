@@ -153,6 +153,16 @@ export class ViewerBridge {
   commitDraft = (id: string): boolean => this.#host.commitDraft(id);
   discardDraft = (id: string): boolean => this.#host.discardDraft(id);
   selectObjects = (ids: string[]): void => this.#host.selectObjects(ids);
+  /**
+   * Selects one object, or nothing when given null or an id with no object, and returns whether it selected what was
+   * asked. .NET sends its selection parameter with this, and the user can delete the object it names while the call
+   * is on its way.
+   */
+  selectObjectIfPresent = (id: string | null): boolean => {
+    const present = id === null || this.#host.getObject(id) !== undefined;
+    this.#host.selectObject(present ? id : null);
+    return present;
+  };
   /** The selected ids as UTF-8 JSON, which .NET reads as a stream, so their number isn't limited by the hub. */
   getSelectedObjectIds = (): Uint8Array => new TextEncoder().encode(JSON.stringify(this.#host.selectedObjectIds));
   getPageInfo = (page: number): Promise<PageInfo> => this.#host.getPageInfo(page);

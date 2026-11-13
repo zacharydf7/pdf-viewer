@@ -888,6 +888,19 @@ test.describe("editing that .NET takes part in", () => {
     const [[method, { objects }]] = await calls() as [[string, { objects: { updated: { gesture: string }[] } }]];
     expect([method, objects.updated.map(({ gesture }) => gesture)]).toEqual(["NotifyChanges", ["nudge"]]);
   });
+
+  test("selectObjectIfPresent_ShouldSelectNothingAndSaySo_WhenObjectIsGone", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await attachRecording(viewer, { objects: false, selection: false });
+
+    const present = await page.evaluate(() => (window as unknown as RecordingWindow).bridge.selectObjectIfPresent("a"));
+    await expect(viewer.object("a")).toHaveAttribute("aria-selected", "true");
+    const gone = await page.evaluate(() => (window as unknown as RecordingWindow).bridge.selectObjectIfPresent("gone"));
+
+    await expect(viewer.object("a")).toHaveAttribute("aria-selected", "false");
+    expect([present, gone]).toEqual([true, false]);
+  });
 });
 
 test.describe("commands sent while a document opens", () => {

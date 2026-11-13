@@ -17,6 +17,9 @@
             </button>
             <button type="button" data-testid="tool-draw" @onclick="DrawHeading">Draw heading</button>
             <button type="button" data-testid="add-object" @onclick="AddObject">Add from code</button>
+            <button type="button" data-testid="add-selected-object" @onclick="AddSelectedObject">
+                Add from code and select
+            </button>
             <button type="button" data-testid="rotate-page" @onclick="RotateCurrentPage">Rotate page to 180</button>
             <button type="button" data-testid="read-bytes" @onclick="ReadDocumentBytes">Read document bytes</button>
             <button type="button" data-testid="go-to-page-3" @onclick="GoToThirdPage">Go to page 3</button>
@@ -24,7 +27,7 @@
             <button type="button" data-testid="toggle-read-only" @onclick="() => _readOnly = !_readOnly">
                 Toggle read-only
             </button>
-            <button type="button" data-testid="nudge-right" disabled="@(_selectedObject == "none")"
+            <button type="button" data-testid="nudge-right" disabled="@(_selectedId is null)"
                     @onclick="NudgeSelectedRight">
                 Nudge selected right
             </button>
@@ -63,7 +66,7 @@
             <dt>Last change</dt>
             <dd data-testid="last-change">@_lastChange</dd>
             <dt>Selected object</dt>
-            <dd data-testid="selected-object">@_selectedObject</dd>
+            <dd data-testid="selected-object">@(_selectedId ?? "none")</dd>
             <dt>Selected IDs</dt>
             <dd data-testid="selected-ids">@_selectedIds</dd>
             <dt>Last kind</dt>
@@ -82,9 +85,10 @@
     <main class="sample-viewer">
         @* The headless query option shows the settings an application with its own controls would use. *@
         <PdfViewer Controller="_controller" Source="_source" InitialPage="Page ?? 1" ShowToolbar="!Headless"
-                   Options="_options" Objects="_objects" OnDocumentLoaded="() => _loadCount++"
-                   OnObjectsChanged="HandleObjectsChanged" OnSelectionChanged="HandleSelectionChanged"
-                   OnObjectDrawn="DrawnObjectHandler" OnDeleteRequested="DeleteRequestHandler" ReadOnly="_readOnly"
+                   Options="_options" Objects="_objects" @bind-SelectedObjectId="_selectedId"
+                   OnDocumentLoaded="() => _loadCount++" OnObjectsChanged="HandleObjectsChanged"
+                   OnSelectionChanged="ShowSelectedIds" OnObjectDrawn="DrawnObjectHandler"
+                   OnDeleteRequested="DeleteRequestHandler" ReadOnly="_readOnly"
                    OnError="error => _lastError = error.Code.ToString()" />
     </main>
 </div>
@@ -101,7 +105,10 @@
     private readonly List<ViewerObject> _objects = [];
     private string _lastChange = "";
     private string _lastKind = "";
-    private string _selectedObject = "none";
+    /// <summary>
+    /// The selected object's ID, which follows the user's selections and changes the viewer's selection when set.
+    /// </summary>
+    private string? _selectedId;
     private string _selectedIds = "";
     private string _lastError = "";
     private int _loadCount;
@@ -193,6 +200,13 @@
         Record("Added", ChangeOrigin.Api, viewerObject);
     }
 
+    /// <summary>The viewer gets the object before the selection, though both change in one render.</summary>
+    private void AddSelectedObject()
+    {
+        AddObject();
+        _selectedId = _objects[^1].Id;
+    }
+
     private Task RotateCurrentPage() =>
         _controller.SetPageRotationAsync(_controller.CurrentPage, PageRotation.Rotate180);
 
@@ -212,7 +226,7 @@
     }
 
     /// <summary>The move comes back through the change handler, which writes it into the list.</summary>
-    private Task NudgeSelectedRight() => _controller.MoveObjectByAsync(_selectedObject, 10, 0);
+    private Task NudgeSelectedRight() => _controller.MoveObjectByAsync(_selectedId!, 10, 0);
 
     private void DeleteRequestedObject()
     {
@@ -222,11 +236,8 @@
 
     private void UseBorderHitArea() => _options = _options with { ObjectHitArea = ViewerObjectHitArea.Border };
 
-    private async Task HandleSelectionChanged(SelectionChangedArgs args)
-    {
-        _selectedObject = args.PrimaryId ?? "none";
+    private async Task ShowSelectedIds() =>
         _selectedIds = string.Join(" ", await _controller.GetSelectedObjectIdsAsync());
-    }
 
     /// <summary>Writes what the user did into the list, which is what keeps it from being undone.</summary>
     private void HandleObjectsChanged(ObjectsChangedArgs args)

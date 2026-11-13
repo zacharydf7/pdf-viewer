@@ -57,6 +57,9 @@ public class PdfViewerTests : BunitContext
         /// </summary>
         public (string Method, Task Answered)? Held { get; set; }
 
+        /// <summary>Whether the browser has the object it's asked to select.</summary>
+        public bool HasSelectedObject { get; set; } = true;
+
         public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args)
         {
             Calls.Add(identifier);
@@ -65,7 +68,7 @@ public class PdfViewerTests : BunitContext
             {
                 await held.Answered;
             }
-            return default!;
+            return identifier == "selectObjectIfPresent" ? (TValue)(object)HasSelectedObject : default!;
         }
 
         public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken,
@@ -112,6 +115,32 @@ public class PdfViewerTests : BunitContext
         }
     }
 
+    /// <summary>
+    /// An application page that binds its selection to its viewer's, and can change its document, objects and
+    /// selection in one render.
+    /// </summary>
+    private sealed class SelectingPage : ComponentBase
+    {
+        public List<ViewerObject> Objects { get; } = [.. ManyObjects(2)];
+
+        public string? SelectedId { get; set; } = "object-0";
+
+        public string Source { get; set; } = "/a.pdf";
+
+        public void Refresh() => StateHasChanged();
+
+        protected override void BuildRenderTree(RenderTreeBuilder builder)
+        {
+            builder.OpenComponent<PdfViewer>(0);
+            builder.AddComponentParameter(1, nameof(PdfViewer.Source), (PdfSource?)Source);
+            builder.AddComponentParameter(2, nameof(PdfViewer.Objects), Objects);
+            builder.AddComponentParameter(3, nameof(PdfViewer.SelectedObjectId), SelectedId);
+            builder.AddComponentParameter(4, nameof(PdfViewer.SelectedObjectIdChanged),
+                EventCallback.Factory.Create<string?>(this, id => SelectedId = id));
+            builder.CloseComponent();
+        }
+    }
+
     public PdfViewerTests()
     {
         // Strict mode fails any JavaScript call a test didn't plan for.
@@ -119,6 +148,7 @@ public class PdfViewerTests : BunitContext
         _module = JSInterop.SetupModule(ModulePath);
         _bridge = _module.SetupModule("attach", _ => true);
         _bridge.SetupVoid(_ => true).SetVoidResult();
+        _bridge.Setup<bool>("selectObjectIfPresent", _ => true).SetResult(true);
     }
 
     /// <summary>What JavaScript notifies, as the viewer handed it over when attaching.</summary>
@@ -1459,5 +1489,206 @@ public class PdfViewerTests : BunitContext
         var call = Assert.Single(_bridge.Invocations);
         Assert.Equal("moveObjectBy", call.Identifier);
         Assert.Equal(["a", 10d, -2.5], call.Arguments);
+    }
+
+    /// <summary>Every object the browser was asked to select through the selection parameter, in order.</summary>
+    private IEnumerable<object?> SentSelections => _bridge.Invocations
+        .Where(call => call.Identifier == "selectObjectIfPresent")
+        .Select(call => call.Arguments[0]);
+
+    private static ChangesNotification UserSelected(long sequence, string? id) =>
+        new(sequence, null, new SelectionState(ChangeOrigin.User, id, id is null ? 0 : 1));
+
+    /// <summary>What the browser reports when one of the viewer's own commands leaves nothing selected.</summary>
+    private static readonly ChangesNotification NothingSelected =
+        new(1, null, new SelectionState(ChangeOrigin.Api, null, 0));
+
+    [Fact]
+    public void SelectedObjectId_ShouldBeSentAfterObjects_WhenOneRenderAddsAndSelectsObject()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Objects, ManyObjects(0)));
+
+        viewer.Render(parameters => parameters
+            .Add(component => component.Objects, ManyObjects(1))
+            .Add(component => component.SelectedObjectId, "object-0"));
+
+        Assert.Equal(["applyObjects", "selectObjectIfPresent"], bridge.Calls);
+        Assert.Equal(["object-0"], bridge.Arguments[1]);
+    }
+
+    [Fact]
+    public async Task SelectedObjectId_ShouldNotBeSentAgain_WhenUserSelectsAnotherObjectAndValueStays()
+    {
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.SelectedObjectId, "a")
+            .Add(component => component.OnSelectionChanged, (SelectionChangedArgs _) => { }));
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(UserSelected(1, "b")));
+
+        viewer.Render(parameters => parameters.Add(component => component.SelectedObjectId, "a"));
+
+        Assert.Equal(["a"], SentSelections);
+    }
+
+    [Fact]
+    public void SelectedObjectId_ShouldSendNull_WhenClearedAfterSelecting()
+    {
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.SelectedObjectId, "a"));
+
+        viewer.Render(parameters => parameters.Add(component => component.SelectedObjectId, (string?)null));
+
+        Assert.Equal(["a", null], SentSelections);
+    }
+
+    [Fact]
+    public async Task SelectedObjectId_ShouldNotBeSentBack_WhenItFollowsUsersSelection()
+    {
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.SelectedObjectIdChanged, (string? _) => { }));
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(UserSelected(1, "a")));
+
+        viewer.Render(parameters => parameters.Add(component => component.SelectedObjectId, "a"));
+
+        Assert.Empty(SentSelections);
+    }
+
+    [Fact]
+    public void SelectedObjectId_ShouldBeSentAgainAfterObjects_WhenSourceChanges()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var objects = ManyObjects(1);
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Source, "/a.pdf")
+            .Add(component => component.Objects, objects)
+            .Add(component => component.SelectedObjectId, "object-0"));
+
+        viewer.Render(parameters => parameters
+            .Add(component => component.Source, "/b.pdf")
+            .Add(component => component.Objects, objects)
+            .Add(component => component.SelectedObjectId, "object-0"));
+
+        string[] forOneDocument = ["open", "applyObjects", "selectObjectIfPresent"];
+        Assert.Equal([.. forOneDocument, .. forOneDocument], bridge.Calls);
+    }
+
+    [Fact]
+    public async Task SelectedObjectId_ShouldStillBeSent_WhenRemovingSelectedObjectClearsBoundValueFirst()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var page = Render<SelectingPage>();
+        var viewer = page.FindComponent<PdfViewer>().Instance;
+        var answered = new TaskCompletionSource();
+        bridge.Held = ("applyObjects", answered.Task);
+
+        await page.InvokeAsync(() =>
+        {
+            page.Instance.Objects.RemoveAt(0);
+            page.Instance.SelectedId = "object-1";
+            page.Instance.Refresh();
+        });
+        // The browser deselects the removed object, and reports that before it answers the call that removed it.
+        await page.InvokeAsync(() => viewer.HandleChangesAsync(NothingSelected));
+        await page.InvokeAsync(answered.SetResult);
+
+        Assert.Equal(("selectObjectIfPresent", "object-1"), (bridge.Calls[^1], bridge.Arguments[^1][0]));
+    }
+
+    [Fact]
+    public async Task SelectedObjectId_ShouldNotBeSent_WhenApplicationTakesItBackBeforeObjectsAreAnswered()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Objects, ManyObjects(0)));
+        var answered = new TaskCompletionSource();
+        bridge.Held = ("applyObjects", answered.Task);
+
+        viewer.Render(parameters => parameters
+            .Add(component => component.Objects, ManyObjects(1))
+            .Add(component => component.SelectedObjectId, "object-0"));
+        viewer.Render(parameters => parameters
+            .Add(component => component.Objects, ManyObjects(1))
+            .Add(component => component.SelectedObjectId, (string?)null));
+        await viewer.InvokeAsync(answered.SetResult);
+
+        Assert.Equal(["applyObjects"], bridge.Calls);
+    }
+
+    [Fact]
+    public async Task SelectedObjectId_ShouldBeSentForNewDocument_WhenOpeningClearsBoundValueFirst()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var page = Render<SelectingPage>();
+        var viewer = page.FindComponent<PdfViewer>().Instance;
+        var answered = new TaskCompletionSource();
+        bridge.Held = ("open", answered.Task);
+
+        await page.InvokeAsync(() =>
+        {
+            page.Instance.Source = "/b.pdf";
+            page.Instance.Refresh();
+        });
+        // Opening clears the selection in the browser, which reports that before it answers the call.
+        await page.InvokeAsync(() => viewer.HandleChangesAsync(NothingSelected));
+        await page.InvokeAsync(answered.SetResult);
+
+        Assert.Equal(["open", "applyObjects", "selectObjectIfPresent"], bridge.Calls.TakeLast(3));
+        Assert.Equal("object-0", bridge.Arguments[^1][0]);
+    }
+
+    [Fact]
+    public void SelectedObjectIdChanged_ShouldReceiveNull_WhenViewerHasNoObjectForSelectedId()
+    {
+        var bridge = new RecordingBridge { HasSelectedObject = false };
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var received = new List<string?>();
+
+        Render<PdfViewer>(parameters => parameters
+            .Add(component => component.SelectedObjectId, "gone")
+            .Add(component => component.SelectedObjectIdChanged, received.Add));
+
+        Assert.Equal(new string?[] { null }, received);
+    }
+
+    [Fact]
+    public async Task SelectedObjectIdChanged_ShouldKeepNewerSelection_WhenAnswerForMissingObjectArrivesAfterIt()
+    {
+        var answered = new TaskCompletionSource();
+        var bridge = new RecordingBridge { HasSelectedObject = false, Held = ("selectObjectIfPresent", answered.Task) };
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var received = new List<string?>();
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.SelectedObjectId, "gone")
+            .Add(component => component.SelectedObjectIdChanged, received.Add));
+
+        await viewer.InvokeAsync(() => viewer.Instance.HandleChangesAsync(UserSelected(1, "a")));
+        await viewer.InvokeAsync(answered.SetResult);
+
+        Assert.Equal(["a"], received);
+    }
+
+    [Fact]
+    public async Task SelectedObjectIdChanged_ShouldReceiveSelectedId_WhenBridgeNotifies()
+    {
+        var received = new List<string?>();
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.SelectedObjectIdChanged, received.Add));
+
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(UserSelected(1, "a")));
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(UserSelected(2, null)));
+
+        Assert.Equal(["a", null], received);
+    }
+
+    [Fact]
+    public void PdfViewer_ShouldSubscribeToSelection_WhenSelectedObjectIdIsBound()
+    {
+        Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.SelectedObjectIdChanged, (string? _) => { }));
+
+        Assert.Equal(new ViewerSubscriptions(false, Selection: true, false, false), AttachArgument(3));
     }
 }
