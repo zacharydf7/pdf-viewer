@@ -35,7 +35,18 @@ public sealed record ViewerDrawDefaults
 
     /// <summary>The application's own category for the new object, which comes back on its change event.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Tag { get; init; }
+    public string? Kind { get; init; }
+
+    /// <summary>Classes from your own CSS, separated by spaces.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CssClass { get; init; }
+
+    /// <summary>
+    /// Your own values, shown as <c>data-app-*</c> attributes so tests can find objects by them. Keys start with a
+    /// lowercase letter and contain only lowercase letters, digits and hyphens.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, string>? AppData { get; init; }
 }
 
 /// <summary>
@@ -49,13 +60,36 @@ public sealed record ViewerObject(string Id, int Page, PageRect Rect)
     /// <summary>An unselectable object is displayed, but ignores pointer and keyboard input.</summary>
     public bool Selectable { get; init; } = true;
 
-    /// <summary>The accessible name.</summary>
+    /// <summary>
+    /// A hidden object is neither visible nor reachable by pointer or keyboard, and keeps its other state.
+    /// </summary>
+    public bool Hidden { get; init; }
+
+    /// <summary>
+    /// The accessible name. Without one, it's "Object 3 on page 2" or similar, with a number unique on its page.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Label { get; init; }
 
-    /// <summary>The application's own category for this object, shown as <c>data-object-tag</c>.</summary>
+    /// <summary>
+    /// The application's own category for this object, such as "heading", shown as <c>data-object-kind</c>.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Tag { get; init; }
+    public string? Kind { get; init; }
+
+    /// <summary>
+    /// Classes from your own CSS, separated by spaces, so you can style states such as emphasis in your stylesheet
+    /// rather than with raw colors or widths.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CssClass { get; init; }
+
+    /// <summary>
+    /// Your own values, shown as <c>data-app-*</c> attributes so tests can find objects by them. Keys start with a
+    /// lowercase letter and contain only lowercase letters, digits and hyphens.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, string>? AppData { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ViewerObjectStyle? Style { get; init; }

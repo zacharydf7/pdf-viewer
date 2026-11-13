@@ -52,8 +52,8 @@
             <dd data-testid="selected-object">@_selectedObject</dd>
             <dt>Selected IDs</dt>
             <dd data-testid="selected-ids">@_selectedIds</dd>
-            <dt>Last tag</dt>
-            <dd data-testid="last-tag">@_lastTag</dd>
+            <dt>Last kind</dt>
+            <dd data-testid="last-kind">@_lastKind</dd>
             <dt>Last error</dt>
             <dd data-testid="last-error">@_lastError</dd>
             <dt>Documents loaded</dt>
@@ -83,7 +83,7 @@
     private TaskCompletionSource<bool>? _pendingDialog;
     private readonly Dictionary<string, ViewerObject> _objects = [];
     private string _lastChange = "";
-    private string _lastTag = "";
+    private string _lastKind = "";
     private string _selectedObject = "none";
     private string _selectedIds = "";
     private string _lastError = "";
@@ -136,7 +136,7 @@
 
     private Task DrawHeading() => _controller.SetToolAsync(ViewerTool.DrawRectangle, new ViewerDrawDefaults
     {
-        Tag = "heading",
+        Kind = "heading",
         Label = "Heading region",
     });
 
@@ -213,6 +213,6 @@
     private void Record(string kind, ChangeOrigin origin, ViewerObject viewerObject)
     {
         _lastChange = $"{kind} {origin} {viewerObject.Id}";
-        _lastTag = viewerObject.Tag ?? "";
+        _lastKind = viewerObject.Kind ?? "";
     }
 }

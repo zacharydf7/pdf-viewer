@@ -4,6 +4,7 @@ import type { ObjectStore, PageObject } from "./object-store.js";
 import type { PointerTarget, Preview, ToolPresentation } from "./tool.js";
 
 const handles: readonly ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+const appDataPrefix = "data-app-";
 
 /**
  * Displays one page's objects as real DOM elements, along with the selected object's handles and any gesture's
@@ -21,6 +22,11 @@ export class ObjectView {
   readonly #targets = new WeakMap<Element, PointerTarget>();
   /** What each element last displayed, so unchanged objects cost nothing to bring up to date. */
   readonly #appliedStates = new Map<string, string>();
+  /** Each object's number on this page, for its default accessible name, given in the order objects appear. */
+  readonly #numbers = new Map<string, number>();
+  /** The app data keys each element shows, so keys an object drops can be removed without reading the DOM back. */
+  readonly #appDataKeys = new Map<string, readonly string[]>();
+  #nextNumber = 1;
   readonly #page: HTMLElement;
   readonly #pageNumber: number;
   readonly #store: ObjectStore;
@@ -178,6 +184,8 @@ export class ObjectView {
     element.remove();
     this.#objectElements.delete(id);
     this.#appliedStates.delete(id);
+    this.#numbers.delete(id);
+    this.#appDataKeys.delete(id);
   }
 
   #syncListboxRole(count: number): void {
@@ -201,30 +209,52 @@ export class ObjectView {
     let element = this.#objectElements.get(object.id);
     if (element === undefined) {
       element = document.createElement("div");
-      element.className = "pv-object";
       element.setAttribute("role", "option");
       element.dataset.objectId = object.id;
       this.#objectElements.set(object.id, element);
+      this.#numbers.set(object.id, this.#nextNumber++);
       this.#targets.set(element, { kind: "object", id: object.id });
       this.#objectsElement.append(element);
     }
     this.#position(element, object.rect);
     const { x, y, width, height } = object.rect;
     element.dataset.pageRect = [x, y, width, height].map(formatNumber).join(",");
-    element.dataset.objectKind = object.kind;
-    if (object.tag === undefined) {
-      delete element.dataset.objectTag;
+    element.className = object.cssClass === undefined ? "pv-object" : `pv-object ${object.cssClass}`;
+    element.dataset.objectShape = object.shape;
+    if (object.kind === undefined) {
+      delete element.dataset.objectKind;
     } else {
-      element.dataset.objectTag = object.tag;
+      element.dataset.objectKind = object.kind;
     }
+    element.hidden = object.hidden;
+    this.#applyAppData(element, object);
     element.dataset.locked = String(object.locked);
     element.dataset.selectable = String(object.selectable);
-    element.setAttribute("aria-label", object.label ?? `Object on page ${this.#pageNumber}`);
+    const label = object.label ?? `Object ${this.#numbers.get(object.id)} on page ${this.#pageNumber}`;
+    element.setAttribute("aria-label", label);
     element.setAttribute("aria-selected", String(selected));
     element.tabIndex = focusable ? 0 : -1;
     element.style.setProperty("--pv-object-color", object.style?.color ?? "");
     element.style.setProperty("--pv-object-fill", object.style?.fill ?? "");
     element.style.setProperty("--pv-object-border-width", object.style?.borderWidth ?? "");
+  }
+
+  /** Writes each value as a data-app-* attribute, and removes those for keys the object no longer has. */
+  #applyAppData(element: HTMLElement, { id, appData = {} }: PageObject): void {
+    for (const key of this.#appDataKeys.get(id) ?? []) {
+      if (!Object.hasOwn(appData, key)) {
+        element.removeAttribute(appDataPrefix + key);
+      }
+    }
+    const keys = Object.keys(appData);
+    for (const key of keys) {
+      element.setAttribute(appDataPrefix + key, appData[key]!);
+    }
+    if (keys.length > 0) {
+      this.#appDataKeys.set(id, keys);
+    } else {
+      this.#appDataKeys.delete(id);
+    }
   }
 
   #position(element: HTMLElement, rect: Rect): void {
@@ -242,7 +272,7 @@ export class ObjectView {
     const [id, ...others] = this.#store.selectedIds;
     const selected = id === undefined || others.length > 0 ? undefined : this.#store.get(id);
     if (selected === undefined || selected.page !== this.#pageNumber || selected.locked || !selected.selectable
-      || !this.#presentation.handles) {
+      || selected.hidden || !this.#presentation.handles) {
       return;
     }
     for (const handle of handles) {

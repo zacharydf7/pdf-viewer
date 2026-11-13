@@ -110,7 +110,8 @@ describe("drawing", () => {
   });
 
   it("pointerUp_ShouldApplyDefaults_WhenToolHasThem", () => {
-    const drawDefaults = { style: { color: "red" }, label: "Heading", tag: "heading" };
+    const drawDefaults = { style: { color: "red" }, label: "Heading", kind: "heading", cssClass: "draft",
+      appData: { step: "1" } };
     const { tool, record } = setup({ drawDefaults });
 
     tool.pointerDown(press(100, 200));

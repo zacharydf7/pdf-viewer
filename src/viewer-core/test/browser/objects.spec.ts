@@ -323,12 +323,12 @@ test.describe("keyboard", () => {
 test.describe("removing and replacing", () => {
   test("removeObject_ShouldReportObjectAsItWas_WhenRemovedByCode", async ({ page }) => {
     const viewer = await openViewer(page);
-    await viewer.addObject({ id: "a", page: 1, rect: start, tag: "note" });
+    await viewer.addObject({ id: "a", page: 1, rect: start, kind: "note" });
     const events = await viewer.recordEvents("pv-object-removed");
 
     await viewer.host.evaluate((element: PdfViewerElement) => element.removeObject("a"));
 
-    expect(await events()).toMatchObject([{ origin: "api", object: { id: "a", rect: start, tag: "note" } }]);
+    expect(await events()).toMatchObject([{ origin: "api", object: { id: "a", rect: start, kind: "note" } }]);
   });
 
   test("setObjects_ShouldReportOneReplacement_WhenGivenSeveralObjects", async ({ page }) => {
@@ -407,5 +407,85 @@ test.describe("programmatic changes", () => {
 
     const value = await viewer.object("a").getAttribute("data-page-rect");
     expect(parseRect(value)).toEqual({ x: 1, y: 2, width: 3, height: 4 });
+  });
+});
+
+test.describe("application fields", () => {
+  test("object_ShouldShowKindShapeClassesAndAppData_WhenGivenThem", async ({ page }) => {
+    const viewer = await openViewer(page);
+
+    await viewer.addObject({ id: "a", page: 1, rect: start, kind: "heading", cssClass: "emphasized important",
+      appData: { section: "3", "review-step": "2" } });
+
+    const object = viewer.object("a");
+    await expect(object).toHaveAttribute("data-object-kind", "heading");
+    await expect(object).toHaveAttribute("data-object-shape", "rect");
+    await expect(object).toHaveAttribute("class", "pv-object emphasized important");
+    await expect(object).toHaveAttribute("data-app-section", "3");
+    await expect(object).toHaveAttribute("data-app-review-step", "2");
+    await expect(page.locator('[data-object-kind="heading"][data-app-section="3"]')).toHaveCount(1);
+  });
+
+  test("updateObject_ShouldRemoveAppDataAttributes_WhenKeysAreLeftOut", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start, appData: { section: "3", "review-step": "2" } });
+
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.updateObject("a", { appData: { section: "4" } });
+    });
+
+    await expect(viewer.object("a")).toHaveAttribute("data-app-section", "4");
+    await expect(viewer.object("a")).not.toHaveAttribute("data-app-review-step");
+  });
+
+  test("cssClass_ShouldLetApplicationStyleObject_WhenItsStylesheetTargetsTheClass", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await page.addStyleTag({ content: ".pv-object.emphasized { border-color: rgb(0, 128, 0); }" });
+
+    await viewer.addObject({ id: "a", page: 1, rect: start, cssClass: "emphasized" });
+
+    await expect(viewer.object("a")).toHaveCSS("border-top-color", "rgb(0, 128, 0)");
+  });
+
+  test("object_ShouldBeNeitherVisibleNorReachable_WhenHidden", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start, hidden: true });
+    await viewer.host.evaluate((element: PdfViewerElement) => element.selectObject("a"));
+
+    const center = await viewer.host.evaluate((element: PdfViewerElement, { x, y, width, height }) =>
+      element.pageToClient(1, { x: x + width / 2, y: y + height / 2 }), start);
+    const reached = await viewer.object("a").evaluate((object, point) => {
+      object.focus();
+      const hit = document.elementFromPoint(point!.x, point!.y) === object;
+      return { hit, focused: document.activeElement === object };
+    }, center);
+
+    await expect(viewer.object("a")).toBeHidden();
+    expect(reached).toEqual({ hit: false, focused: false });
+    await expect(page.locator("[data-handle]")).toHaveCount(0);
+  });
+
+  test("hiddenObject_ShouldReappearInPlaceWithHandles_WhenShownAgain", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start, hidden: true });
+    await viewer.host.evaluate((element: PdfViewerElement) => element.selectObject("a"));
+
+    await viewer.host.evaluate((element: PdfViewerElement) => { element.updateObject("a", { hidden: false }); });
+
+    await expect(viewer.object("a")).toBeVisible();
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+    await expect(page.locator("[data-handle]")).toHaveCount(8);
+  });
+
+  test("defaultLabels_ShouldBeUniqueOnPage_WhenObjectsHaveNoLabel", async ({ page }) => {
+    const viewer = await openViewer(page);
+
+    for (const id of ["a", "b", "c"]) {
+      await viewer.addObject({ id, page: 1, rect: start });
+    }
+
+    for (const [index, id] of ["a", "b", "c"].entries()) {
+      await expect(viewer.object(id)).toHaveAttribute("aria-label", `Object ${index + 1} on page 1`);
+    }
   });
 });

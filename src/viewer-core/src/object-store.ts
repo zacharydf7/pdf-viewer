@@ -17,14 +17,25 @@ export interface PageObject {
   readonly id: string;
   readonly page: number;
   readonly rect: Readonly<Rect>;
-  readonly kind: "rect";
+  /** The object's shape. Rectangles are the only one so far. */
+  readonly shape: "rect";
+  /** The application's own category for this object, such as "heading", shown as data-object-kind. */
+  readonly kind?: string;
   /** A locked object can be selected, but not moved, resized or deleted by the user. */
   readonly locked: boolean;
   /** An unselectable object is displayed, but ignores pointer and keyboard input. */
   readonly selectable: boolean;
+  /** A hidden object is neither visible nor reachable by pointer or keyboard, and keeps the rest of its state. */
+  readonly hidden: boolean;
+  /** The accessible name. Without one, it's "Object 3 on page 2" or similar, with a number unique on its page. */
   readonly label?: string;
-  /** The application's own category for this object, carried unchanged through events and shown as data-object-tag. */
-  readonly tag?: string;
+  /** Classes from the application's own CSS, separated by spaces, so it can style states such as emphasis. */
+  readonly cssClass?: string;
+  /**
+   * The application's own values, shown as data-app-* attributes so tests can find objects by them. Keys start with a
+   * lowercase letter and contain only lowercase letters, digits and hyphens.
+   */
+  readonly appData?: Readonly<Record<string, string>>;
   readonly style?: Readonly<ObjectStyle>;
 }
 
@@ -186,14 +197,33 @@ export class ObjectStore {
   }
 }
 
+const appDataKey = /^[a-z][a-z0-9-]*$/;
+
 /** A frozen copy with defaults filled in, so neither the caller's object nor a listener can change what's stored. */
 function frozenObject(object: NewPageObject): PageObject {
   return Object.freeze({
-    kind: "rect",
+    shape: "rect",
     locked: false,
     selectable: true,
+    hidden: false,
     ...object,
     rect: Object.freeze({ ...object.rect }),
     ...(object.style !== undefined && { style: Object.freeze({ ...object.style }) }),
+    ...(object.appData !== undefined && { appData: frozenAppData(object.appData) }),
   });
+}
+
+/** Keys become attribute names, so they're checked when given, rather than failing when the object is displayed. */
+export function checkAppDataKeys(appData: Readonly<Record<string, string>>): void {
+  for (const key of Object.keys(appData)) {
+    if (!appDataKey.test(key)) {
+      throw new Error(`App data key "${key}" must start with a lowercase letter and contain only lowercase letters, `
+        + "digits and hyphens.");
+    }
+  }
+}
+
+function frozenAppData(appData: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+  checkAppDataKeys(appData);
+  return Object.freeze({ ...appData });
 }

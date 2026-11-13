@@ -515,19 +515,21 @@ test.describe("Blazor bridge", () => {
 
   test("updateObject_ShouldClearValues_WhenDotNetLeavesThemOut", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
-    await viewer.addObject({ id: "a", page: 1, rect, tag: "heading", label: "Region", style: { color: "red" } });
+    await viewer.addObject({ id: "a", page: 1, rect, kind: "heading", label: "Region", style: { color: "red" },
+      cssClass: "emphasized", appData: { section: "3" } });
 
     const updated = await viewer.host.evaluate(async (element: PdfViewerElement, value) => {
       const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
       const bridge = attach(element, { invokeMethodAsync: () => Promise.resolve() }, {},
         { objects: true, selection: true });
       return bridge.updateObject(value as PageObject);
-    }, { id: "a", page: 1, rect, kind: "rect", locked: false, selectable: true });
+    }, { id: "a", page: 1, rect, shape: "rect", locked: false, selectable: true, hidden: false });
 
-    expect(updated.tag).toBeUndefined();
-    expect(updated.label).toBeUndefined();
-    expect(updated.style).toBeUndefined();
-    await expect(viewer.object("a")).not.toHaveAttribute("data-object-tag");
+    expect([updated.kind, updated.label, updated.style, updated.cssClass, updated.appData])
+      .toEqual([undefined, undefined, undefined, undefined, undefined]);
+    await expect(viewer.object("a")).not.toHaveAttribute("data-object-kind");
+    await expect(viewer.object("a")).not.toHaveAttribute("data-app-section");
+    await expect(viewer.object("a")).toHaveAttribute("class", "pv-object");
   });
 
   test("open_ShouldCloseDocument_WhenFileInputHasNoFile", async ({ page }) => {

@@ -46,6 +46,16 @@ test("replaceAll_ShouldStayWithinBudget_WhenGiven50000Objects", () => {
   expect(time).toBeLessThan(150);
 });
 
+test("replaceAll_ShouldStayWithinBudget_WhenEachOf50000ObjectsHasAppData", () => {
+  const store = new ObjectStore(listener);
+  const objects = manyObjects().map((object, index) =>
+    ({ ...object, appData: { section: String(index % 7), step: "1", owner: "a" } }));
+
+  const time = elapsed(() => store.replaceAll(objects, "api"));
+
+  expect(time).toBeLessThan(250);
+});
+
 test("update_ShouldStayWithinBudget_WhenUpdatingEachOf50000Objects", () => {
   const store = filledStore();
 

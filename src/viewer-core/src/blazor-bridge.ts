@@ -113,7 +113,8 @@ export class ViewerBridge {
   addObject = (object: NewPageObject): PageObject => this.#host.addObject(object);
   /** .NET sends the whole object and leaves out empty values, so anything it left out has to be cleared here. */
   updateObject = (object: PageObject): PageObject =>
-    this.#host.updateObject(object.id, { label: undefined, tag: undefined, style: undefined, ...object });
+    this.#host.updateObject(object.id,
+      { label: undefined, kind: undefined, cssClass: undefined, appData: undefined, style: undefined, ...object });
   removeObject = (id: string): void => this.#host.removeObject(id);
   setObjects = (objects: NewPageObject[]): void => this.#host.setObjects(objects);
   selectObjects = (ids: string[]): void => this.#host.selectObjects(ids);

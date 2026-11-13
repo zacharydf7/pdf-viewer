@@ -243,6 +243,19 @@ describe("moving", () => {
     expect(tool.cancel()).toBe(false);
   });
 
+  it("pointerUp_ShouldChangeNothing_WhenObjectIsHiddenDuringDrag", () => {
+    const { tool, store, record } = setup();
+    tool.pointerDown(onObject(150, 200));
+    tool.pointerMove(at(160, 200));
+
+    store.update("a", { hidden: true }, "api");
+    tool.objectsChanged();
+    tool.pointerUp(at(180, 200));
+
+    expect(record.updated.map((change) => change.origin)).toEqual(["api"]);
+    expect(record.shown.at(-1)).toBeUndefined();
+  });
+
   it("pointerUp_ShouldStillReportMove_WhenObjectChangesOnItsPageDuringDrag", () => {
     const { tool, store, record } = setup();
     tool.pointerDown(onObject(150, 200));

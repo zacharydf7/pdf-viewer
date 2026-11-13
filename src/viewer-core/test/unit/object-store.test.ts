@@ -24,7 +24,27 @@ describe("ObjectStore", () => {
 
   it("add_ShouldApplyDefaults_WhenGivenOnlyRequiredFields", () => {
     const added = store.add({ id: "a", page: 1, rect }, "api");
-    expect(added).toEqual({ id: "a", page: 1, rect, kind: "rect", locked: false, selectable: true });
+    expect(added).toEqual({ id: "a", page: 1, rect, shape: "rect", locked: false, selectable: true, hidden: false });
+  });
+
+  it("add_ShouldKeepCopyOfAppData_WhenCallerChangesTheirsAfterward", () => {
+    const appData: Record<string, string> = { section: "3" };
+
+    const added = store.add({ id: "a", page: 1, rect, appData }, "api");
+    appData.section = "4";
+
+    expect(added.appData).toEqual({ section: "3" });
+    expect(Object.isFrozen(added.appData)).toBe(true);
+  });
+
+  it.each(["Section", "2nd", "with space", "data_app", ""])("add_ShouldThrow_WhenAppDataKeyIs%j", (key) => {
+    expect(() => store.add({ id: "a", page: 1, rect, appData: { [key]: "x" } }, "api")).toThrow(/App data key/);
+    expect(store.get("a")).toBeUndefined();
+  });
+
+  it("add_ShouldAcceptAppDataKey_WhenItHasLettersDigitsAndHyphens", () => {
+    expect(store.add({ id: "a", page: 1, rect, appData: { "review-step-2": "x" } }, "api").appData)
+      .toEqual({ "review-step-2": "x" });
   });
 
   it("add_ShouldThrow_WhenIdAlreadyExists", () => {
@@ -68,8 +88,9 @@ describe("ObjectStore", () => {
       sequence: 2,
       origin: "user",
       gesture: "move",
-      object: { id: "a", page: 1, rect: { ...rect, x: 50 }, kind: "rect", locked: false, selectable: true },
-      previous: { id: "a", page: 1, rect, kind: "rect", locked: false, selectable: true },
+      object: { id: "a", page: 1, rect: { ...rect, x: 50 }, shape: "rect", locked: false, selectable: true,
+        hidden: false },
+      previous: { id: "a", page: 1, rect, shape: "rect", locked: false, selectable: true, hidden: false },
     }]);
   });
 
@@ -78,14 +99,14 @@ describe("ObjectStore", () => {
   });
 
   it("remove_ShouldReportObjectAsItWas_WhenRemoved", () => {
-    store.add({ id: "a", page: 1, rect, tag: "note" }, "api");
+    store.add({ id: "a", page: 1, rect, kind: "note" }, "api");
 
     store.remove("a", "user");
 
     expect(changes.at(-1)).toEqual(["removed", {
       sequence: 2,
       origin: "user",
-      object: { id: "a", page: 1, rect, kind: "rect", locked: false, selectable: true, tag: "note" },
+      object: { id: "a", page: 1, rect, shape: "rect", locked: false, selectable: true, hidden: false, kind: "note" },
     }]);
   });
 

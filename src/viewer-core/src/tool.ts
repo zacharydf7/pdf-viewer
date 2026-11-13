@@ -8,7 +8,9 @@ export type ViewerTool = "select" | "draw-rect" | "none";
 export interface DrawDefaults {
   style?: ObjectStyle;
   label?: string;
-  tag?: string;
+  kind?: string;
+  cssClass?: string;
+  appData?: Readonly<Record<string, string>>;
 }
 
 /** What the pointer was pressed on: an object, or one of the selected object's resize handles. */

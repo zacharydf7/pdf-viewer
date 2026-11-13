@@ -131,6 +131,23 @@ for (const [count, budget] of [[1_000, 60], [5_000, 250], [10_000, 450]] as cons
   });
 }
 
+test("setObjects_ShouldPaintWithinBudget_WhenGiven5000ObjectsWithApplicationFields", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 });
+
+  const time = await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    const appData = (index: number) => ({ section: String(index % 7), step: "1", owner: "a" });
+    const objects = window.perf!.grid(5_000, 1)
+      .map((object, index) => ({ ...object, kind: "heading", cssClass: "emphasized", appData: appData(index) }));
+    const start = performance.now();
+    element.setObjects(objects);
+    await window.perf!.nextFrame();
+    return performance.now() - start;
+  });
+
+  await expect(viewer.pageElement().locator('[data-app-section="3"]')).not.toHaveCount(0);
+  expectWithinBudget(time, 250);
+});
+
 test("addObject_ShouldPaintWithinBudget_WhenAdding1000ObjectsOneAtATime", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
 

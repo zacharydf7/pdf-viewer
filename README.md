@@ -30,7 +30,7 @@ Early. The foundation works, but this is not yet a complete viewer.
 |---|---|
 | One page at a time, with zoom, Ctrl+wheel zoom, fit modes, and viewer or per-page rotation | Continuous scrolling with virtualization |
 | Text selection through the text layer | Search, thumbnails, outline, print and download |
-| Rectangle objects: draw, select, move, resize, lock, tags, styles, keyboard control | Links and existing PDF annotations, which are painted but not clickable |
+| Rectangle objects: draw, select, move, resize, lock, hide, app kinds, CSS classes and app data, styles, keyboard control | Links and existing PDF annotations, which are painted but not clickable |
 | Loading from a URL with range requests and cookies, or from a local file | Server-side stream sources, password prompts |
 | Getting the document's bytes back in .NET as a chunked stream | Tagged structure exposed to screen readers, a verified accessibility baseline |
 | Blazor component and basic toolbar on InteractiveServer | InteractiveWebAssembly and Auto render modes, which are untested |

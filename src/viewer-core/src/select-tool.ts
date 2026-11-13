@@ -102,10 +102,13 @@ export class SelectTool implements Tool {
     }
   }
 
-  /** A drag ends without a change once its object is removed or moved to another page, even if it comes back. */
+  /**
+   * A drag ends without a change once its object is removed, moved to another page or hidden, even if it comes back.
+   */
   objectsChanged(): void {
     const drag = this.#drag;
-    if (drag !== undefined && this.#store.get(drag.id)?.page !== drag.page) {
+    const object = drag === undefined ? undefined : this.#store.get(drag.id);
+    if (drag !== undefined && (object?.page !== drag.page || object.hidden)) {
       this.cancel();
     }
   }

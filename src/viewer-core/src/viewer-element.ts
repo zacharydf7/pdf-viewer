@@ -7,7 +7,7 @@ import type { PageGeometry, Point, Rotation } from "./geometry.js";
 import { displaySize, fitScale, normalizeRotation, pageToDisplay } from "./geometry.js";
 import { InteractionController } from "./interaction-controller.js";
 import type { NewPageObject, ObjectPatch, PageObject, SelectionChanged } from "./object-store.js";
-import { ObjectStore } from "./object-store.js";
+import { checkAppDataKeys, ObjectStore } from "./object-store.js";
 import { PageView } from "./page-view.js";
 import type { DrawDefaults, ToolOptions, ViewerTool } from "./tool.js";
 import type { ResolvedOptions, ViewerOptions, ZoomSetting } from "./viewer-options.js";
@@ -263,7 +263,11 @@ export class PdfViewerElement extends HTMLElement {
     return (await this.#requireSession()).getData();
   }
 
+  /** Throws for draw defaults the store would refuse, so the mistake surfaces here rather than when the user draws. */
   setTool(tool: ViewerTool, defaults: DrawDefaults = {}): void {
+    if (defaults.appData !== undefined) {
+      checkAppDataKeys(defaults.appData);
+    }
     this.#tool = tool;
     this.#drawDefaults = defaults;
     this.dataset.tool = tool;

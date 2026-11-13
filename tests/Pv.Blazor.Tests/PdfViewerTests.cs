@@ -208,9 +208,9 @@ public class PdfViewerTests : BunitContext
     {
         const string json = """
             {"sequence":3,"origin":"user","gesture":"nudge",
-             "object":{"id":"a","page":1,"rect":{"x":2,"y":2,"width":3,"height":4},"kind":"rect","locked":false,
+             "object":{"id":"a","page":1,"rect":{"x":2,"y":2,"width":3,"height":4},"shape":"rect","locked":false,
                        "selectable":true},
-             "previous":{"id":"a","page":1,"rect":{"x":1,"y":2,"width":3,"height":4},"kind":"rect","locked":false,
+             "previous":{"id":"a","page":1,"rect":{"x":1,"y":2,"width":3,"height":4},"shape":"rect","locked":false,
                          "selectable":true}}
             """;
 
@@ -278,6 +278,36 @@ public class PdfViewerTests : BunitContext
 
         var expected = new ViewerError(ViewerErrorCode.PasswordRequired, "No password given", DocumentClosed: true);
         Assert.Equal(expected, error);
+    }
+
+    [Fact]
+    public void ViewerObject_ShouldReadApplicationFields_WhenDeserializedFromViewerEvent()
+    {
+        const string json = """
+            {"id":"a","page":1,"rect":{"x":1,"y":2,"width":3,"height":4},"shape":"rect","kind":"heading",
+             "locked":false,"selectable":true,"hidden":true,"cssClass":"emphasized","appData":{"section":"3"}}
+            """;
+
+        var viewerObject = System.Text.Json.JsonSerializer.Deserialize<ViewerObject>(json, InteropJson)!;
+
+        Assert.Equal(("heading", true, "emphasized"), (viewerObject.Kind, viewerObject.Hidden, viewerObject.CssClass));
+        Assert.Equal(new Dictionary<string, string> { ["section"] = "3" }, viewerObject.AppData);
+    }
+
+    [Fact]
+    public void ViewerObject_ShouldSendOnlyFieldsThatHaveValues_WhenSerialized()
+    {
+        var viewerObject = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4))
+        {
+            Kind = "heading", Hidden = true, AppData = new Dictionary<string, string> { ["section"] = "3" },
+        };
+
+        using var json = System.Text.Json.JsonSerializer.SerializeToDocument(viewerObject, InteropJson);
+
+        var sent = json.RootElement.EnumerateObject().Select(property => property.Name).ToHashSet();
+        Assert.Superset(new HashSet<string> { "kind", "hidden", "appData" }, sent);
+        Assert.Empty(sent.Intersect(["label", "cssClass", "style"]));
+        Assert.Equal("3", json.RootElement.GetProperty("appData").GetProperty("section").GetString());
     }
 
     [Fact]

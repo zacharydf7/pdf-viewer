@@ -43,14 +43,19 @@ depends on sharp pixels.
 | Attribute | Values |
 |---|---|
 | `data-object-id` | The ID your application gave it, or a generated version 4 UUID for objects the user draws |
-| `data-object-kind` | `rect` |
-| `data-object-tag` | The application's own category, if it gave one |
+| `data-object-kind` | The application's own category, if it gave one |
+| `data-object-shape` | `rect` |
+| `data-app-*` | One attribute per entry in the object's app data, such as `data-app-section="3"` |
+| `hidden` | Present when the object is hidden, which leaves it neither visible nor reachable by pointer or keyboard |
+| `class` | `pv-object`, followed by the object's own CSS classes |
 | `data-page-rect` | `x,y,width,height` in the coordinates objects use |
 | `data-locked`, `data-selectable` | `true` or `false` |
 | `aria-selected` | `true` or `false` |
 
-Objects also have `role="option"` and an accessible name, so `getByRole("option", { name: "..." })` works. Prefer
-`data-object-id` for identity, because names can be localized or repeated.
+Objects also have `role="option"` and an accessible name, so `getByRole("option", { name: "..." })` works. An object
+without a label is named "Object 3 on page 2" or similar, with a number no other object on its page has. Which object
+gets which number depends on the order objects were shown, so use `data-object-id` for identity, as names can also be
+localized or repeated.
 
 Objects appear only for the displayed page. To read any object in the document, call `getObject(id)` or `getObjects()` on
 the element. `data-object-count` gives the number on the displayed page. The objects these return are frozen, so change

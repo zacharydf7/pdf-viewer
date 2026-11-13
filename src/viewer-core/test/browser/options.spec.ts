@@ -308,18 +308,34 @@ test.describe("rounding", () => {
   });
 });
 
-test.describe("tags and styles", () => {
-  test("drawRect_ShouldCarryTagThroughToChangeEvent_WhenToolHasTag", async ({ page }) => {
+test.describe("kinds and styles", () => {
+  test("setTool_ShouldThrowAndKeepTool_WhenDrawDefaultsHaveBadAppDataKey", async ({ page }) => {
+    const viewer = await openViewer(page, {});
+
+    const message = await viewer.host.evaluate((element: PdfViewerElement) => {
+      try {
+        element.setTool("draw-rect", { appData: { Section: "1" } });
+        return "";
+      } catch (error) {
+        return (error as Error).message;
+      }
+    });
+
+    expect(message).toContain("Section");
+    await expect(viewer.host).toHaveAttribute("data-tool", "select");
+  });
+
+  test("drawRect_ShouldCarryKindThroughToChangeEvent_WhenToolHasKind", async ({ page }) => {
     const viewer = await openViewer(page, {});
     await viewer.host.evaluate((element: PdfViewerElement) => {
-      element.setTool("draw-rect", { tag: "heading", style: { color: "rgb(255, 0, 0)", borderWidth: "5px" } });
+      element.setTool("draw-rect", { kind: "heading", style: { color: "rgb(255, 0, 0)", borderWidth: "5px" } });
     });
     const events = await viewer.recordEvents("pv-object-added");
 
     await viewer.drag(await viewer.pagePoint(0.2, 0.2), await viewer.pagePoint(0.4, 0.4));
 
-    expect(await events()).toMatchObject([{ origin: "user", object: { tag: "heading" } }]);
-    const object = page.locator('[data-object-tag="heading"]');
+    expect(await events()).toMatchObject([{ origin: "user", object: { kind: "heading" } }]);
+    const object = page.locator('[data-object-kind="heading"]');
     await expect(object).toHaveCSS("border-top-color", "rgb(255, 0, 0)");
     // Browsers snap borders to device pixels, so the computed width can be slightly under the 5px asked for.
     const width = await object.evaluate((element) => parseFloat(getComputedStyle(element).borderTopWidth));

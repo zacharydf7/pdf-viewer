@@ -290,15 +290,15 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     }
 
     [Fact]
-    public async Task DrawTool_ShouldReturnTagToDotNet_WhenToolHasTag()
+    public async Task DrawTool_ShouldReturnKindToDotNet_WhenToolHasKind()
     {
         await OpenAsync();
         await ActivateDrawToolAsync();
 
         await _viewer.DragOnPageAsync(0.2f, 0.2f, 0.5f, 0.4f);
 
-        await Expect(TestId("last-tag")).ToHaveTextAsync("heading");
-        await Expect(_viewer.Page.Locator("[data-object-tag=\"heading\"]")).ToHaveCountAsync(1);
+        await Expect(TestId("last-kind")).ToHaveTextAsync("heading");
+        await Expect(_viewer.Page.Locator("[data-object-kind=\"heading\"]")).ToHaveCountAsync(1);
         await Expect(_viewer.Page.GetByRole(AriaRole.Option, new() { Name = "Heading region" })).ToBeVisibleAsync();
     }
 

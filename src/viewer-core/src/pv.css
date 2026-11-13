@@ -121,6 +121,11 @@
   cursor: move;
 }
 
+/* Keeps a hidden object hidden even when the application's own classes set display. */
+.pv-object[hidden] {
+  display: none;
+}
+
 .pv-object[data-locked="true"] {
   cursor: default;
 }
