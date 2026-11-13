@@ -12,7 +12,7 @@ export type DrawRectOptions = Pick<ToolOptions, "drawDefaults" | "roundCoordinat
 
 /** Draws a rectangle from where the pointer is pressed to where it's released, then selects it. */
 export class DrawRectTool implements Tool {
-  readonly presentation: ToolPresentation = { focusable: true, handles: false };
+  readonly presentation: ToolPresentation = { pointer: "page", focusable: true, handles: false };
   readonly #store: ObjectStore;
   readonly #show: (preview: Preview | undefined) => void;
   readonly #options: DrawRectOptions;

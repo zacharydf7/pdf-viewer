@@ -28,7 +28,7 @@ type Drag = (DragBase & { kind: "move" }) | (DragBase & { kind: "resize"; handle
  * keyboard. Pressing empty page area clears the selection.
  */
 export class SelectTool implements Tool {
-  readonly presentation: ToolPresentation = { focusable: true, handles: true };
+  readonly presentation: ToolPresentation = { pointer: "objects", focusable: true, handles: true };
   readonly #store: ObjectStore;
   readonly #show: (preview: Preview | undefined) => void;
   readonly #options: SelectOptions;

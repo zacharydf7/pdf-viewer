@@ -1,36 +1,31 @@
-import { DrawRectTool } from "./draw-rect-tool.js";
 import type { PageGeometry, Rect, ResizeHandle } from "./geometry.js";
-import { fractionToPage, pageRectToPercent } from "./geometry.js";
+import { pageRectToPercent } from "./geometry.js";
 import type { ObjectStore, PageObject } from "./object-store.js";
-import { SelectTool } from "./select-tool.js";
-import type { PointerInput, PointerTarget, Preview, Tool, ToolOptions, ToolPresentation, ViewerTool } from "./tool.js";
+import type { PointerTarget, Preview, ToolPresentation } from "./tool.js";
 
 const handles: readonly ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
-/** With no tool, objects ignore the pointer and the keyboard. */
-const inactive: ToolPresentation = { focusable: false, handles: false };
 
 /**
- * Displays one page's objects as real DOM elements and passes pointer and keyboard input for them to the active tool.
+ * Displays one page's objects as real DOM elements, along with the selected object's handles and any gesture's
+ * preview. It takes no input: the interaction controller does, and asks it what an element stands for.
  *
  * Geometry is percent-based inside a page that CSS scales, so zooming writes no per-object styles. The page space
  * rectangle in the store is the source of truth, and on-screen values are only ever derived from it.
  */
-export class ObjectLayer {
+export class ObjectView {
   readonly element: HTMLElement;
   readonly #objectsElement: HTMLElement;
   readonly #handlesElement: HTMLElement;
   readonly #objectElements = new Map<string, HTMLElement>();
+  /** What each object and handle element stands for, so input finds its object without reading the DOM back. */
+  readonly #targets = new WeakMap<Element, PointerTarget>();
   /** What each element last displayed, so unchanged objects cost nothing to bring up to date. */
   readonly #appliedStates = new Map<string, string>();
   readonly #page: HTMLElement;
   readonly #pageNumber: number;
   readonly #store: ObjectStore;
-  readonly #abort = new AbortController();
   #geometry: PageGeometry;
-  #tool: Tool | undefined;
-  #presentation: ToolPresentation = inactive;
-  /** Whether a press started a gesture that hasn't ended, so moves go to the tool. */
-  #pressed = false;
+  #presentation: ToolPresentation;
   #shownSelection: readonly string[] = [];
   /** The object whose handles are shown. */
   #handlesFor: string | undefined;
@@ -38,14 +33,17 @@ export class ObjectLayer {
   #movedObject: { id: string; rect: Rect } | undefined;
   #draft: HTMLElement | undefined;
 
-  constructor(page: HTMLElement, pageNumber: number, geometry: PageGeometry, store: ObjectStore) {
+  constructor(page: HTMLElement, pageNumber: number, geometry: PageGeometry, store: ObjectStore,
+    presentation: ToolPresentation) {
     this.#page = page;
     this.#pageNumber = pageNumber;
     this.#geometry = geometry;
     this.#store = store;
+    this.#presentation = presentation;
 
     this.element = document.createElement("div");
     this.element.className = "pv-object-layer";
+    this.element.dataset.pointer = presentation.pointer;
     this.#objectsElement = document.createElement("div");
     this.#objectsElement.className = "pv-objects";
     this.#objectsElement.setAttribute("aria-label", `Objects on page ${pageNumber}`);
@@ -54,19 +52,11 @@ export class ObjectLayer {
     this.#handlesElement.setAttribute("aria-hidden", "true");
     this.element.append(this.#objectsElement, this.#handlesElement);
     page.append(this.element);
-
-    const { signal } = this.#abort;
-    page.addEventListener("pointerdown", (event) => this.#onPointerDown(event), { signal });
-    page.addEventListener("pointermove", (event) => this.#onPointerMove(event), { signal });
-    page.addEventListener("pointerup", (event) => this.#onPointerUp(event), { signal });
-    page.addEventListener("pointercancel", () => this.#cancelGesture(), { signal });
-    this.element.addEventListener("keydown", (event) => this.#onKeyDown(event), { signal });
-    this.element.addEventListener("focusin", (event) => this.#onFocusIn(event), { signal });
-    // On the window, because a gesture doesn't always leave focus inside the viewer, and in the capture phase so that
-    // canceling a gesture comes before anything a focused object or the application does with the same key.
-    window.addEventListener("keydown", (event) => this.#onWindowKeyDown(event), { signal, capture: true });
-    this.#startTool("select", { keyboardEditing: true, roundCoordinates: false, drawDefaults: {} });
     this.sync();
+  }
+
+  get geometry(): PageGeometry {
+    return this.#geometry;
   }
 
   set geometry(geometry: PageGeometry) {
@@ -78,16 +68,20 @@ export class ObjectLayer {
     }
   }
 
-  /** Starts a tool with these options, canceling any gesture the previous tool had under way. */
-  setTool(tool: ViewerTool, options: ToolOptions): void {
-    this.#cancelGesture();
-    this.#startTool(tool, options);
+  set presentation(presentation: ToolPresentation) {
+    this.#presentation = presentation;
+    this.element.dataset.pointer = presentation.pointer;
     this.sync();
   }
 
-  dispose(): void {
-    this.#abort.abort();
-    this.element.remove();
+  /** What an element stands for, or undefined for anything that isn't an object or a handle. */
+  targetOf(element: EventTarget | null): PointerTarget | undefined {
+    return this.#targets.get(element as Element);
+  }
+
+  /** Focuses an object without scrolling, since the press that asks for it was on screen already. */
+  focus(id: string): void {
+    this.#objectElements.get(id)?.focus({ preventScroll: true });
   }
 
   /** Brings the DOM in line with the store, keeping existing elements so focus survives updates. */
@@ -107,7 +101,6 @@ export class ObjectLayer {
     this.#syncListboxRole(objects.length);
     this.#shownSelection = this.#store.selectedIds;
     this.#syncHandles();
-    this.#tool?.objectsChanged?.();
   }
 
   /** Brings one object up to date after a change, without visiting the others. */
@@ -127,7 +120,6 @@ export class ObjectLayer {
     if (this.#store.primarySelectedId === id) {
       this.#syncHandles();
     }
-    this.#tool?.objectsChanged?.();
   }
 
   /** Updates only the objects whose selected state changed, which matters on pages with hundreds of objects. */
@@ -149,13 +141,32 @@ export class ObjectLayer {
     this.#syncHandles();
   }
 
-  #startTool(tool: ViewerTool, options: ToolOptions): void {
-    const context = { store: this.#store, show: (preview: Preview | undefined) => this.#showPreview(preview) };
-    this.#tool = tool === "select" ? new SelectTool(context, options)
-      : tool === "draw-rect" ? new DrawRectTool(context, options)
-        : undefined;
-    this.#presentation = this.#tool?.presentation ?? inactive;
-    this.element.dataset.tool = tool;
+  /** Shows the part of a gesture's preview on this page. Undefined puts every object back where the store has it. */
+  showPreview(preview: Preview | undefined): void {
+    if (preview?.kind === "draft" && preview.page === this.#pageNumber) {
+      if (this.#draft === undefined) {
+        this.#draft = document.createElement("div");
+        this.#draft.className = "pv-draft";
+        this.#draft.dataset.draft = "true";
+        this.element.append(this.#draft);
+      }
+      this.#position(this.#draft, preview.rect);
+    } else {
+      this.#draft?.remove();
+      this.#draft = undefined;
+    }
+
+    const previous = this.#movedObject;
+    const moved = this.#movedObject = preview?.kind === "object" ? preview : undefined;
+    if (previous !== undefined && previous.id !== moved?.id) {
+      const object = this.#store.get(previous.id);
+      if (object !== undefined) {
+        this.#placeObject(previous.id, object.rect);
+      }
+    }
+    if (moved !== undefined) {
+      this.#placeObject(moved.id, moved.rect);
+    }
   }
 
   #removeElement(id: string, element: HTMLElement): void {
@@ -189,6 +200,7 @@ export class ObjectLayer {
       element.setAttribute("role", "option");
       element.dataset.objectId = object.id;
       this.#objectElements.set(object.id, element);
+      this.#targets.set(element, { kind: "object", id: object.id });
       this.#objectsElement.append(element);
     }
     this.#position(element, object.rect);
@@ -233,6 +245,7 @@ export class ObjectLayer {
       element.className = "pv-handle";
       element.dataset.handle = handle;
       element.dataset.handleFor = selected.id;
+      this.#targets.set(element, { kind: "handle", id: selected.id, handle });
       this.#handlesElement.append(element);
     }
     this.#handlesFor = selected.id;
@@ -251,33 +264,6 @@ export class ObjectLayer {
     });
   }
 
-  #showPreview(preview: Preview | undefined): void {
-    if (preview?.kind === "draft" && preview.page === this.#pageNumber) {
-      if (this.#draft === undefined) {
-        this.#draft = document.createElement("div");
-        this.#draft.className = "pv-draft";
-        this.#draft.dataset.draft = "true";
-        this.element.append(this.#draft);
-      }
-      this.#position(this.#draft, preview.rect);
-    } else {
-      this.#draft?.remove();
-      this.#draft = undefined;
-    }
-
-    const previous = this.#movedObject;
-    const moved = this.#movedObject = preview?.kind === "object" ? preview : undefined;
-    if (previous !== undefined && previous.id !== moved?.id) {
-      const object = this.#store.get(previous.id);
-      if (object !== undefined) {
-        this.#placeObject(previous.id, object.rect);
-      }
-    }
-    if (moved !== undefined) {
-      this.#placeObject(moved.id, moved.rect);
-    }
-  }
-
   /**
    * Positions an object and its handles without touching its applied state, because that describes what the store
    * has, not a preview.
@@ -291,86 +277,6 @@ export class ObjectLayer {
       }
     }
   }
-
-  #onPointerDown(event: PointerEvent): void {
-    const tool = this.#tool;
-    if (event.button !== 0 || tool === undefined) {
-      return;
-    }
-    const { gesture, focus } = tool.pointerDown({ ...this.#pointerInput(event), target: targetOf(event.target) });
-    if (gesture) {
-      event.preventDefault();
-      this.#page.setPointerCapture(event.pointerId);
-      this.#pressed = true;
-    }
-    // Starting a gesture prevents the browser's default, including moving focus, so arrow keys need this after a click.
-    if (focus !== undefined) {
-      this.#objectElements.get(focus)?.focus({ preventScroll: true });
-    }
-  }
-
-  #onPointerMove(event: PointerEvent): void {
-    if (this.#pressed) {
-      this.#tool!.pointerMove(this.#pointerInput(event));
-    }
-  }
-
-  #onPointerUp(event: PointerEvent): void {
-    if (this.#pressed) {
-      this.#pressed = false;
-      this.#tool!.pointerUp(this.#pointerInput(event));
-    }
-  }
-
-  /** Ends any gesture without changing anything, and returns whether one was under way. */
-  #cancelGesture(): boolean {
-    this.#pressed = false;
-    return this.#tool?.cancel() ?? false;
-  }
-
-  #onWindowKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && this.#cancelGesture()) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }
-
-  #onFocusIn(event: FocusEvent): void {
-    const element = (event.target as Element).closest<HTMLElement>("[data-object-id]");
-    if (element !== null) {
-      this.#tool?.focus?.(element.dataset.objectId!);
-    }
-  }
-
-  /** Only handled keys stop propagating, so a host application's own shortcuts keep working. */
-  #onKeyDown(event: KeyboardEvent): void {
-    const element = (event.target as Element).closest<HTMLElement>("[data-object-id]");
-    if (element === null) {
-      return;
-    }
-    const { key, shiftKey, ctrlKey } = event;
-    const input = { id: element.dataset.objectId!, geometry: this.#geometry, key, shiftKey, ctrlKey };
-    if (this.#tool?.keyDown?.(input)) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }
-
-  #pointerInput(event: PointerEvent): PointerInput {
-    const bounds = this.#page.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) / bounds.width;
-    const y = (event.clientY - bounds.top) / bounds.height;
-    return { page: this.#pageNumber, geometry: this.#geometry, point: fractionToPage(this.#geometry, x, y) };
-  }
-}
-
-function targetOf(target: EventTarget | null): PointerTarget | undefined {
-  const handle = (target as Element).closest<HTMLElement>("[data-handle]");
-  if (handle !== null) {
-    return { kind: "handle", id: handle.dataset.handleFor!, handle: handle.dataset.handle as ResizeHandle };
-  }
-  const object = (target as Element).closest<HTMLElement>("[data-object-id]");
-  return object === null ? undefined : { kind: "object", id: object.dataset.objectId! };
 }
 
 function formatNumber(value: number): string {

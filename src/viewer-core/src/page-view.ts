@@ -1,8 +1,9 @@
 import type { EnginePage, RenderHandle, TextRender } from "./engine.js";
 import { RenderCanceled } from "./engine.js";
 import type { PageGeometry, Rotation } from "./geometry.js";
-import { ObjectLayer } from "./object-layer.js";
 import type { ObjectStore } from "./object-store.js";
+import { ObjectView } from "./object-view.js";
+import type { ToolPresentation } from "./tool.js";
 
 const maximumCanvasPixels = 2 ** 25;
 
@@ -27,7 +28,7 @@ export interface PageViewListener {
  */
 export class PageView {
   readonly element: HTMLElement;
-  readonly layer: ObjectLayer;
+  readonly objects: ObjectView;
   readonly pageNumber: number;
   readonly page: EnginePage;
   readonly #listener: PageViewListener;
@@ -37,14 +38,14 @@ export class PageView {
   #textReady = false;
 
   constructor(pageNumber: number, page: EnginePage, geometry: PageGeometry, store: ObjectStore,
-    listener: PageViewListener) {
+    presentation: ToolPresentation, listener: PageViewListener) {
     this.pageNumber = pageNumber;
     this.page = page;
     this.#listener = listener;
     this.element = document.createElement("div");
     this.element.className = "pv-page";
     this.element.dataset.pageNumber = String(pageNumber);
-    this.layer = new ObjectLayer(this.element, pageNumber, geometry, store);
+    this.objects = new ObjectView(this.element, pageNumber, geometry, store, presentation);
   }
 
   /** Marks the page as waiting for a size to fit, which cancels any render under way. */
@@ -69,7 +70,7 @@ export class PageView {
     element.dataset.rotation = String(page.geometry(viewRotation).rotation);
     element.dataset.pageWidth = String(geometry.width);
     element.dataset.pageHeight = String(geometry.height);
-    this.layer.geometry = geometry;
+    this.objects.geometry = geometry;
 
     const canvas = document.createElement("canvas");
     canvas.className = "pv-canvas";
@@ -101,7 +102,6 @@ export class PageView {
     this.#cancelCanvasRender();
     this.#textRender?.cancel();
     this.#textRender = undefined;
-    this.layer.dispose();
     this.element.remove();
     this.page.release();
   }
@@ -123,7 +123,7 @@ export class PageView {
     this.#textRender = render;
     render.done.then(() => {
       if (render === this.#textRender) {
-        this.layer.element.before(container);
+        this.objects.element.before(container);
         this.#textReady = true;
         this.element.dataset.textState = "ready";
       }

@@ -103,7 +103,7 @@
   z-index: 1;
 }
 
-.pv-object-layer[data-tool="draw-rect"] {
+.pv-object-layer[data-pointer="page"] {
   pointer-events: auto;
   cursor: crosshair;
 }
@@ -126,8 +126,7 @@
 }
 
 .pv-object[data-selectable="false"],
-.pv-object-layer[data-tool="draw-rect"] .pv-object,
-.pv-object-layer[data-tool="none"] .pv-object {
+.pv-object-layer:not([data-pointer="objects"]) .pv-object {
   pointer-events: none;
 }
 
@@ -172,8 +171,7 @@
 }
 
 .pv-viewer[data-object-hit-area="border"] .pv-object[data-selectable="false"]::before,
-.pv-object-layer[data-tool="draw-rect"] .pv-object::before,
-.pv-object-layer[data-tool="none"] .pv-object::before {
+.pv-object-layer:not([data-pointer="objects"]) .pv-object::before {
   pointer-events: none;
 }
 

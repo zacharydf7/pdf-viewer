@@ -197,6 +197,29 @@ test("drag_ShouldStayWithinBudgetPerMove_WhenPageHas5000Objects", async ({ page 
   expectTimingsWithinBudget(samples, 1, 10);
 });
 
+test("drawRect_ShouldStayWithinBudgetPerMove_WhenPageHas5000Objects", async ({ page }) => {
+  const viewer = await openWithObjects(page, 5_000);
+  await viewer.setTool("draw-rect");
+  // Measured the same way as the drag above.
+  await page.evaluate(() => {
+    let start = 0;
+    window.addEventListener("pointermove", () => start = performance.now(), { capture: true });
+    window.addEventListener("pointermove", () => {
+      const script = performance.now() - start;
+      window.perf!.layout();
+      window.perf!.samples.push({ script, total: performance.now() - start });
+    });
+  });
+  const from = await viewer.pagePoint(0.1, 0.1);
+
+  await viewer.drag(from, { x: from.x + 200, y: from.y + 150 }, 40);
+
+  const samples = await page.evaluate(() => window.perf!.samples);
+  expect(samples.length).toBeGreaterThanOrEqual(40);
+  await expect(viewer.pageElement()).toHaveAttribute("data-object-count", "5001");
+  expectTimingsWithinBudget(samples, 1, 2);
+});
+
 test("setZoom_ShouldRepaintWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
 

@@ -5,6 +5,7 @@ import type { PageInfo, PvEventMap } from "./events.js";
 import { errorMessage } from "./events.js";
 import type { PageGeometry, Point, Rotation } from "./geometry.js";
 import { displaySize, fitScale, normalizeRotation, pageToDisplay } from "./geometry.js";
+import { InteractionController } from "./interaction-controller.js";
 import type { NewPageObject, ObjectPatch, PageObject, SelectionChanged } from "./object-store.js";
 import { ObjectStore } from "./object-store.js";
 import { PageView } from "./page-view.js";
@@ -79,6 +80,8 @@ export class PdfViewerElement extends HTMLElement {
     onSelectionChanged: (change) => this.#onSelectionChanged(change),
   });
   #viewport: HTMLElement | undefined;
+  /** Exists once the element is connected, as the viewport does. */
+  #controller: InteractionController | undefined;
   #resizeObserver: ResizeObserver | undefined;
   #session: DocumentSession | undefined;
   /** The displayed page. This viewer shows one page at a time. */
@@ -118,6 +121,8 @@ export class PdfViewerElement extends HTMLElement {
     this.#resizeObserver.observe(this.#viewport);
     // Not passive, because it has to stop the browser from zooming the whole page.
     this.#viewport.addEventListener("wheel", (event) => this.#onWheel(event), { passive: false });
+    this.#controller = new InteractionController(this.#viewport, this.#store);
+    this.#applyTool();
   }
 
   /** Applies options. Set them before opening a document, or the page repaints to apply them. */
@@ -342,17 +347,16 @@ export class PdfViewerElement extends HTMLElement {
       page.release();
       return;
     }
-    this.#view?.dispose();
     const changed = previousPage !== pageNumber;
     this.#pageNumber = pageNumber;
     this.dataset.currentPage = String(pageNumber);
     const geometry = this.#objectGeometry(page, session.viewRotation(page, pageNumber, this.#rotation));
-    this.#view = new PageView(pageNumber, page, geometry, this.#store, {
+    const view = new PageView(pageNumber, page, geometry, this.#store, this.#controller!.presentation, {
       onRendered: (scale) => this.#emit("pv-page-rendered", { page: pageNumber, scale }),
       onRenderError: (error) => this.#emitError("render", error),
     });
-    this.#viewport!.replaceChildren(this.#view.element);
-    this.#applyTool();
+    this.#replaceView(view);
+    this.#viewport!.replaceChildren(view.element);
     const rendered = this.#renderCurrentPage();
     // Listeners hear about the page before it finishes painting, so they can replace its objects without waiting.
     if (changed) {
@@ -385,10 +389,22 @@ export class PdfViewerElement extends HTMLElement {
     return this.#objectGeometry(view.page, session.viewRotation(view.page, view.pageNumber, this.#rotation));
   }
 
+  /** Shows a page's view instead of the current one, ending any gesture on the one it replaces. */
+  #replaceView(view: PageView | undefined): void {
+    if (this.#view !== undefined) {
+      this.#controller!.detach(this.#view);
+      this.#view.dispose();
+    }
+    this.#view = view;
+    if (view !== undefined) {
+      this.#controller!.attach(view);
+    }
+  }
+
   #applyTool(): void {
     const options = { keyboardEditing: this.#keyboardEditing, roundCoordinates: this.#roundCoordinates,
       drawDefaults: this.#drawDefaults };
-    this.#view?.layer.setTool(this.#tool, options);
+    this.#controller?.setTool(this.#tool, options);
   }
 
   /** Works out the displayed page's zoom and rotation, and has it repaint. */
@@ -456,28 +472,28 @@ export class PdfViewerElement extends HTMLElement {
     this.#viewport!.scrollTop += after.top + fractionY * after.height - event.clientY;
   }
 
-  /** Brings the layer up to date before listeners hear of the change. Without an id, every object may have changed. */
+  /** Brings the page up to date before listeners hear of the change. Without an id, every object may have changed. */
   #onObjectChange<Type extends keyof PvEventMap>(type: Type, change: PvEventMap[Type] & { sequence: number },
     id?: string): void {
     this.dataset.lastChange = String(change.sequence);
     if (id === undefined) {
-      this.#view?.layer.sync();
+      this.#view?.objects.sync();
     } else {
-      this.#view?.layer.syncObject(id);
+      this.#view?.objects.syncObject(id);
     }
+    this.#controller?.objectsChanged();
     this.#emit(type, change);
   }
 
   #onSelectionChanged(change: SelectionChanged): void {
     this.dataset.selectedObject = change.primaryId ?? "";
-    this.#view?.layer.syncSelection();
+    this.#view?.objects.syncSelection();
     this.#emit("pv-selection-change", change);
   }
 
   async #closeDocument(): Promise<void> {
     this.#navigation = undefined;
-    this.#view?.dispose();
-    this.#view = undefined;
+    this.#replaceView(undefined);
     if (this.#store.all().length > 0) {
       this.#store.replaceAll([], "api");
     }

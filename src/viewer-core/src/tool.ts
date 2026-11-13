@@ -48,8 +48,10 @@ export interface PressResult {
   focus?: string;
 }
 
-/** How objects respond while a tool is active. */
+/** How objects and the page respond while a tool is active. */
 export interface ToolPresentation {
+  /** What catches the pointer: objects and their handles, the whole page, or nothing. */
+  pointer: "objects" | "page" | "none";
   /** Whether selectable objects are tab stops. */
   focusable: boolean;
   /** Whether the selected object shows resize handles. */
