@@ -5,10 +5,10 @@ import type { PageInfo, PvEventMap } from "./events.js";
 import { errorMessage } from "./events.js";
 import type { PageGeometry, Point, Rotation } from "./geometry.js";
 import { displaySize, fitScale, normalizeRotation, pageToDisplay } from "./geometry.js";
-import type { DrawDefaults, ViewerTool } from "./object-layer.js";
 import type { NewPageObject, ObjectPatch, PageObject, SelectionChanged } from "./object-store.js";
 import { ObjectStore } from "./object-store.js";
 import { PageView } from "./page-view.js";
+import type { DrawDefaults, ViewerTool } from "./tool.js";
 
 export type ZoomSetting = number | "fit-width" | "fit-page";
 
@@ -386,13 +386,9 @@ export class PdfViewerElement extends HTMLElement {
   }
 
   #applyTool(): void {
-    const layer = this.#view?.layer;
-    if (layer !== undefined) {
-      layer.keyboardEditing = this.#keyboardEditing;
-      layer.roundCoordinates = this.#roundCoordinates;
-      layer.drawDefaults = this.#drawDefaults;
-      layer.tool = this.#tool;
-    }
+    const options = { keyboardEditing: this.#keyboardEditing, roundCoordinates: this.#roundCoordinates,
+      drawDefaults: this.#drawDefaults };
+    this.#view?.layer.setTool(this.#tool, options);
   }
 
   /** Works out the displayed page's zoom and rotation, and has it repaint. */

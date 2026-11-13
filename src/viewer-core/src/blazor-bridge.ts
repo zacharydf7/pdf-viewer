@@ -1,8 +1,8 @@
 import type { DocumentSource } from "./engine.js";
 import type { PageInfo, PvEventMap } from "./events.js";
 import { errorMessage } from "./events.js";
-import type { DrawDefaults, ViewerTool } from "./object-layer.js";
 import type { NewPageObject, PageObject } from "./object-store.js";
+import type { DrawDefaults, ViewerTool } from "./tool.js";
 import type { PdfViewerElement, ViewerOptions, ZoomSetting } from "./viewer-element.js";
 
 /** The part of Blazor's DotNetObjectReference this module needs. */

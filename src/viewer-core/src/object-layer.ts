@@ -1,28 +1,16 @@
-import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
-import { clampPoint, displaySize, fractionToPage, moveRect, pageRectToPercent, rectFromCorners, resizeRectBy,
-  roundRect } from "./geometry.js";
-import { rectAfterArrowKey } from "./keyboard-editing.js";
-import type { EditGesture, ObjectStore, ObjectStyle, PageObject } from "./object-store.js";
-
-export type ViewerTool = "select" | "draw-rect" | "none";
+import { DrawRectTool } from "./draw-rect-tool.js";
+import type { PageGeometry, Rect, ResizeHandle } from "./geometry.js";
+import { fractionToPage, pageRectToPercent } from "./geometry.js";
+import type { ObjectStore, PageObject } from "./object-store.js";
+import { SelectTool } from "./select-tool.js";
+import type { PointerInput, PointerTarget, Preview, Tool, ToolOptions, ToolPresentation, ViewerTool } from "./tool.js";
 
 const handles: readonly ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
-const minimumDrawSize = 2;
-const minimumResizeSize = 1;
-
-type Drag =
-  | { kind: "draw"; start: Point; current: Point }
-  | { kind: "move"; id: string; start: Point; original: Rect; rect: Rect; moved: boolean }
-  | { kind: "resize"; id: string; handle: ResizeHandle; start: Point; original: Rect; rect: Rect; moved: boolean };
-
-export interface DrawDefaults {
-  style?: ObjectStyle;
-  label?: string;
-  tag?: string;
-}
+/** With no tool, objects ignore the pointer and the keyboard. */
+const inactive: ToolPresentation = { focusable: false, handles: false };
 
 /**
- * Displays one page's objects as real DOM elements and handles pointer and keyboard input for them.
+ * Displays one page's objects as real DOM elements and passes pointer and keyboard input for them to the active tool.
  *
  * Geometry is percent-based inside a page that CSS scales, so zooming writes no per-object styles. The page space
  * rectangle in the store is the source of truth, and on-screen values are only ever derived from it.
@@ -39,12 +27,15 @@ export class ObjectLayer {
   readonly #store: ObjectStore;
   readonly #abort = new AbortController();
   #geometry: PageGeometry;
-  #tool: ViewerTool = "select";
-  #drawDefaults: DrawDefaults = {};
-  #keyboardEditing = true;
-  #roundCoordinates = false;
+  #tool: Tool | undefined;
+  #presentation: ToolPresentation = inactive;
+  /** Whether a press started a gesture that hasn't ended, so moves go to the tool. */
+  #pressed = false;
   #shownSelection: readonly string[] = [];
-  #drag: Drag | undefined;
+  /** The object whose handles are shown. */
+  #handlesFor: string | undefined;
+  /** An object a gesture is showing away from where the store has it. */
+  #movedObject: { id: string; rect: Rect } | undefined;
   #draft: HTMLElement | undefined;
 
   constructor(page: HTMLElement, pageNumber: number, geometry: PageGeometry, store: ObjectStore) {
@@ -68,12 +59,13 @@ export class ObjectLayer {
     page.addEventListener("pointerdown", (event) => this.#onPointerDown(event), { signal });
     page.addEventListener("pointermove", (event) => this.#onPointerMove(event), { signal });
     page.addEventListener("pointerup", (event) => this.#onPointerUp(event), { signal });
-    page.addEventListener("pointercancel", () => this.#cancelDrag(), { signal });
+    page.addEventListener("pointercancel", () => this.#cancelGesture(), { signal });
     this.element.addEventListener("keydown", (event) => this.#onKeyDown(event), { signal });
     this.element.addEventListener("focusin", (event) => this.#onFocusIn(event), { signal });
     // On the window, because a gesture doesn't always leave focus inside the viewer, and in the capture phase so that
     // canceling a gesture comes before anything a focused object or the application does with the same key.
     window.addEventListener("keydown", (event) => this.#onWindowKeyDown(event), { signal, capture: true });
+    this.#startTool("select", { keyboardEditing: true, roundCoordinates: false, drawDefaults: {} });
     this.sync();
   }
 
@@ -86,24 +78,10 @@ export class ObjectLayer {
     }
   }
 
-  set drawDefaults(defaults: DrawDefaults) {
-    this.#drawDefaults = defaults;
-  }
-
-  /** Whether arrow keys and Delete edit the focused object. When off, those keys go to the host application. */
-  set keyboardEditing(enabled: boolean) {
-    this.#keyboardEditing = enabled;
-  }
-
-  /** Whether rectangles the user creates or changes are rounded to whole page units. */
-  set roundCoordinates(enabled: boolean) {
-    this.#roundCoordinates = enabled;
-  }
-
-  set tool(tool: ViewerTool) {
-    this.#cancelDrag();
-    this.#tool = tool;
-    this.element.dataset.tool = tool;
+  /** Starts a tool with these options, canceling any gesture the previous tool had under way. */
+  setTool(tool: ViewerTool, options: ToolOptions): void {
+    this.#cancelGesture();
+    this.#startTool(tool, options);
     this.sync();
   }
 
@@ -129,6 +107,7 @@ export class ObjectLayer {
     this.#syncListboxRole(objects.length);
     this.#shownSelection = this.#store.selectedIds;
     this.#syncHandles();
+    this.#tool?.objectsChanged?.();
   }
 
   /** Brings one object up to date after a change, without visiting the others. */
@@ -148,6 +127,7 @@ export class ObjectLayer {
     if (this.#store.primarySelectedId === id) {
       this.#syncHandles();
     }
+    this.#tool?.objectsChanged?.();
   }
 
   /** Updates only the objects whose selected state changed, which matters on pages with hundreds of objects. */
@@ -169,10 +149,16 @@ export class ObjectLayer {
     this.#syncHandles();
   }
 
+  #startTool(tool: ViewerTool, options: ToolOptions): void {
+    const context = { store: this.#store, show: (preview: Preview | undefined) => this.#showPreview(preview) };
+    this.#tool = tool === "select" ? new SelectTool(context, options)
+      : tool === "draw-rect" ? new DrawRectTool(context, options)
+        : undefined;
+    this.#presentation = this.#tool?.presentation ?? inactive;
+    this.element.dataset.tool = tool;
+  }
+
   #removeElement(id: string, element: HTMLElement): void {
-    if (this.#drag !== undefined && this.#drag.kind !== "draw" && this.#drag.id === id) {
-      this.#drag = undefined;
-    }
     element.remove();
     this.#objectElements.delete(id);
     this.#appliedStates.delete(id);
@@ -189,7 +175,8 @@ export class ObjectLayer {
 
   #applyObject(object: PageObject): void {
     const selected = this.#store.isSelected(object.id);
-    const state = JSON.stringify([object, selected, this.#tool]);
+    const focusable = object.selectable && this.#presentation.focusable;
+    const state = JSON.stringify([object, selected, focusable]);
     if (this.#appliedStates.get(object.id) === state) {
       return;
     }
@@ -217,7 +204,7 @@ export class ObjectLayer {
     element.dataset.selectable = String(object.selectable);
     element.setAttribute("aria-label", object.label ?? `Object on page ${this.#pageNumber}`);
     element.setAttribute("aria-selected", String(selected));
-    element.tabIndex = object.selectable && this.#tool !== "none" ? 0 : -1;
+    element.tabIndex = focusable ? 0 : -1;
     element.style.setProperty("--pv-object-color", object.style?.color ?? "");
     element.style.setProperty("--pv-object-fill", object.style?.fill ?? "");
     element.style.setProperty("--pv-object-border-width", object.style?.borderWidth ?? "");
@@ -234,13 +221,13 @@ export class ObjectLayer {
   /** Handles appear only when one object is selected, because they resize that object alone. */
   #syncHandles(): void {
     this.#handlesElement.replaceChildren();
+    this.#handlesFor = undefined;
     const [id, ...others] = this.#store.selectedIds;
     const selected = id === undefined || others.length > 0 ? undefined : this.#store.get(id);
     if (selected === undefined || selected.page !== this.#pageNumber || selected.locked || !selected.selectable
-      || this.#tool !== "select") {
+      || !this.#presentation.handles) {
       return;
     }
-    const rect = this.#currentRect(selected);
     for (const handle of handles) {
       const element = document.createElement("div");
       element.className = "pv-handle";
@@ -248,166 +235,101 @@ export class ObjectLayer {
       element.dataset.handleFor = selected.id;
       this.#handlesElement.append(element);
     }
-    this.#positionHandles(rect);
+    this.#handlesFor = selected.id;
+    const moved = this.#movedObject;
+    this.#positionHandles(moved?.id === selected.id ? moved.rect : selected.rect);
   }
 
   #positionHandles(rect: Rect): void {
     const percent = pageRectToPercent(this.#geometry, rect);
-    for (const element of this.#handlesElement.children as HTMLCollectionOf<HTMLElement>) {
-      const handle = element.dataset.handle as ResizeHandle;
+    handles.forEach((handle, index) => {
+      const element = this.#handlesElement.children[index] as HTMLElement;
       const left = handle.includes("w") ? 0 : handle.includes("e") ? 1 : 0.5;
       const top = handle.includes("n") ? 0 : handle.includes("s") ? 1 : 0.5;
       element.style.left = `${percent.x + percent.width * left}%`;
       element.style.top = `${percent.y + percent.height * top}%`;
+    });
+  }
+
+  #showPreview(preview: Preview | undefined): void {
+    if (preview?.kind === "draft" && preview.page === this.#pageNumber) {
+      if (this.#draft === undefined) {
+        this.#draft = document.createElement("div");
+        this.#draft.className = "pv-draft";
+        this.#draft.dataset.draft = "true";
+        this.element.append(this.#draft);
+      }
+      this.#position(this.#draft, preview.rect);
+    } else {
+      this.#draft?.remove();
+      this.#draft = undefined;
+    }
+
+    const previous = this.#movedObject;
+    const moved = this.#movedObject = preview?.kind === "object" ? preview : undefined;
+    if (previous !== undefined && previous.id !== moved?.id) {
+      const object = this.#store.get(previous.id);
+      if (object !== undefined) {
+        this.#placeObject(previous.id, object.rect);
+      }
+    }
+    if (moved !== undefined) {
+      this.#placeObject(moved.id, moved.rect);
     }
   }
 
-  #currentRect(object: PageObject): Rect {
-    const drag = this.#drag;
-    return drag !== undefined && drag.kind !== "draw" && drag.id === object.id ? drag.rect : object.rect;
+  /**
+   * Positions an object and its handles without touching its applied state, because that describes what the store
+   * has, not a preview.
+   */
+  #placeObject(id: string, rect: Rect): void {
+    const element = this.#objectElements.get(id);
+    if (element !== undefined) {
+      this.#position(element, rect);
+      if (this.#handlesFor === id) {
+        this.#positionHandles(rect);
+      }
+    }
   }
 
   #onPointerDown(event: PointerEvent): void {
-    if (event.button !== 0 || this.#tool === "none") {
+    const tool = this.#tool;
+    if (event.button !== 0 || tool === undefined) {
       return;
     }
-    const target = event.target as Element;
-
-    if (this.#tool === "draw-rect") {
-      const start = this.#pointerToPage(event);
-      this.#beginDrag(event, { kind: "draw", start, current: start });
-      this.#draft = document.createElement("div");
-      this.#draft.className = "pv-draft";
-      this.#draft.dataset.draft = "true";
-      this.element.append(this.#draft);
-      this.#position(this.#draft, rectFromCorners(start, start));
-      return;
-    }
-
-    const handle = target.closest<HTMLElement>("[data-handle]");
-    if (handle !== null) {
-      const { id, rect } = this.#store.get(handle.dataset.handleFor!)!;
-      const name = handle.dataset.handle as ResizeHandle;
-      const start = this.#pointerToDisplay(event);
-      this.#beginDrag(event, { kind: "resize", id, handle: name, start, original: rect, rect, moved: false });
-      this.#objectElements.get(id)?.focus({ preventScroll: true });
-      return;
-    }
-
-    const objectElement = target.closest<HTMLElement>("[data-object-id]");
-    if (objectElement === null) {
-      this.#store.select([], "user");
-      return;
-    }
-    const object = this.#store.get(objectElement.dataset.objectId!)!;
-    if (!object.selectable) {
-      return;
-    }
-    this.#store.select([object.id], "user");
-    if (!object.locked) {
-      const { id, rect } = object;
-      const start = this.#pointerToDisplay(event);
-      this.#beginDrag(event, { kind: "move", id, start, original: rect, rect, moved: false });
+    const { gesture, focus } = tool.pointerDown({ ...this.#pointerInput(event), target: targetOf(event.target) });
+    if (gesture) {
+      event.preventDefault();
+      this.#page.setPointerCapture(event.pointerId);
+      this.#pressed = true;
     }
     // Starting a gesture prevents the browser's default, including moving focus, so arrow keys need this after a click.
-    objectElement.focus({ preventScroll: true });
-  }
-
-  #beginDrag(event: PointerEvent, drag: Drag): void {
-    event.preventDefault();
-    this.#page.setPointerCapture(event.pointerId);
-    this.#drag = drag;
+    if (focus !== undefined) {
+      this.#objectElements.get(focus)?.focus({ preventScroll: true });
+    }
   }
 
   #onPointerMove(event: PointerEvent): void {
-    const drag = this.#drag;
-    if (drag !== undefined) {
-      this.#applyPointer(drag, event);
+    if (this.#pressed) {
+      this.#tool!.pointerMove(this.#pointerInput(event));
     }
-  }
-
-  #applyPointer(drag: Drag, event: PointerEvent): void {
-    if (drag.kind === "draw") {
-      drag.current = this.#pointerToPage(event);
-      this.#position(this.#draft!, rectFromCorners(drag.start, drag.current));
-      return;
-    }
-    const position = this.#pointerToDisplay(event);
-    const deltaX = position.x - drag.start.x;
-    const deltaY = position.y - drag.start.y;
-    // Converting a rectangle to display space and back can change it by rounding error, so a click must not convert.
-    if (deltaX === 0 && deltaY === 0 && !drag.moved) {
-      return;
-    }
-    drag.moved = true;
-    this.#appliedStates.delete(drag.id);
-    drag.rect = drag.kind === "move"
-      ? moveRect(this.#geometry, drag.original, deltaX, deltaY)
-      : resizeRectBy(this.#geometry, drag.original, drag.handle, deltaX, deltaY, minimumResizeSize);
-    this.#position(this.#objectElements.get(drag.id)!, drag.rect);
-    this.#positionHandles(drag.rect);
   }
 
   #onPointerUp(event: PointerEvent): void {
-    const drag = this.#drag;
-    if (drag === undefined) {
-      return;
-    }
-    this.#drag = undefined;
-    // The release position counts, even if the browser delivered no move before it.
-    this.#applyPointer(drag, event);
-    switch (drag.kind) {
-      case "draw":
-        this.#commitDraw(drag.start, drag.current);
-        break;
-      case "move":
-      case "resize":
-        if (drag.moved) {
-          this.#commitRect(drag.id, drag.original, drag.rect, drag.kind);
-        }
-        break;
+    if (this.#pressed) {
+      this.#pressed = false;
+      this.#tool!.pointerUp(this.#pointerInput(event));
     }
   }
 
-  #commitDraw(start: Point, end: Point): void {
-    this.#draft?.remove();
-    this.#draft = undefined;
-    const rect = rectFromCorners(start, end);
-    if (rect.width < minimumDrawSize || rect.height < minimumDrawSize) {
-      return;
-    }
-    const object = { id: newObjectId(), page: this.#pageNumber, rect: this.#finalRect(rect), ...this.#drawDefaults };
-    const added = this.#store.add(object, "user");
-    this.#store.select([added.id], "user");
-  }
-
-  /** A change that rounds back to the original isn't a change, so the element also has to return to where it was. */
-  #commitRect(id: string, original: Rect, rect: Rect, gesture: EditGesture): void {
-    const final = this.#finalRect(rect);
-    if (rectsEqual(final, original)) {
-      this.syncObject(id);
-    } else {
-      this.#store.update(id, { rect: final }, "user", gesture);
-    }
-  }
-
-  #finalRect(rect: Rect): Rect {
-    return this.#roundCoordinates ? roundRect(this.#geometry, rect) : rect;
-  }
-
-  #cancelDrag(): void {
-    const drag = this.#drag;
-    this.#drag = undefined;
-    this.#draft?.remove();
-    this.#draft = undefined;
-    if (drag !== undefined && drag.kind !== "draw") {
-      this.syncObject(drag.id);
-    }
+  /** Ends any gesture without changing anything, and returns whether one was under way. */
+  #cancelGesture(): boolean {
+    this.#pressed = false;
+    return this.#tool?.cancel() ?? false;
   }
 
   #onWindowKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && this.#drag !== undefined) {
-      this.#cancelDrag();
+    if (event.key === "Escape" && this.#cancelGesture()) {
       event.preventDefault();
       event.stopPropagation();
     }
@@ -415,67 +337,42 @@ export class ObjectLayer {
 
   #onFocusIn(event: FocusEvent): void {
     const element = (event.target as Element).closest<HTMLElement>("[data-object-id]");
-    const object = element === null ? undefined : this.#store.get(element.dataset.objectId!);
-    if (object !== undefined && object.selectable && this.#tool === "select") {
-      this.#store.select([object.id], "user");
+    if (element !== null) {
+      this.#tool?.focus?.(element.dataset.objectId!);
     }
   }
 
   /** Only handled keys stop propagating, so a host application's own shortcuts keep working. */
   #onKeyDown(event: KeyboardEvent): void {
     const element = (event.target as Element).closest<HTMLElement>("[data-object-id]");
-    const object = element === null ? undefined : this.#store.get(element.dataset.objectId!);
-    if (!this.#keyboardEditing || this.#drag !== undefined || object === undefined || this.#tool !== "select"
-      || !object.selectable) {
+    if (element === null) {
       return;
     }
-    if (event.key === "Escape") {
-      this.#store.select([], "user");
-    } else if (object.locked) {
-      return;
-    } else if (event.key === "Delete") {
-      this.#store.remove(object.id, "user");
-    } else if (event.key.startsWith("Arrow")) {
-      const rect = rectAfterArrowKey(this.#geometry, object.rect, event, minimumResizeSize);
-      this.#commitRect(object.id, object.rect, rect, event.shiftKey ? "resize" : "nudge");
-    } else {
-      return;
+    const { key, shiftKey, ctrlKey } = event;
+    const input = { id: element.dataset.objectId!, geometry: this.#geometry, key, shiftKey, ctrlKey };
+    if (this.#tool?.keyDown?.(input)) {
+      event.preventDefault();
+      event.stopPropagation();
     }
-    event.preventDefault();
-    event.stopPropagation();
   }
 
-  #pointerToPage(event: PointerEvent): Point {
-    const { x, y } = this.#pointerToFraction(event);
-    return clampPoint(this.#geometry, fractionToPage(this.#geometry, x, y));
-  }
-
-  /** The pointer's position in display space, which has the same scale as page space but matches the screen. */
-  #pointerToDisplay(event: PointerEvent): Point {
-    const { x, y } = this.#pointerToFraction(event);
-    const size = displaySize(this.#geometry);
-    return { x: x * size.width, y: y * size.height };
-  }
-
-  #pointerToFraction(event: PointerEvent): Point {
+  #pointerInput(event: PointerEvent): PointerInput {
     const bounds = this.#page.getBoundingClientRect();
-    return { x: (event.clientX - bounds.left) / bounds.width, y: (event.clientY - bounds.top) / bounds.height };
+    const x = (event.clientX - bounds.left) / bounds.width;
+    const y = (event.clientY - bounds.top) / bounds.height;
+    return { page: this.#pageNumber, geometry: this.#geometry, point: fractionToPage(this.#geometry, x, y) };
   }
 }
 
-function rectsEqual(a: Rect, b: Rect): boolean {
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+function targetOf(target: EventTarget | null): PointerTarget | undefined {
+  const handle = (target as Element).closest<HTMLElement>("[data-handle]");
+  if (handle !== null) {
+    return { kind: "handle", id: handle.dataset.handleFor!, handle: handle.dataset.handle as ResizeHandle };
+  }
+  const object = (target as Element).closest<HTMLElement>("[data-object-id]");
+  return object === null ? undefined : { kind: "object", id: object.dataset.objectId! };
 }
 
 function formatNumber(value: number): string {
   return String(Math.round(value * 1000) / 1000);
-}
-
-/** A version 4 UUID, built by hand because crypto.randomUUID only exists on secure origins. */
-function newObjectId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
