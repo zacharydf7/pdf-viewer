@@ -19,7 +19,8 @@ export interface ViewerOptions {
   /** Leaves form fields unpainted, while other annotations still appear. Defaults to false. */
   hideFormFields?: boolean;
   /**
-   * Whether arrow keys and Delete edit the focused object. Turn off if the application handles them. Defaults to true.
+   * Whether arrow keys and Delete edit the focused object and Escape clears the selection. Turn off if the application
+   * handles them. Defaults to true.
    */
   keyboardEditing?: boolean;
   /** Rounds rectangles the user creates or changes to whole page units. Defaults to false. */

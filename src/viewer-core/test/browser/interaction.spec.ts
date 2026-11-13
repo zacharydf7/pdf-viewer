@@ -57,6 +57,23 @@ test.describe("window listener", () => {
 
     expect([before, during, await active()]).toEqual([0, 1, 0]);
   });
+
+  test("window_ShouldHaveNoCapturingListener_WhenDocumentClosesDuringDrag", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+
+    const from = await viewer.center(viewer.object("a"));
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 20, from.y + 20);
+    const active = () => page.evaluate(() => window.windowKeyListeners!.active);
+    const during = await active();
+    await viewer.host.evaluate((element: PdfViewerElement) => element.close());
+    const afterClose = await active();
+    await page.mouse.up();
+
+    expect([during, afterClose]).toEqual([1, 0]);
+  });
 });
 
 test.describe("what catches the pointer", () => {

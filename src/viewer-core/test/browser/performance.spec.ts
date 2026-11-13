@@ -84,6 +84,22 @@ async function openWithObjects(page: Page, count: number): Promise<Viewer> {
   return viewer;
 }
 
+/**
+ * Collects each pointer move's timings in perf.samples. Script time is measured from the window's capturing listener,
+ * which runs first, to its bubbling listener, which runs last.
+ */
+async function recordMoveTimings(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    let start = 0;
+    window.addEventListener("pointermove", () => start = performance.now(), { capture: true });
+    window.addEventListener("pointermove", () => {
+      const script = performance.now() - start;
+      window.perf!.layout();
+      window.perf!.samples.push({ script, total: performance.now() - start });
+    });
+  });
+}
+
 test("open_ShouldShowFirstPageWithinBudget_WhenViewerIsNew", async ({ page }) => {
   const viewer = new Viewer(page);
   await viewer.goto();
@@ -176,17 +192,7 @@ test("updateObject_ShouldStayWithinBudget_WhenPageHas5000Objects", async ({ page
 
 test("drag_ShouldStayWithinBudgetPerMove_WhenPageHas5000Objects", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
-  // Each move's script time is measured from the window's capturing listener, which runs first, to its bubbling
-  // listener, which runs last.
-  await page.evaluate(() => {
-    let start = 0;
-    window.addEventListener("pointermove", () => start = performance.now(), { capture: true });
-    window.addEventListener("pointermove", () => {
-      const script = performance.now() - start;
-      window.perf!.layout();
-      window.perf!.samples.push({ script, total: performance.now() - start });
-    });
-  });
+  await recordMoveTimings(page);
   const from = await viewer.center(viewer.object("object-0"));
 
   await viewer.drag(from, { x: from.x + 200, y: from.y + 150 }, 40);
@@ -200,16 +206,7 @@ test("drag_ShouldStayWithinBudgetPerMove_WhenPageHas5000Objects", async ({ page 
 test("drawRect_ShouldStayWithinBudgetPerMove_WhenPageHas5000Objects", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
   await viewer.setTool("draw-rect");
-  // Measured the same way as the drag above.
-  await page.evaluate(() => {
-    let start = 0;
-    window.addEventListener("pointermove", () => start = performance.now(), { capture: true });
-    window.addEventListener("pointermove", () => {
-      const script = performance.now() - start;
-      window.perf!.layout();
-      window.perf!.samples.push({ script, total: performance.now() - start });
-    });
-  });
+  await recordMoveTimings(page);
   const from = await viewer.pagePoint(0.1, 0.1);
 
   await viewer.drag(from, { x: from.x + 200, y: from.y + 150 }, 40);

@@ -46,8 +46,8 @@ public partial class PdfViewer
     [Parameter] public bool HideFormFields { get; set; }
 
     /// <summary>
-    /// Whether arrow keys and Delete edit the focused object. Turn this off if your application handles those keys, for
-    /// example to record undo history. Read once, at first render.
+    /// Whether arrow keys and Delete edit the focused object and Escape clears the selection. Turn this off if your
+    /// application handles those keys, for example to record undo history. Read once, at first render.
     /// </summary>
     [Parameter] public bool KeyboardEditing { get; set; } = true;
 

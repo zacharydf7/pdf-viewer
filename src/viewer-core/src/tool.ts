@@ -60,7 +60,7 @@ export interface ToolPresentation {
 
 /** The viewer options that tools use. */
 export interface ToolOptions {
-  /** Whether arrow keys, Delete and Escape act on the focused object. */
+  /** Whether arrow keys and Delete edit the focused object and Escape clears the selection. */
   keyboardEditing: boolean;
   roundCoordinates: boolean;
   /** Applied to every rectangle drawn. */
