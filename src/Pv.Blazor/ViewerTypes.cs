@@ -50,9 +50,11 @@ public sealed record ViewerDrawDefaults
 }
 
 /// <summary>
-/// An app-defined object on a page, displayed as a real DOM element with <c>data-object-id</c> set to its ID.
+/// An app-defined object on a page, displayed as a real DOM element with <c>data-object-id</c> set to its ID. A null
+/// <paramref name="Page"/> shows it on whichever page is displayed, clipped where that page is smaller than its
+/// rectangle.
 /// </summary>
-public sealed record ViewerObject(string Id, int Page, PageRect Rect)
+public sealed record ViewerObject(string Id, int? Page, PageRect Rect)
 {
     /// <summary>A locked object can be selected, but not moved, resized or deleted by the user.</summary>
     public bool Locked { get; init; }
@@ -93,6 +95,22 @@ public sealed record ViewerObject(string Id, int Page, PageRect Rect)
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ViewerObjectStyle? Style { get; init; }
+
+    /// <summary>
+    /// Compares <see cref="AppData"/> by its entries rather than by reference, so objects with the same values are
+    /// equal. The viewer sends an object again only when it differs from what it last sent.
+    /// </summary>
+    public bool Equals(ViewerObject? other) =>
+        other is not null && Id == other.Id && Page == other.Page && Rect == other.Rect && Locked == other.Locked
+        && Selectable == other.Selectable && Hidden == other.Hidden && Label == other.Label && Kind == other.Kind
+        && CssClass == other.CssClass && Style == other.Style && SameEntries(AppData, other.AppData);
+
+    public override int GetHashCode() => HashCode.Combine(Id, Page, Rect, Kind, Label);
+
+    private static bool SameEntries(IReadOnlyDictionary<string, string>? first,
+        IReadOnlyDictionary<string, string>? second) =>
+        ReferenceEquals(first, second) || (first is not null && second is not null && first.Count == second.Count
+            && first.All(entry => second.TryGetValue(entry.Key, out var value) && value == entry.Value));
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ViewerTool>))]
@@ -209,29 +227,26 @@ public enum PageRotation
 public sealed record PageInfo(int Page, string? Label, double Width, double Height, PageRotation Rotation);
 
 /// <summary>
-/// An object was added. Asynchronous handlers can finish out of order, so <paramref name="Sequence"/>, which counts
-/// every change to objects and selection, tells which change is newest.
+/// An object the user changed. <paramref name="Previous"/> is the object as it was before, and
+/// <paramref name="Gesture"/> is set when the user changed its rectangle.
 /// </summary>
-public sealed record ObjectAddedArgs(long Sequence, ChangeOrigin Origin, ViewerObject Object);
+public sealed record ObjectUpdate(ViewerObject Object, ViewerObject Previous, EditGesture? Gesture = null);
 
 /// <summary>
-/// An object changed. <paramref name="Previous"/> is the object as it was before, and <paramref name="Gesture"/> is
-/// set when the user changed its rectangle.
+/// What the user changed in one step: objects drawn, moved, resized or deleted. Removed objects are as they were.
+/// Asynchronous handlers can finish out of order, so <paramref name="Sequence"/>, which counts every change to objects
+/// and selection, tells which change is newest. Changes your own code makes aren't reported. A change the user makes
+/// while one of yours is on its way to the browser wins over yours, so an update can arrive for an object you've just
+/// removed from your list. Ignore it, and the next render removes the object again.
 /// </summary>
-public sealed record ObjectUpdatedArgs(long Sequence, ChangeOrigin Origin, ViewerObject Object, ViewerObject Previous,
-    EditGesture? Gesture = null);
-
-/// <summary>An object was removed. <paramref name="Object"/> is the object as it was.</summary>
-public sealed record ObjectRemovedArgs(long Sequence, ChangeOrigin Origin, ViewerObject Object);
-
-/// <summary>Every object was replaced in one step.</summary>
-public sealed record ObjectsReplacedArgs(long Sequence, ChangeOrigin Origin);
+public sealed record ObjectsChangedArgs(long Sequence, IReadOnlyList<ViewerObject> Added,
+    IReadOnlyList<ObjectUpdate> Updated, IReadOnlyList<ViewerObject> Removed);
 
 /// <summary>
 /// The selection changed. <paramref name="PrimaryId"/> is the object selected last, or null when nothing is selected,
 /// and <paramref name="Count"/> is how many are selected. The IDs themselves aren't sent, because any number of
-/// objects can be selected. <see cref="PdfViewer.GetSelectedObjectIdsAsync"/> returns the current selection's IDs,
-/// which can be newer than this notification.
+/// objects can be selected. <see cref="PdfViewerController.GetSelectedObjectIdsAsync"/> returns the current
+/// selection's IDs, which can be newer than this notification.
 /// </summary>
 public sealed record SelectionChangedArgs(long Sequence, ChangeOrigin Origin, string? PrimaryId, int Count);
 

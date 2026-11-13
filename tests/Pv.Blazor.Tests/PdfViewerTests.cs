@@ -47,6 +47,9 @@ public class PdfViewerTests : BunitContext
     {
         public List<string> Calls { get; } = [];
 
+        /// <summary>The arguments of each call, in the same order as <see cref="Calls"/>.</summary>
+        public List<object?[]> Arguments { get; } = [];
+
         /// <summary>
         /// Holds back the answer to every call of a method until a task completes, like a slow circuit.
         /// </summary>
@@ -55,6 +58,7 @@ public class PdfViewerTests : BunitContext
         public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args)
         {
             Calls.Add(identifier);
+            Arguments.Add(args ?? []);
             if (Held is { } held && held.Method == identifier)
             {
                 await held.Answered;
@@ -84,6 +88,21 @@ public class PdfViewerTests : BunitContext
     private object? AttachArgument(int index) => Assert.Single(_module.Invocations["attach"]).Arguments[index];
 
     private IEnumerable<string> BridgeCalls => _bridge.Invocations.Select(call => call.Identifier);
+
+    /// <summary>Every batch of objects sent to the browser, in order.</summary>
+    private IEnumerable<ObjectBatch> SentBatches => _bridge.Invocations
+        .Where(call => call.Identifier == "applyObjects")
+        .Select(call => Assert.IsType<ObjectBatch>(call.Arguments[0]));
+
+    /// <summary>Objects on every page, each with its own ID and rectangle.</summary>
+    private static ViewerObject[] ManyObjects(int count) =>
+    [
+        .. Enumerable.Range(0, count)
+            .Select(index => new ViewerObject($"object-{index}", null, new PageRect(index, 0, 10, 10))),
+    ];
+
+    private static ChangesNotification UserMoved(long sequence, ViewerObject from, ViewerObject to) =>
+        new(sequence, new ObjectChanges([], [new ObjectUpdate(to, from, EditGesture.Move)], []), null);
 
     [Fact]
     public void PdfViewer_ShouldOpenSourceAtInitialPage_WhenFirstRendered()
@@ -189,46 +208,59 @@ public class PdfViewerTests : BunitContext
     }
 
     [Fact]
-    public async Task OnObjectUpdated_ShouldReceiveChange_WhenBridgeNotifies()
+    public async Task OnObjectsChanged_ShouldReceiveWhatUserChanged_WhenBridgeNotifies()
     {
-        ObjectUpdatedArgs? received = null;
+        ObjectsChangedArgs? received = null;
         var viewer = Render<PdfViewer>(parameters =>
-            parameters.Add(component => component.OnObjectUpdated, args => received = args));
+            parameters.Add(component => component.OnObjectsChanged, args => received = args));
         var previous = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4));
-        var moved = previous with { Rect = new PageRect(5, 2, 3, 4) };
-        var change = new ObjectUpdatedArgs(7, ChangeOrigin.User, moved, previous, EditGesture.Move);
+        var update = new ObjectUpdate(previous with { Rect = new PageRect(5, 2, 3, 4) }, previous, EditGesture.Move);
+        var drawn = new ViewerObject("b", null, new PageRect(1, 1, 9, 9));
+        var removed = new ViewerObject("c", 2, new PageRect(1, 1, 9, 9));
+        var changes = new ChangesNotification(7, new ObjectChanges([drawn], [update], [removed]), null);
 
-        await viewer.InvokeAsync(() => Notifications.NotifyObjectUpdated(change));
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(changes));
 
-        Assert.Equal(change, received);
+        Assert.Equal(7, received!.Sequence);
+        Assert.Equal([drawn], received.Added);
+        Assert.Equal([update], received.Updated);
+        Assert.Equal([removed], received.Removed);
     }
 
     [Fact]
-    public void ObjectUpdatedArgs_ShouldReadGestureAndPreviousObject_WhenDeserializedFromViewerEvent()
+    public async Task OnSelectionChanged_ShouldReceiveSelection_WhenBridgeNotifies()
+    {
+        SelectionChangedArgs? received = null;
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.OnSelectionChanged, args => received = args));
+        var changes = new ChangesNotification(4, null, new SelectionState(ChangeOrigin.Api, "b", 2));
+
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(changes));
+
+        Assert.Equal(new SelectionChangedArgs(4, ChangeOrigin.Api, "b", 2), received);
+    }
+
+    [Fact]
+    public void ChangesNotification_ShouldReadObjectChangesAndSelection_WhenDeserializedFromBridge()
     {
         const string json = """
-            {"sequence":3,"origin":"user","gesture":"nudge",
-             "object":{"id":"a","page":1,"rect":{"x":2,"y":2,"width":3,"height":4},"shape":"rect","locked":false,
-                       "selectable":true},
-             "previous":{"id":"a","page":1,"rect":{"x":1,"y":2,"width":3,"height":4},"shape":"rect","locked":false,
-                         "selectable":true}}
+            {"sequence":3,
+             "objects":{"added":[],"removed":[],"updated":[{"gesture":"nudge",
+               "object":{"id":"a","page":null,"rect":{"x":2,"y":2,"width":3,"height":4},"shape":"rect","locked":false,
+                         "selectable":true,"hidden":false},
+               "previous":{"id":"a","page":null,"rect":{"x":1,"y":2,"width":3,"height":4},"shape":"rect","locked":false,
+                           "selectable":true,"hidden":false}}]},
+             "selection":{"origin":"api","primaryId":"b","count":2}}
             """;
 
-        var args = System.Text.Json.JsonSerializer.Deserialize<ObjectUpdatedArgs>(json, InteropJson)!;
+        var notification = System.Text.Json.JsonSerializer.Deserialize<ChangesNotification>(json, InteropJson)!;
 
-        Assert.Equal(EditGesture.Nudge, args.Gesture);
-        Assert.Equal(new PageRect(1, 2, 3, 4), args.Previous.Rect);
-        Assert.Equal(new PageRect(2, 2, 3, 4), args.Object.Rect);
-    }
-
-    [Fact]
-    public void SelectionChangedArgs_ShouldReadPrimaryAndCount_WhenDeserializedFromBridgeNotification()
-    {
-        const string json = """{"sequence":4,"origin":"api","primaryId":"b","count":2}""";
-
-        var args = System.Text.Json.JsonSerializer.Deserialize<SelectionChangedArgs>(json, InteropJson);
-
-        Assert.Equal(new SelectionChangedArgs(4, ChangeOrigin.Api, "b", 2), args);
+        var update = Assert.Single(notification.Objects!.Updated);
+        Assert.Equal(EditGesture.Nudge, update.Gesture);
+        Assert.Null(update.Object.Page);
+        Assert.Equal(new PageRect(1, 2, 3, 4), update.Previous.Rect);
+        Assert.Equal(new PageRect(2, 2, 3, 4), update.Object.Rect);
+        Assert.Equal(new SelectionState(ChangeOrigin.Api, "b", 2), notification.Selection);
     }
 
     [Fact]
@@ -241,32 +273,6 @@ public class PdfViewerTests : BunitContext
         var ids = await controller.GetSelectedObjectIdsAsync();
 
         Assert.Equal(["a", "b"], ids);
-    }
-
-    [Fact]
-    public async Task OnObjectRemoved_ShouldReceiveRemovedObject_WhenBridgeNotifies()
-    {
-        ObjectRemovedArgs? received = null;
-        var viewer = Render<PdfViewer>(parameters =>
-            parameters.Add(component => component.OnObjectRemoved, args => received = args));
-        var change = new ObjectRemovedArgs(9, ChangeOrigin.User, new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
-
-        await viewer.InvokeAsync(() => Notifications.NotifyObjectRemoved(change));
-
-        Assert.Equal(change, received);
-    }
-
-    [Fact]
-    public async Task OnObjectsReplaced_ShouldReceiveChange_WhenBridgeNotifies()
-    {
-        ObjectsReplacedArgs? received = null;
-        var viewer = Render<PdfViewer>(parameters =>
-            parameters.Add(component => component.OnObjectsReplaced, args => received = args));
-        var change = new ObjectsReplacedArgs(10, ChangeOrigin.Api);
-
-        await viewer.InvokeAsync(() => Notifications.NotifyObjectsReplaced(change));
-
-        Assert.Equal(change, received);
     }
 
     [Fact]
@@ -449,29 +455,21 @@ public class PdfViewerTests : BunitContext
     }
 
     [Theory]
-    [InlineData(null, false)]
-    [InlineData(nameof(PdfViewer.OnObjectAdded), true)]
-    [InlineData(nameof(PdfViewer.OnObjectUpdated), true)]
-    [InlineData(nameof(PdfViewer.OnObjectRemoved), true)]
-    [InlineData(nameof(PdfViewer.OnObjectsReplaced), true)]
-    public void PdfViewer_ShouldSubscribeToObjects_WhenAnyObjectCallbackIsHandled(string? handled, bool expected)
+    [InlineData(false, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    public void PdfViewer_ShouldSubscribeToObjects_WhenChangesAreHandledOrObjectsAreSet(bool handled, bool managed,
+        bool expected)
     {
         Render<PdfViewer>(parameters =>
         {
-            switch (handled)
+            if (handled)
             {
-                case nameof(PdfViewer.OnObjectAdded):
-                    parameters.Add(component => component.OnObjectAdded, (ObjectAddedArgs _) => { });
-                    break;
-                case nameof(PdfViewer.OnObjectUpdated):
-                    parameters.Add(component => component.OnObjectUpdated, (ObjectUpdatedArgs _) => { });
-                    break;
-                case nameof(PdfViewer.OnObjectRemoved):
-                    parameters.Add(component => component.OnObjectRemoved, (ObjectRemovedArgs _) => { });
-                    break;
-                case nameof(PdfViewer.OnObjectsReplaced):
-                    parameters.Add(component => component.OnObjectsReplaced, (ObjectsReplacedArgs _) => { });
-                    break;
+                parameters.Add(component => component.OnObjectsChanged, (ObjectsChangedArgs _) => { });
+            }
+            if (managed)
+            {
+                parameters.Add(component => component.Objects, Array.Empty<ViewerObject>());
             }
         });
 
@@ -581,17 +579,18 @@ public class PdfViewerTests : BunitContext
     [Fact]
     public async Task Subscriptions_ShouldBeSentAgainAndReachHandler_WhenHandlerIsSetAfterFirstRender()
     {
-        ObjectAddedArgs? received = null;
+        ObjectsChangedArgs? received = null;
         var viewer = Render<PdfViewer>();
 
-        viewer.Render(parameters => parameters.Add(component => component.OnObjectAdded, args => received = args));
-        var change = new ObjectAddedArgs(1, ChangeOrigin.User, new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
-        await viewer.InvokeAsync(() => Notifications.NotifyObjectAdded(change));
+        viewer.Render(parameters => parameters.Add(component => component.OnObjectsChanged, args => received = args));
+        var drawn = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4));
+        var changes = new ChangesNotification(1, new ObjectChanges([drawn], [], []), null);
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(changes));
 
         var call = Assert.Single(_bridge.Invocations);
         Assert.Equal("subscribe", call.Identifier);
         Assert.Equal(new ViewerSubscriptions(Objects: true, Selection: false), call.Arguments[0]);
-        Assert.Equal(change, received);
+        Assert.Equal([drawn], received!.Added);
     }
 
     [Fact]
@@ -723,14 +722,14 @@ public class PdfViewerTests : BunitContext
         var viewer = Render<PdfViewer>(parameters => parameters
             .Add(component => component.Controller, first)
             .Add(component => component.Source, "/a.pdf"));
-        var added = second.AddObjectAsync(new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
+        var queued = second.SetToolAsync(ViewerTool.DrawRectangle);
 
         viewer.Render(parameters => parameters
             .Add(component => component.Controller, second)
             .Add(component => component.Source, "/b.pdf"));
-        await added;
+        await queued;
 
-        Assert.Equal(["open", "open", "addObject"], bridge.Calls);
+        Assert.Equal(["open", "open", "setTool"], bridge.Calls);
     }
 
     [Fact]
@@ -747,7 +746,7 @@ public class PdfViewerTests : BunitContext
         await viewer.InvokeAsync(() => viewer.Instance.HandleDocumentLoadedAsync(new DocumentLoadedNotification(5, 2)));
         var answered = new TaskCompletionSource();
         bridge.Held = ("open", answered.Task);
-        var added = second.AddObjectAsync(new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)));
+        var queued = second.SetToolAsync(ViewerTool.DrawRectangle);
 
         viewer.Render(parameters => parameters
             .Add(component => component.Controller, second)
@@ -759,7 +758,7 @@ public class PdfViewerTests : BunitContext
         await third.SetZoomAsync(2);
 
         Assert.Equal(["open", "open", "open", "setZoom"], bridge.Calls);
-        Assert.False(added.IsCompleted);
+        Assert.False(queued.IsCompleted);
     }
 
     [Fact]
@@ -800,5 +799,290 @@ public class PdfViewerTests : BunitContext
         await controller.SetZoomAsync(2);
 
         Assert.Equal(["dispose", "setZoom"], bridge.Calls);
+    }
+    [Fact]
+    public void Objects_ShouldAllGoInOneCallAfterOpening_WhenFirstRendered()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+
+        Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Source, "/a.pdf")
+            .Add(component => component.Objects, ManyObjects(3)));
+
+        Assert.Equal(["open", "applyObjects"], bridge.Calls);
+        var batch = Assert.IsType<ObjectBatch>(bridge.Arguments[1][0]);
+        Assert.Equal(3, batch.Upsert.Count);
+        Assert.Empty(batch.Remove);
+    }
+
+    [Fact]
+    public void Objects_ShouldSendOnlyObjectThatChanged_WhenOneOfAThousandChanges()
+    {
+        var objects = ManyObjects(1_000);
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Objects, objects));
+        var changed = objects.ToArray();
+        changed[500] = changed[500] with { Locked = true };
+
+        viewer.Render(parameters => parameters.Add(component => component.Objects, changed));
+
+        var batches = SentBatches.ToList();
+        Assert.Equal(2, batches.Count);
+        Assert.Equal([changed[500]], batches[1].Upsert);
+        Assert.Empty(batches[1].Remove);
+    }
+
+    [Fact]
+    public void Objects_ShouldSendIdsToRemove_WhenObjectsLeaveList()
+    {
+        var objects = ManyObjects(3);
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Objects, objects));
+
+        viewer.Render(parameters => parameters.Add(component => component.Objects, objects[..1]));
+
+        var batch = SentBatches.Last();
+        Assert.Empty(batch.Upsert);
+        Assert.Equal(["object-1", "object-2"], batch.Remove);
+    }
+
+    [Fact]
+    public void Objects_ShouldSendNothing_WhenListIsSetAgainWithEqualObjects()
+    {
+        ViewerObject[] Tagged() =>
+        [
+            new("a", 1, new PageRect(1, 2, 3, 4)) { AppData = new Dictionary<string, string> { ["k"] = "v" } },
+        ];
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Objects, Tagged()));
+
+        viewer.Render(parameters => parameters.Add(component => component.Objects, Tagged()));
+
+        Assert.Single(SentBatches);
+    }
+
+    [Fact]
+    public async Task Objects_ShouldSendNothing_WhenPageChangesAndObjectsAreOnEveryPage()
+    {
+        var objects = ManyObjects(3);
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Source, "/a.pdf")
+            .Add(component => component.Objects, objects));
+
+        await viewer.InvokeAsync(() => Notifications.NotifyPageChanged(new PageChangedArgs(2)));
+        viewer.Render(parameters => parameters.Add(component => component.Objects, objects));
+
+        Assert.Single(SentBatches);
+    }
+
+    [Fact]
+    public async Task Objects_ShouldSendNothing_WhenApplicationWritesUserMoveIntoItsList()
+    {
+        var list = new List<ViewerObject>(ManyObjects(3));
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Objects, list)
+            .Add(component => component.OnObjectsChanged, (ObjectsChangedArgs args) =>
+            {
+                foreach (var update in args.Updated)
+                {
+                    list[list.FindIndex(viewerObject => viewerObject.Id == update.Object.Id)] = update.Object;
+                }
+            }));
+        var moved = list[1] with { Rect = new PageRect(50, 50, 10, 10) };
+        var notification = UserMoved(9, list[1], moved);
+
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(notification));
+        viewer.Render(parameters => parameters.Add(component => component.Objects, list));
+
+        Assert.Equal(moved, list[1]);
+        Assert.Single(SentBatches);
+    }
+
+    [Fact]
+    public async Task Objects_ShouldSendListValueBasedOnUserMove_WhenApplicationKeepsItsOwnValue()
+    {
+        var objects = ManyObjects(2);
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Objects, objects));
+        var notification = UserMoved(9, objects[1], objects[1] with { Rect = new PageRect(50, 50, 10, 10) });
+
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(notification));
+        viewer.Render(parameters => parameters.Add(component => component.Objects, objects));
+
+        var undo = SentBatches.Last();
+        Assert.Equal([objects[1]], undo.Upsert);
+        Assert.Equal(9, undo.BasedOn);
+    }
+
+    [Fact]
+    public async Task Objects_ShouldRemoveDrawnObject_WhenApplicationDoesNotAddItToItsList()
+    {
+        var objects = ManyObjects(1);
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.Objects, objects));
+        var drawn = new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4));
+        var notification = new ChangesNotification(5, new ObjectChanges([drawn], [], []), null);
+
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(notification));
+        viewer.Render(parameters => parameters.Add(component => component.Objects, objects));
+
+        var batch = SentBatches.Last();
+        Assert.Empty(batch.Upsert);
+        Assert.Equal(["drawn"], batch.Remove);
+    }
+
+    [Fact]
+    public void Objects_ShouldBeSentAgainAfterOpening_WhenSourceChanges()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var objects = ManyObjects(2);
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Source, "/a.pdf")
+            .Add(component => component.Objects, objects));
+
+        viewer.Render(parameters => parameters
+            .Add(component => component.Source, "/b.pdf")
+            .Add(component => component.Objects, objects));
+
+        Assert.Equal(["open", "applyObjects", "open", "applyObjects"], bridge.Calls);
+        Assert.Equal(2, Assert.IsType<ObjectBatch>(bridge.Arguments[3][0]).Upsert.Count);
+    }
+
+    [Fact]
+    public void Objects_ShouldThrow_WhenTwoObjectsShareId()
+    {
+        var twin = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4));
+
+        var error = Record.Exception(() =>
+            Render<PdfViewer>(parameters => parameters.Add(component => component.Objects, [twin, twin])));
+
+        Assert.IsType<InvalidOperationException>(error?.InnerException ?? error);
+    }
+
+    [Fact]
+    public async Task Objects_ShouldLeaveBrowserObjectsAlone_WhenNull()
+    {
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.OnObjectsChanged, (ObjectsChangedArgs _) => { }));
+        var drawn = new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4));
+        var notification = new ChangesNotification(5, new ObjectChanges([drawn], [], []), null);
+
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(notification));
+        viewer.Render();
+
+        Assert.Empty(SentBatches);
+    }
+
+    [Fact]
+    public void ObjectBatch_ShouldSerializeAsViewerReadsIt_WhenSent()
+    {
+        var batch = new ObjectBatch([new ViewerObject("a", null, new PageRect(1, 2, 3, 4))], ["b"], 7);
+
+        using var json = System.Text.Json.JsonSerializer.SerializeToDocument(batch, InteropJson);
+
+        var root = json.RootElement;
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, root.GetProperty("upsert")[0].GetProperty("page").ValueKind);
+        Assert.Equal("b", root.GetProperty("remove")[0].GetString());
+        Assert.Equal(7, root.GetProperty("basedOn").GetInt64());
+    }
+
+    [Fact]
+    public void ViewerObject_ShouldEqualAnother_WhenAppDataHasSameEntriesInAnotherDictionary()
+    {
+        var first = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4))
+        {
+            AppData = new Dictionary<string, string> { ["section"] = "3", ["step"] = "1" },
+        };
+        var reordered = new SortedDictionary<string, string> { ["step"] = "1", ["section"] = "3" };
+        var second = first with { AppData = reordered };
+
+        Assert.Equal(first, second);
+        Assert.Equal(first.GetHashCode(), second.GetHashCode());
+    }
+
+    [Fact]
+    public void ViewerObject_ShouldDifferFromAnother_WhenAnyOnePropertyDiffers()
+    {
+        var original = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4));
+        // A property added to the record has to be added here, and to its Equals, or this fails.
+        var other = new Dictionary<string, object?>
+        {
+            [nameof(ViewerObject.Id)] = "b",
+            [nameof(ViewerObject.Page)] = 2,
+            [nameof(ViewerObject.Rect)] = new PageRect(9, 9, 9, 9),
+            [nameof(ViewerObject.Locked)] = true,
+            [nameof(ViewerObject.Selectable)] = false,
+            [nameof(ViewerObject.Hidden)] = true,
+            [nameof(ViewerObject.Label)] = "other",
+            [nameof(ViewerObject.Kind)] = "other",
+            [nameof(ViewerObject.CssClass)] = "other",
+            [nameof(ViewerObject.AppData)] = new Dictionary<string, string> { ["k"] = "v" },
+            [nameof(ViewerObject.Style)] = new ViewerObjectStyle { Color = "red" },
+        };
+        var properties = typeof(ViewerObject).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+        Assert.Equal(other.Keys.Order(), properties.Select(property => property.Name).Order());
+        foreach (var property in properties)
+        {
+            var copy = original with { };
+            property.SetValue(copy, other[property.Name]);
+            Assert.NotEqual(original, copy);
+        }
+    }
+
+    [Fact]
+    public async Task OnSelectionChanged_ShouldNotWaitForObjectsHandler_WhenBothArriveTogether()
+    {
+        var waiting = new TaskCompletionSource();
+        SelectionChangedArgs? selection = null;
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.OnObjectsChanged, (ObjectsChangedArgs _) => waiting.Task)
+            .Add(component => component.OnSelectionChanged, args => selection = args));
+        var drawn = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4));
+        var changes = new ChangesNotification(3, new ObjectChanges([drawn], [], []), new(ChangeOrigin.User, "a", 1));
+
+        var handled = viewer.InvokeAsync(() => Notifications.NotifyChanges(changes));
+        var raisedWhileWaiting = selection;
+        waiting.SetResult();
+        await handled;
+
+        Assert.Equal(new SelectionChangedArgs(3, ChangeOrigin.User, "a", 1), raisedWhileWaiting);
+    }
+
+    [Fact]
+    public async Task OnSelectionChanged_ShouldStillBeRaised_WhenObjectsHandlerThrows()
+    {
+        SelectionChangedArgs? selection = null;
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.OnObjectsChanged, (ObjectsChangedArgs _) => throw new FormatException())
+            .Add(component => component.OnSelectionChanged, args => selection = args));
+        var drawn = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4));
+        var changes = new ChangesNotification(3, new ObjectChanges([drawn], [], []), new(ChangeOrigin.User, "a", 1));
+
+        await Assert.ThrowsAsync<FormatException>(
+            () => viewer.InvokeAsync(() => Notifications.NotifyChanges(changes)));
+
+        Assert.NotNull(selection);
+    }
+
+    [Fact]
+    public async Task OnObjectsChanged_ShouldIgnoreChangesFromPreviousDocument_WhenSourceHasChanged()
+    {
+        var received = new List<ObjectsChangedArgs>();
+        var objects = ManyObjects(1);
+        var moved = objects[0] with { Rect = new PageRect(50, 50, 10, 10) };
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Source, "/a.pdf")
+            .Add(component => component.Objects, objects)
+            .Add(component => component.OnObjectsChanged, received.Add));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(3, 1)));
+
+        viewer.Render(parameters => parameters.Add(component => component.Source, "/b.pdf"));
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(UserMoved(9, objects[0], moved)));
+        viewer.Render(parameters => parameters.Add(component => component.Objects, objects));
+        var whileOpening = (received.Count, SentBatches.Count());
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(3, 1)));
+        await viewer.InvokeAsync(() => Notifications.NotifyChanges(UserMoved(12, objects[0], moved)));
+
+        // One batch per document, and none to undo the late change, which was never taken as known.
+        Assert.Equal((0, 2), whileOpening);
+        Assert.Single(received);
     }
 }

@@ -1,9 +1,32 @@
 import { expect, test, type Page } from "@playwright/test";
-import type { PageObject } from "../../src/object-store.js";
+import type { ViewerBridge } from "../../src/blazor-bridge.js";
 import type { PdfViewerElement } from "../../src/viewer-element.js";
 import { fixtureUrl, openViewer, Viewer } from "./support.js";
 
 const rect = { x: 100, y: 100, width: 200, height: 100 };
+
+type RecordingWindow = Window & { dotNetCalls: unknown[][]; bridge: ViewerBridge };
+
+/** Attaches a bridge that records every call it makes to .NET, and returns a way to read them back. */
+async function attachRecording(viewer: Viewer, subscriptions: { objects: boolean; selection: boolean }) {
+  await viewer.host.evaluate(async (element: PdfViewerElement, flags) => {
+    const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
+    const recorder = window as unknown as RecordingWindow;
+    recorder.dotNetCalls = [];
+    const dotNet = {
+      invokeMethodAsync: (...call: unknown[]) => { recorder.dotNetCalls.push(call); return Promise.resolve(); },
+    };
+    recorder.bridge = attach(element, dotNet, {}, flags);
+  }, subscriptions);
+  return () => viewer.page.evaluate(() => (window as unknown as RecordingWindow).dotNetCalls);
+}
+
+/** Draws one rectangle with the real mouse, which adds an object and selects it. */
+async function drawObject(viewer: Viewer): Promise<void> {
+  await viewer.setTool("draw-rect");
+  await viewer.drag(await viewer.pagePoint(0.2, 0.2), await viewer.pagePoint(0.4, 0.3));
+  await expect(viewer.pageElement()).toHaveAttribute("data-object-count", "1");
+}
 
 test.describe("commands that overlap", () => {
   test("goToPage_ShouldStillNavigate_WhenZoomChangesWhilePageLoads", async ({ page }) => {
@@ -422,7 +445,7 @@ test.describe("listeners that navigate while a document is replaced", () => {
     await viewer.addObject({ id: "a", page: 1, rect });
 
     await viewer.host.evaluate(async (element: PdfViewerElement, url) => {
-      element.addEventListener("pv-objects-replaced", () => void element.goToPage(2), { once: true });
+      element.addEventListener("pv-objects-changed", () => void element.goToPage(2), { once: true });
       await element.open({ kind: "url", url });
     }, fixtureUrl("a4"));
 
@@ -446,36 +469,58 @@ test.describe("handles", () => {
 });
 
 test.describe("Blazor bridge", () => {
-  /**
-   * Attaches with the given subscriptions, makes one change of each kind to an object and the selection, and returns
-   * the .NET methods called.
-   */
-  async function notifiedMethods(page: Page, subscriptions: { objects: boolean; selection: boolean }) {
+  test("userChanges_ShouldReachDotNetAsOneMessage_WhenUserDrawsObject", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
-    return viewer.host.evaluate(async (element: PdfViewerElement, { value, flags }) => {
-      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
-      const calls: string[] = [];
-      const dotNet = { invokeMethodAsync: (method: string) => { calls.push(method); return Promise.resolve(); } };
-      attach(element, dotNet, {}, flags);
-      element.addObject({ id: "a", page: 1, rect: value });
-      element.selectObject("a");
-      element.updateObject("a", { locked: true });
-      element.selectObject(null);
-      element.removeObject("a");
-      element.setObjects([]);
-      return calls;
-    }, { value: rect, flags: subscriptions });
-  }
+    const calls = await attachRecording(viewer, { objects: true, selection: true });
 
-  test("notifications_ShouldNotReachDotNet_WhenItHasNoHandlers", async ({ page }) => {
-    expect(await notifiedMethods(page, { objects: false, selection: false })).toEqual([]);
+    await drawObject(viewer);
+
+    const id = await page.locator("[data-object-id]").getAttribute("data-object-id");
+    const message = {
+      sequence: 2,
+      objects: { added: [{ id, page: 1 }], updated: [], removed: [] },
+      selection: { origin: "user", primaryId: id, count: 1 },
+    };
+    expect(await calls()).toMatchObject([["NotifyChanges", message]]);
+    expect(await calls()).toHaveLength(1);
   });
 
-  test("notifications_ShouldReachDotNetOnlyForHandledKinds_WhenSomeHaveHandlers", async ({ page }) => {
-    expect(await notifiedMethods(page, { objects: true, selection: false }))
-      .toEqual(["NotifyObjectAdded", "NotifyObjectUpdated", "NotifyObjectRemoved", "NotifyObjectsReplaced"]);
-    expect(await notifiedMethods(page, { objects: false, selection: true }))
-      .toEqual(["NotifySelectionChanged", "NotifySelectionChanged"]);
+  test("changesMadeByCode_ShouldNotReachDotNet_WhenDotNetHandlesObjectChanges", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    const calls = await attachRecording(viewer, { objects: true, selection: false });
+
+    await viewer.host.evaluate(async (element: PdfViewerElement, value) => {
+      element.addObject({ id: "a", page: 1, rect: value });
+      element.updateObject("a", { locked: true });
+      element.setObjects([{ id: "b", page: 1, rect: value }]);
+      element.removeObject("b");
+      await Promise.resolve();
+    }, rect);
+
+    expect(await calls()).toEqual([]);
+  });
+
+  for (const [handled, objects, selection] of [["Objects", true, false], ["Selection", false, true]] as const) {
+    test(`userChanges_ShouldCarryOnlyHandledKind_WhenDotNetHandlesOnly${handled}`, async ({ page }) => {
+      const viewer = await openViewer(page, { initialZoom: 1 });
+      const calls = await attachRecording(viewer, { objects, selection });
+
+      await drawObject(viewer);
+
+      const [[method, message]] = await calls() as [[string, { objects: unknown; selection: unknown }]];
+      expect(await calls()).toHaveLength(1);
+      expect(method).toBe("NotifyChanges");
+      expect([message.objects !== null, message.selection !== null]).toEqual([objects, selection]);
+    });
+  }
+
+  test("userChanges_ShouldNotReachDotNet_WhenItHasNoHandlers", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    const calls = await attachRecording(viewer, { objects: false, selection: false });
+
+    await drawObject(viewer);
+
+    expect(await calls()).toEqual([]);
   });
 
   test("documentLoaded_ShouldReachDotNetWithFirstPageButNoPageLabels_WhenDocumentDefinesThem", async ({ page }) => {
@@ -496,41 +541,62 @@ test.describe("Blazor bridge", () => {
 
   test("selectionChange_ShouldReachDotNetAsCountWithoutIds_WhenSeveralAreSelected", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
+    const calls = await attachRecording(viewer, { objects: false, selection: true });
 
-    const result = await viewer.host.evaluate(async (element: PdfViewerElement, value) => {
-      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
-      const calls: unknown[][] = [];
-      const dotNet = { invokeMethodAsync: (...call: unknown[]) => { calls.push(call); return Promise.resolve(); } };
-      const bridge = attach(element, dotNet, {}, { objects: false, selection: true });
+    const ids = await viewer.host.evaluate((element: PdfViewerElement, value) => {
       element.addObject({ id: "a", page: 1, rect: value });
       element.addObject({ id: "b", page: 1, rect: value });
       element.selectObjects(["a", "b"]);
-      return { calls, ids: new TextDecoder().decode(bridge.getSelectedObjectIds()) };
+      return new TextDecoder().decode((window as unknown as RecordingWindow).bridge.getSelectedObjectIds());
     }, rect);
 
-    const notification = { sequence: 3, origin: "api", primaryId: "b", count: 2 };
-    expect(result.calls).toEqual([["NotifySelectionChanged", notification]]);
-    expect(JSON.parse(result.ids)).toEqual(["a", "b"]);
+    const message = { sequence: 3, objects: null, selection: { origin: "api", primaryId: "b", count: 2 } };
+    expect(await calls()).toEqual([["NotifyChanges", message]]);
+    expect(JSON.parse(ids)).toEqual(["a", "b"]);
   });
 
-  test("updateObject_ShouldClearValues_WhenDotNetLeavesThemOut", async ({ page }) => {
+  test("applyObjects_ShouldReplaceWholeObject_WhenDotNetLeavesValuesOut", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
     await viewer.addObject({ id: "a", page: 1, rect, kind: "heading", label: "Region", style: { color: "red" },
       cssClass: "emphasized", appData: { section: "3" } });
+    await attachRecording(viewer, { objects: true, selection: true });
 
-    const updated = await viewer.host.evaluate(async (element: PdfViewerElement, value) => {
-      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
-      const bridge = attach(element, { invokeMethodAsync: () => Promise.resolve() }, {},
-        { objects: true, selection: true });
-      return bridge.updateObject(value as PageObject);
-    }, { id: "a", page: 1, rect, shape: "rect", locked: false, selectable: true, hidden: false });
+    await viewer.host.evaluate((_, value) => {
+      (window as unknown as RecordingWindow).bridge.applyObjects({ upsert: [{ id: "a", page: 1, rect: value }] });
+    }, rect);
 
-    expect([updated.kind, updated.label, updated.style, updated.cssClass, updated.appData])
+    const stored = (await viewer.getObject("a"))!;
+    expect([stored.kind, stored.label, stored.style, stored.cssClass, stored.appData])
       .toEqual([undefined, undefined, undefined, undefined, undefined]);
     await expect(viewer.object("a")).not.toHaveAttribute("data-object-kind");
     await expect(viewer.object("a")).not.toHaveAttribute("data-app-section");
     await expect(viewer.object("a")).toHaveAttribute("class", "pv-object");
   });
+
+  // A batch from .NET says which change it had last heard of. A user's edit it hadn't heard of yet must survive it.
+  for (const [heard, outcome, expected] of [
+    [false, "LeaveUserMoveAlone", "140,120,200,100"], [true, "OverwriteUserMove", "5,5,200,100"],
+  ] as const) {
+    test(`applyObjects_Should${outcome}_WhenDotNetHad${heard ? "" : "Not"}HeardOfIt`, async ({ page }) => {
+      const viewer = await openViewer(page, { initialZoom: 1 });
+      await viewer.addObject({ id: "a", page: 1, rect });
+      await viewer.addObject({ id: "b", page: 1, rect: { ...rect, y: 400 } });
+      const calls = await attachRecording(viewer, { objects: true, selection: false });
+      const from = await viewer.center(viewer.object("a"));
+      await viewer.drag(from, { x: from.x + 40, y: from.y + 20 });
+      const [[, { sequence }]] = await calls() as [[string, { sequence: number }]];
+
+      await viewer.host.evaluate((_, { value, basedOn }) => {
+        const upsert = [
+          { id: "a", page: 1, rect: { ...value, x: 5, y: 5 } }, { id: "b", page: 1, rect: { ...value, x: 5 } },
+        ];
+        (window as unknown as RecordingWindow).bridge.applyObjects({ upsert, basedOn });
+      }, { value: rect, basedOn: heard ? sequence : sequence - 1 });
+
+      await expect(viewer.object("a")).toHaveAttribute("data-page-rect", expected);
+      await expect(viewer.object("b")).toHaveAttribute("data-page-rect", "5,100,200,100");
+    });
+  }
 
   test("open_ShouldCloseDocument_WhenFileInputHasNoFile", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
@@ -591,19 +657,18 @@ test.describe("Blazor bridge commands", () => {
 
   test("subscribe_ShouldStartObjectNotifications_WhenDotNetGainsHandlerLater", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    const calls = await attachRecording(viewer, { objects: false, selection: false });
+    const from = await viewer.center(viewer.object("a"));
 
-    const calls = await viewer.host.evaluate(async (element: PdfViewerElement, value) => {
-      const { attach } = await import("/dist/pv.js" as string) as typeof import("../../src/index.js");
-      const methods: string[] = [];
-      const dotNet = { invokeMethodAsync: (method: string) => { methods.push(method); return Promise.resolve(); } };
-      const bridge = attach(element, dotNet, {}, { objects: false, selection: false });
-      element.addObject({ id: "a", page: 1, rect: value });
-      bridge.subscribe({ objects: true, selection: false });
-      element.removeObject("a");
-      return methods;
-    }, rect);
+    await viewer.drag(from, { x: from.x + 10, y: from.y });
+    const before = await calls();
+    await page.evaluate(() => {
+      (window as unknown as RecordingWindow).bridge.subscribe({ objects: true, selection: false });
+    });
+    await viewer.drag({ x: from.x + 10, y: from.y }, { x: from.x + 20, y: from.y });
 
-    expect(calls).toEqual(["NotifyObjectRemoved"]);
+    expect([before, (await calls()).map(([method]) => method)]).toEqual([[], ["NotifyChanges"]]);
   });
 
   test("rotateBy_ShouldAddToCurrentRotation_WhenSentFromDotNet", async ({ page }) => {

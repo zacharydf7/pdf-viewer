@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PvEventMap } from "../../src/events.js";
-import type { NewPageObject, PageObject } from "../../src/object-store.js";
+import type { ChangeOrigin, NewPageObject, ObjectUpdate, PageObject } from "../../src/object-store.js";
 import type { Rect } from "../../src/geometry.js";
 import type { PdfViewerElement } from "../../src/viewer-element.js";
 import type { ViewerOptions, ZoomSetting } from "../../src/viewer-options.js";
@@ -112,6 +112,26 @@ export class Viewer {
     }, [type, key]);
     return () => this.page.evaluate((property) => (window as unknown as Record<string, unknown[]>)[property]!, key) as
       Promise<PvEventMap[Type][]>;
+  }
+
+  /** Records each object the viewer reports as added, with the origin of the change that added it. */
+  async recordAdded(): Promise<() => Promise<{ origin: ChangeOrigin; object: PageObject }[]>> {
+    const changes = await this.recordEvents("pv-objects-changed");
+    return async () => (await changes()).flatMap(({ origin, added }) => added.map((object) => ({ origin, object })));
+  }
+
+  /** Records each update the viewer reports, with the origin of its change. */
+  async recordUpdated(): Promise<() => Promise<(ObjectUpdate & { origin: ChangeOrigin })[]>> {
+    const changes = await this.recordEvents("pv-objects-changed");
+    return async () => (await changes())
+      .flatMap(({ origin, updated }) => updated.map((update) => ({ origin, ...update })));
+  }
+
+  /** Records each object the viewer reports as removed, with the origin of the change that removed it. */
+  async recordRemoved(): Promise<() => Promise<{ origin: ChangeOrigin; object: PageObject }[]>> {
+    const changes = await this.recordEvents("pv-objects-changed");
+    return async () => (await changes())
+      .flatMap(({ origin, removed }) => removed.map((object) => ({ origin, object })));
   }
 
   /** The screen position of a point given as a fraction of the displayed page. */

@@ -97,15 +97,6 @@ public sealed class PdfViewerController
             await source.CopyToAsync(destination, cancellationToken);
         }, cancellationToken);
 
-    public Task AddObjectAsync(ViewerObject viewerObject) => SendAsync("addObject", viewerObject);
-
-    public Task UpdateObjectAsync(ViewerObject viewerObject) => SendAsync("updateObject", viewerObject);
-
-    public Task RemoveObjectAsync(string id) => SendAsync("removeObject", id);
-
-    /// <summary>Replaces every object in one step, which is cheaper than many separate changes.</summary>
-    public Task SetObjectsAsync(IEnumerable<ViewerObject> objects) => SendAsync("setObjects", objects);
-
     /// <summary>Selects one object, or none when given null.</summary>
     public Task SelectObjectAsync(string? id) => SelectObjectsAsync(id is null ? [] : [id]);
 

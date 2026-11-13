@@ -38,7 +38,7 @@
 
         <h2>Objects</h2>
         <ul data-testid="object-list">
-            @foreach (var viewerObject in _objects.Values)
+            @foreach (var viewerObject in _objects)
             {
                 <li data-listed-object="@viewerObject.Id">@viewerObject.Id on page @viewerObject.Page</li>
             }
@@ -68,9 +68,8 @@
     <main class="sample-viewer">
         @* The headless query option shows the settings an application with its own controls would use. *@
         <PdfViewer Controller="_controller" Source="_source" InitialPage="Page ?? 1" ShowToolbar="!Headless"
-                   Options="_options" OnDocumentLoaded="HandleDocumentLoaded" OnObjectAdded="HandleObjectAdded"
-                   OnObjectUpdated="HandleObjectUpdated" OnObjectRemoved="HandleObjectRemoved"
-                   OnSelectionChanged="HandleSelectionChanged"
+                   Options="_options" Objects="_objects" OnDocumentLoaded="() => _loadCount++"
+                   OnObjectsChanged="HandleObjectsChanged" OnSelectionChanged="HandleSelectionChanged"
                    OnError="error => _lastError = error.Code.ToString()" />
     </main>
 </div>
@@ -81,7 +80,10 @@
     private ElementReference _fileInput;
     private PdfSource? _source;
     private TaskCompletionSource<bool>? _pendingDialog;
-    private readonly Dictionary<string, ViewerObject> _objects = [];
+    /// <summary>
+    /// The objects on display. The viewer shows this list, and the user's changes are written back to it.
+    /// </summary>
+    private readonly List<ViewerObject> _objects = [];
     private string _lastChange = "";
     private string _lastKind = "";
     private string _selectedObject = "none";
@@ -132,7 +134,12 @@
         };
     }
 
-    private void OpenSelectedFile() => _source = PdfSource.FromFileInput(_fileInput);
+    /// <summary>The objects belong to the document they were drawn on, so a new document starts with none.</summary>
+    private void OpenSelectedFile()
+    {
+        _objects.Clear();
+        _source = PdfSource.FromFileInput(_fileInput);
+    }
 
     private Task DrawHeading() => _controller.SetToolAsync(ViewerTool.DrawRectangle, new ViewerDrawDefaults
     {
@@ -140,12 +147,13 @@
         Label = "Heading region",
     });
 
-    private async Task AddObject()
+    private void AddObject()
     {
         var id = $"code-{_nextObject++}";
         var rect = new PageRect(50, 50, 150, 80);
         var viewerObject = new ViewerObject(id, _controller.CurrentPage, rect) { Label = $"Region {id}" };
-        await _controller.AddObjectAsync(viewerObject);
+        _objects.Add(viewerObject);
+        Record("Added", ChangeOrigin.Api, viewerObject);
     }
 
     private Task RotateCurrentPage() =>
@@ -174,18 +182,31 @@
         _selectedIds = string.Join(" ", await _controller.GetSelectedObjectIdsAsync());
     }
 
-    private void HandleDocumentLoaded()
+    /// <summary>Writes what the user did into the list, which is what keeps it from being undone.</summary>
+    private async Task HandleObjectsChanged(ObjectsChangedArgs args)
     {
-        _objects.Clear();
-        _loadCount++;
-    }
+        foreach (var added in args.Added)
+        {
+            _objects.Add(added);
+            Record("Added", ChangeOrigin.User, added);
+        }
+        foreach (var update in args.Updated)
+        {
+            // An object removed from the list while the user was changing it stays removed.
+            var index = _objects.FindIndex(viewerObject => viewerObject.Id == update.Object.Id);
+            if (index >= 0)
+            {
+                _objects[index] = update.Object;
+                Record("Updated", ChangeOrigin.User, update.Object);
+            }
+        }
+        foreach (var removed in args.Removed)
+        {
+            _objects.RemoveAll(viewerObject => viewerObject.Id == removed.Id);
+            Record("Removed", ChangeOrigin.User, removed);
+        }
 
-    private async Task HandleObjectAdded(ObjectAddedArgs args)
-    {
-        Record("Added", args.Origin, args.Object);
-        _objects[args.Object.Id] = args.Object;
-
-        if (ConfirmDraw && args.Origin == ChangeOrigin.User)
+        if (ConfirmDraw && args.Added is [var drawn, ..])
         {
             _pendingDialog = new TaskCompletionSource<bool>();
             StateHasChanged();
@@ -193,21 +214,9 @@
             _pendingDialog = null;
             if (!keep)
             {
-                await _controller.RemoveObjectAsync(args.Object.Id);
+                _objects.RemoveAll(viewerObject => viewerObject.Id == drawn.Id);
             }
         }
-    }
-
-    private void HandleObjectUpdated(ObjectUpdatedArgs args)
-    {
-        Record("Updated", args.Origin, args.Object);
-        _objects[args.Object.Id] = args.Object;
-    }
-
-    private void HandleObjectRemoved(ObjectRemovedArgs args)
-    {
-        Record("Removed", args.Origin, args.Object);
-        _objects.Remove(args.Object.Id);
     }
 
     private void Record(string kind, ChangeOrigin origin, ViewerObject viewerObject)

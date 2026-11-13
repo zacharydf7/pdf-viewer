@@ -15,7 +15,8 @@ export interface ObjectStyle {
  */
 export interface PageObject {
   readonly id: string;
-  readonly page: number;
+  /** The object's page, or null to show it on whichever page is displayed. */
+  readonly page: number | null;
   readonly rect: Readonly<Rect>;
   /** The object's shape. Rectangles are the only one so far. */
   readonly shape: "rect";
@@ -58,11 +59,7 @@ interface Change {
   origin: ChangeOrigin;
 }
 
-export interface ObjectAdded extends Change {
-  object: PageObject;
-}
-
-export interface ObjectUpdated extends Change {
+export interface ObjectUpdate {
   object: PageObject;
   /** The object as it was before this change. */
   previous: PageObject;
@@ -70,12 +67,25 @@ export interface ObjectUpdated extends Change {
   gesture?: EditGesture;
 }
 
-export interface ObjectRemoved extends Change {
-  /** The object as it was when removed. */
-  object: PageObject;
+/** One change to the store's objects, however many objects it touched. Removed objects are as they were. */
+export interface ObjectsChanged extends Change {
+  added: readonly PageObject[];
+  updated: readonly ObjectUpdate[];
+  removed: readonly PageObject[];
 }
 
-export type ObjectsReplaced = Change;
+/** Several changes applied as one, so listeners hear of them once. */
+export interface ObjectBatch {
+  /** Objects to add, or to replace whole where the id exists. One that equals the stored object changes nothing. */
+  upsert?: readonly NewPageObject[];
+  /** Ids to remove. Ids that don't exist are ignored. */
+  remove?: readonly string[];
+  /**
+   * The sequence of the latest change the sender had heard of. When it's set, the batch leaves alone any object the
+   * user changed after that, so a batch sent before the sender heard of a user's edit can't undo it.
+   */
+  basedOn?: number;
+}
 
 export interface SelectionChanged extends Change {
   /** Every selected object, in the order selected. */
@@ -85,17 +95,21 @@ export interface SelectionChanged extends Change {
 }
 
 export interface ObjectStoreListener {
-  onAdded(change: ObjectAdded): void;
-  onUpdated(change: ObjectUpdated): void;
-  onRemoved(change: ObjectRemoved): void;
-  onReplaced(change: ObjectsReplaced): void;
+  onChanged(change: ObjectsChanged): void;
   onSelectionChanged(change: SelectionChanged): void;
+}
+
+/** Whether an object shows on a page: its own, or any page for an object that isn't tied to one. */
+export function isOnPage(object: PageObject, page: number): boolean {
+  return object.page === null || object.page === page;
 }
 
 /** Holds every object in the document, including those on pages that are not currently displayed. */
 export class ObjectStore {
   readonly #objects = new Map<string, PageObject>();
   readonly #listener: ObjectStoreListener;
+  /** The sequence of the user's latest change to each object, removals included, for batches that give basedOn. */
+  readonly #userChanges = new Map<string, number>();
   #selectedIds: readonly string[] = Object.freeze([]);
   /** The same ids, for looking one up without scanning the list. */
   #selectedSet: ReadonlySet<string> = new Set();
@@ -126,7 +140,7 @@ export class ObjectStore {
   }
 
   forPage(page: number): PageObject[] {
-    return this.all().filter((object) => object.page === page);
+    return this.all().filter((object) => isOnPage(object, page));
   }
 
   add(object: NewPageObject, origin: ChangeOrigin): PageObject {
@@ -134,41 +148,79 @@ export class ObjectStore {
       throw new Error(`An object with id "${object.id}" already exists.`);
     }
     const added = frozenObject(object);
-    this.#objects.set(added.id, added);
-    this.#listener.onAdded({ sequence: ++this.#sequence, origin, object: added });
+    this.#commit([added], [], [], origin);
     return added;
   }
 
   update(id: string, patch: ObjectPatch, origin: ChangeOrigin, gesture?: EditGesture): PageObject {
     const previous = this.#require(id);
-    const updated = frozenObject({ ...previous, ...patch });
-    this.#objects.set(id, updated);
-    this.#listener.onUpdated({ sequence: ++this.#sequence, origin, object: updated, previous, gesture });
-    return updated;
+    const object = frozenObject({ ...previous, ...patch });
+    this.#commit([], [{ object, previous, gesture }], [], origin);
+    return object;
   }
 
-  remove(id: string, origin: ChangeOrigin): void {
-    const existing = this.#require(id);
-    if (this.#selectedSet.has(id)) {
-      this.select(this.#selectedIds.filter((selected) => selected !== id), origin);
+  /** Adds an object, or replaces the one with its id. */
+  upsert(object: NewPageObject, origin: ChangeOrigin): PageObject {
+    this.apply({ upsert: [object] }, origin);
+    return this.#objects.get(object.id)!;
+  }
+
+  /** Removes an object if it exists, and returns whether it did. */
+  remove(id: string, origin: ChangeOrigin): boolean {
+    const existing = this.#objects.get(id);
+    if (existing !== undefined) {
+      this.#commit([], [], [existing], origin);
     }
-    this.#objects.delete(id);
-    this.#listener.onRemoved({ sequence: ++this.#sequence, origin, object: existing });
+    return existing !== undefined;
   }
 
-  /** Replaces every object in one step. Selected objects that still exist stay selected. */
-  replaceAll(objects: readonly NewPageObject[], origin: ChangeOrigin): void {
-    const replacement = objects.map(frozenObject);
-    const ids = new Set(replacement.map((object) => object.id));
-    if (ids.size !== replacement.length) {
+  /** Applies a batch as one change. Nothing changes if any object in it is invalid. */
+  apply({ upsert = [], remove = [], basedOn }: ObjectBatch, origin: ChangeOrigin): void {
+    const incoming = upsert.map(frozenObject);
+    const ids = new Set(incoming.map((object) => object.id));
+    if (ids.size !== incoming.length) {
       throw new Error("Object ids must be unique.");
     }
-    this.select(this.#selectedIds.filter((selected) => ids.has(selected)), origin);
-    this.#objects.clear();
-    for (const object of replacement) {
-      this.#objects.set(object.id, object);
+    const both = remove.find((id) => ids.has(id));
+    if (both !== undefined) {
+      throw new Error(`Object "${both}" can't be both upserted and removed.`);
     }
-    this.#listener.onReplaced({ sequence: ++this.#sequence, origin });
+    const changedSince = (id: string) => basedOn !== undefined && (this.#userChanges.get(id) ?? 0) > basedOn;
+
+    const added: PageObject[] = [];
+    const updated: ObjectUpdate[] = [];
+    for (const object of incoming) {
+      const previous = this.#objects.get(object.id);
+      if (changedSince(object.id)) {
+        continue;
+      }
+      if (previous === undefined) {
+        added.push(object);
+      } else if (!sameValue(previous, object)) {
+        updated.push({ object, previous });
+      }
+    }
+    const removed = [...new Set(remove)].filter((id) => !changedSince(id))
+      .flatMap((id) => this.#objects.get(id) ?? []);
+    if (basedOn !== undefined) {
+      this.#forgetUserChangesUpTo(basedOn);
+    }
+    this.#commit(added, updated, removed, origin);
+  }
+
+  /** Makes these the only objects, as one change. Selected objects that still exist stay selected. */
+  replaceAll(objects: readonly NewPageObject[], origin: ChangeOrigin): void {
+    const kept = new Set(objects.map((object) => object.id));
+    this.apply({ upsert: objects, remove: [...this.#objects.keys()].filter((id) => !kept.has(id)) }, origin);
+  }
+
+  /**
+   * Removes every object and forgets which ones the user changed, for when their document closes. A batch for the next
+   * document must not skip an id just because the user edited an object with that id in the last one.
+   */
+  clear(origin: ChangeOrigin): void {
+    this.replaceAll([], origin);
+    this.#userChanges.clear();
   }
 
   /** Selects exactly these objects. A repeated id counts once, at its first position. */
@@ -188,6 +240,42 @@ export class ObjectStore {
     });
   }
 
+  /** Stores a change and reports it once. Removed objects leave the selection first, as a change of its own. */
+  #commit(added: PageObject[], updated: ObjectUpdate[], removed: PageObject[], origin: ChangeOrigin): void {
+    if (added.length + updated.length + removed.length === 0) {
+      return;
+    }
+    if (removed.some(({ id }) => this.#selectedSet.has(id))) {
+      const gone = new Set(removed.map(({ id }) => id));
+      this.select(this.#selectedIds.filter((id) => !gone.has(id)), origin);
+    }
+    const sequence = ++this.#sequence;
+    // Most changes touch one object, so this avoids building lists just to walk them.
+    const noteUserChange = origin === "user" ? (id: string) => this.#userChanges.set(id, sequence) : undefined;
+    for (const { id } of removed) {
+      this.#objects.delete(id);
+      noteUserChange?.(id);
+    }
+    for (const object of added) {
+      this.#objects.set(object.id, object);
+      noteUserChange?.(object.id);
+    }
+    for (const { object } of updated) {
+      this.#objects.set(object.id, object);
+      noteUserChange?.(object.id);
+    }
+    this.#listener.onChanged({ sequence, origin, added, updated, removed });
+  }
+
+  /** A sender that has heard of a change won't send a batch based on anything older, so it needn't be kept. */
+  #forgetUserChangesUpTo(sequence: number): void {
+    for (const [id, changed] of this.#userChanges) {
+      if (changed <= sequence) {
+        this.#userChanges.delete(id);
+      }
+    }
+  }
+
   #require(id: string): PageObject {
     const object = this.#objects.get(id);
     if (object === undefined) {
@@ -195,6 +283,20 @@ export class ObjectStore {
     }
     return object;
   }
+}
+
+/** Whether two values hold the same plain data, treating a missing property like an undefined one. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
+    return false;
+  }
+  const first = a as Record<string, unknown>;
+  const second = b as Record<string, unknown>;
+  return [...new Set([...Object.keys(first), ...Object.keys(second)])]
+    .every((key) => sameValue(first[key], second[key]));
 }
 
 const appDataKey = /^[a-z][a-z0-9-]*$/;

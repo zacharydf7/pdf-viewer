@@ -57,9 +57,14 @@ without a label is named "Object 3 on page 2" or similar, with a number no other
 gets which number depends on the order objects were shown, so use `data-object-id` for identity, as names can also be
 localized or repeated.
 
-Objects appear only for the displayed page. To read any object in the document, call `getObject(id)` or `getObjects()` on
-the element. `data-object-count` gives the number on the displayed page. The objects these return are frozen, so change
-one with `updateObject`.
+Objects appear only for the displayed page. An object whose `page` is `null` appears on whichever page is displayed, at
+the same coordinates, and is clipped where that page is smaller than its rectangle. To read any object in the document,
+call `getObject(id)` or `getObjects()` on the element. `data-object-count` gives the number on the displayed page. The
+objects these return are frozen, so change one with `updateObject`.
+
+To set up a test's objects in one step, call `setObjects(list)`, which makes the list the only objects, or
+`applyObjects({ upsert, remove })`, which adds or replaces some and removes others. Either one raises at most one
+`pv-objects-changed` event, listing only what actually differed, and none when nothing did.
 
 The selected object's handles are `[data-handle="nw|n|ne|e|se|s|sw|w"]`, with `data-handle-for` set to its ID. Handles are
 real elements, so a test can drag them with the real mouse. They appear only when exactly one object is selected.
@@ -91,10 +96,7 @@ These are bubbling `CustomEvent`s on `<pdf-viewer>`.
 | `pv-document-loaded` | `{ pageCount, pageLabels }`, where `pageLabels` has each page's label in page order, or is `null` if the document defines none |
 | `pv-page-rendered` | `{ page, scale }` |
 | `pv-page-change` | `{ page }` |
-| `pv-object-added` | `{ sequence, origin, object }`, where `origin` is `user` or `api` |
-| `pv-object-updated` | `{ sequence, origin, object, previous, gesture }`. `previous` is the object before the change. `gesture` is set when the user changed the rectangle: `move` for dragging the object, `resize` for dragging a handle or pressing Shift with an arrow key, `nudge` for an arrow key without Shift |
-| `pv-object-removed` | `{ sequence, origin, object }`, with the object as it was |
-| `pv-objects-replaced` | `{ sequence, origin }`, after `setObjects` |
+| `pv-objects-changed` | `{ sequence, origin, added, updated, removed }`, where `origin` is `user` or `api`. One event reports one change, however many objects it touched. `added` and `removed` list objects, the removed ones as they were. `updated` lists `{ object, previous, gesture }`, where `previous` is the object before the change. `gesture` is set when the user changed the rectangle: `move` for dragging the object, `resize` for dragging a handle or pressing Shift with an arrow key, `nudge` for an arrow key without Shift |
 | `pv-selection-change` | `{ sequence, origin, ids, primaryId }`. `ids` has every selected object in the order selected, and `primaryId` is the last of them, or `null` |
 | `pv-error` | `{ code, message, documentFailed }`, where `code` is one of the `data-error-code` values when `documentFailed` is true. Otherwise it's `page` or `render` for a page that failed, or `command` for a rejected command from .NET. For a URL source, `network` also covers any other error from pdf.js, because it reports a refused connection as a generic error |
 

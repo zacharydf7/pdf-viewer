@@ -148,6 +148,23 @@ test("setObjects_ShouldPaintWithinBudget_WhenGiven5000ObjectsWithApplicationFiel
   expectWithinBudget(time, 250);
 });
 
+test("applyObjects_ShouldPaintWithinBudget_WhenBatchChanges2000Of5000Objects", async ({ page }) => {
+  const viewer = await openWithObjects(page, 5_000);
+
+  const time = await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    const objects = window.perf!.grid(5_000, 1);
+    const upsert = objects.slice(0, 1_000).map((object) => ({ ...object, locked: true }));
+    const remove = objects.slice(4_000).map(({ id }) => id);
+    const start = performance.now();
+    element.applyObjects({ upsert, remove });
+    await window.perf!.nextFrame();
+    return performance.now() - start;
+  });
+
+  await expect(viewer.pageElement()).toHaveAttribute("data-object-count", "4000");
+  expectWithinBudget(time, 75);
+});
+
 test("addObject_ShouldPaintWithinBudget_WhenAdding1000ObjectsOneAtATime", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
 

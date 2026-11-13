@@ -1,5 +1,5 @@
 import type { PageGeometry, Rotation } from "../../src/geometry.js";
-import type { ObjectAdded, ObjectUpdated, SelectionChanged } from "../../src/object-store.js";
+import type { ChangeOrigin, ObjectUpdate, PageObject, SelectionChanged } from "../../src/object-store.js";
 import { ObjectStore } from "../../src/object-store.js";
 import type { PointerInput, Preview, ToolContext, ToolOptions } from "../../src/tool.js";
 
@@ -7,8 +7,8 @@ import type { PointerInput, Preview, ToolContext, ToolOptions } from "../../src/
 export interface ToolRecord {
   log: string[];
   shown: (Preview | undefined)[];
-  added: ObjectAdded[];
-  updated: ObjectUpdated[];
+  added: { origin: ChangeOrigin; object: PageObject }[];
+  updated: (ObjectUpdate & { origin: ChangeOrigin })[];
   selections: SelectionChanged[];
 }
 
@@ -19,10 +19,17 @@ export function recordingContext(options: Partial<ToolOptions> = {}):
   { context: TestContext; store: ObjectStore; record: ToolRecord } {
   const record: ToolRecord = { log: [], shown: [], added: [], updated: [], selections: [] };
   const store = new ObjectStore({
-    onAdded: (change) => { record.log.push("add"); record.added.push(change); },
-    onUpdated: (change) => { record.log.push("update"); record.updated.push(change); },
-    onRemoved: () => record.log.push("remove"),
-    onReplaced: () => record.log.push("replace"),
+    onChanged: ({ origin, added, updated, removed }) => {
+      for (const object of added) {
+        record.log.push("add");
+        record.added.push({ origin, object });
+      }
+      for (const update of updated) {
+        record.log.push("update");
+        record.updated.push({ origin, ...update });
+      }
+      removed.forEach(() => record.log.push("remove"));
+    },
     onSelectionChanged: (change) => { record.log.push("select"); record.selections.push(change); },
   });
   const show = (preview: Preview | undefined) => {

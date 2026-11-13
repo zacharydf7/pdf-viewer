@@ -36,7 +36,7 @@ test.describe("drawing", () => {
   test("drawRect_ShouldWork_WhenBrowserDeliversOnlyOneIntermediateMove", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.setTool("draw-rect");
-    const events = await viewer.recordEvents("pv-object-added");
+    const events = await viewer.recordAdded();
 
     await viewer.drag(await viewer.pagePoint(0.1, 0.1), await viewer.pagePoint(0.3, 0.3), 1);
 
@@ -116,7 +116,7 @@ test.describe("moving and resizing", () => {
   test("object_ShouldMoveByDraggedDistance_WhenDraggedAtZoom", async ({ page }) => {
     const viewer = await openViewer(page, "letter", 2);
     await viewer.addObject({ id: "a", page: 1, rect: start });
-    const events = await viewer.recordEvents("pv-object-updated");
+    const events = await viewer.recordUpdated();
 
     const from = await viewer.center(viewer.object("a"));
     await viewer.drag(from, { x: from.x + 100, y: from.y + 60 });
@@ -129,7 +129,7 @@ test.describe("moving and resizing", () => {
   test("object_ShouldNotReportChange_WhenClickedWithoutMoving", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
-    const events = await viewer.recordEvents("pv-object-updated");
+    const events = await viewer.recordUpdated();
 
     await viewer.object("a").click();
 
@@ -168,7 +168,7 @@ test.describe("moving and resizing", () => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
     await viewer.object("a").click();
-    const events = await viewer.recordEvents("pv-object-updated");
+    const events = await viewer.recordUpdated();
 
     const from = await viewer.center(viewer.handle("se"));
     await viewer.drag(from, { x: from.x + 40, y: from.y + 20 });
@@ -194,7 +194,7 @@ test.describe("moving and resizing", () => {
       const viewer = await openViewer(page);
       await viewer.setRotation(rotation);
       await viewer.addObject({ id: "a", page: 1, rect: { x: 100.1, y: 200.7, width: 33.3, height: 77.7 } });
-      const events = await viewer.recordEvents("pv-object-updated");
+      const events = await viewer.recordUpdated();
 
       await viewer.object("a").click();
 
@@ -235,7 +235,7 @@ test.describe("keyboard", () => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
-    const events = await viewer.recordEvents("pv-object-updated");
+    const events = await viewer.recordUpdated();
 
     await viewer.object("a").focus();
     await page.keyboard.press("ArrowRight");
@@ -249,7 +249,7 @@ test.describe("keyboard", () => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
-    const events = await viewer.recordEvents("pv-object-updated");
+    const events = await viewer.recordUpdated();
 
     await viewer.object("a").focus();
     await page.keyboard.press("Shift+ArrowRight");
@@ -324,26 +324,82 @@ test.describe("removing and replacing", () => {
   test("removeObject_ShouldReportObjectAsItWas_WhenRemovedByCode", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start, kind: "note" });
-    const events = await viewer.recordEvents("pv-object-removed");
+    const events = await viewer.recordRemoved();
 
     await viewer.host.evaluate((element: PdfViewerElement) => element.removeObject("a"));
 
     expect(await events()).toMatchObject([{ origin: "api", object: { id: "a", rect: start, kind: "note" } }]);
   });
 
-  test("setObjects_ShouldReportOneReplacement_WhenGivenSeveralObjects", async ({ page }) => {
+  test("setObjects_ShouldReportOneChangeWithOnlyWhatDiffers_WhenSomeObjectsStay", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
-    const replaced = await viewer.recordEvents("pv-objects-replaced");
-    const added = await viewer.recordEvents("pv-object-added");
+    await viewer.addObject({ id: "b", page: 1, rect: start });
+    const changes = await viewer.recordEvents("pv-objects-changed");
 
     await viewer.host.evaluate((element: PdfViewerElement, rect) => {
       element.setObjects([{ id: "b", page: 1, rect }, { id: "c", page: 1, rect }]);
     }, start);
 
-    expect((await replaced()).map(({ origin }) => origin)).toEqual(["api"]);
-    expect(await added()).toEqual([]);
+    const reported = (await changes()).map(({ origin, added, updated, removed }) =>
+      [origin, added.map(({ id }) => id), updated.length, removed.map(({ id }) => id)]);
+    expect(reported).toEqual([["api", ["c"], 0, ["a"]]]);
     await expect(viewer.pageElement()).toHaveAttribute("data-object-count", "2");
+  });
+
+  test("applyObjects_ShouldReportOneChange_WhenBatchAddsReplacesAndRemoves", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start, label: "Old" });
+    await viewer.addObject({ id: "b", page: 1, rect: start });
+    const changes = await viewer.recordEvents("pv-objects-changed");
+
+    await viewer.host.evaluate((element: PdfViewerElement, rect) => {
+      const upsert = [{ id: "a", page: 1, rect }, { id: "c", page: 1, rect }];
+      element.applyObjects({ upsert, remove: ["b", "missing"] });
+    }, start);
+
+    expect(await changes()).toHaveLength(1);
+    await expect(viewer.object("a")).toHaveAttribute("aria-label", /^Object/);
+    await expect(viewer.object("b")).toHaveCount(0);
+    await expect(viewer.object("c")).toHaveCount(1);
+  });
+
+  test("applyObjects_ShouldApplyToReusedId_WhenUserMovedThatIdInPreviousDocument", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const changes = await viewer.recordEvents("pv-objects-changed");
+    const from = await viewer.center(viewer.object("a"));
+    await viewer.drag(from, { x: from.x + 40, y: from.y + 20 });
+    const basedOn = (await changes())[0]!.sequence - 1;
+
+    await viewer.open("letter");
+    await viewer.host.evaluate((element: PdfViewerElement, { rect, basedOn }) => {
+      element.applyObjects({ upsert: [{ id: "a", page: 1, rect }], basedOn });
+    }, { rect: start, basedOn });
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  test("upsertObject_ShouldAddThenReplace_WhenCalledTwiceWithSameId", async ({ page }) => {
+    const viewer = await openViewer(page);
+
+    await viewer.host.evaluate((element: PdfViewerElement, rect) => {
+      element.upsertObject({ id: "a", page: 1, rect, kind: "note" });
+      element.upsertObject({ id: "a", page: 1, rect: { ...rect, x: 5 } });
+    }, start);
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "5,100,200,100");
+    await expect(viewer.object("a")).not.toHaveAttribute("data-object-kind");
+  });
+
+  test("removeObject_ShouldReturnFalseWithoutThrowing_WhenObjectDoesNotExist", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+
+    const removed = await viewer.host.evaluate((element: PdfViewerElement) =>
+      [element.removeObject("a"), element.removeObject("a")]);
+
+    expect(removed).toEqual([true, false]);
   });
 });
 
@@ -380,7 +436,7 @@ test.describe("selecting several objects", () => {
 test.describe("programmatic changes", () => {
   test("change_ShouldReportApiOrigin_WhenObjectIsAddedByCode", async ({ page }) => {
     const viewer = await openViewer(page);
-    const events = await viewer.recordEvents("pv-object-added");
+    const events = await viewer.recordAdded();
 
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
@@ -487,5 +543,49 @@ test.describe("application fields", () => {
     for (const [index, id] of ["a", "b", "c"].entries()) {
       await expect(viewer.object(id)).toHaveAttribute("aria-label", `Object ${index + 1} on page 1`);
     }
+  });
+});
+
+test.describe("objects on every page", () => {
+  test("object_ShouldAppearOnEveryPage_WhenItsPageIsNull", async ({ page }) => {
+    const viewer = await openViewer(page, "mixed-sizes");
+    await viewer.addObject({ id: "a", page: null, rect: start });
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(2));
+
+    await expect(viewer.pageElement(2).locator('[data-object-id="a"]'))
+      .toHaveAttribute("data-page-rect", "100,100,200,100");
+    await expect(viewer.pageElement(2)).toHaveAttribute("data-object-count", "1");
+  });
+
+  test("object_ShouldBeClippedNotMoved_WhenPageIsTooSmallForItsRectangle", async ({ page }) => {
+    const viewer = await openViewer(page, "mixed-sizes");
+    // Below the bottom of page 2, which is 612 units high, but on page 1, which is 792.
+    await viewer.addObject({ id: "a", page: null, rect: { x: 100, y: 650, width: 100, height: 100 } });
+    await expect(viewer.object("a")).toBeInViewport();
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(2));
+    await viewer.waitForPage(2);
+
+    const object = viewer.pageElement(2).locator('[data-object-id="a"]');
+    await expect(object).toHaveAttribute("data-page-rect", "100,650,100,100");
+    const pageBox = (await viewer.pageElement(2).boundingBox())!;
+    expect((await object.boundingBox())!.y).toBeGreaterThanOrEqual(pageBox.y + pageBox.height);
+    await expect(viewer.pageElement(2)).toHaveCSS("overflow", "hidden");
+  });
+
+  test("drag_ShouldLeaveObjectOnEveryPage_WhenUserMovesIt", async ({ page }) => {
+    const viewer = await openViewer(page, "mixed-sizes");
+    await viewer.addObject({ id: "a", page: null, rect: start });
+
+    const from = await viewer.center(viewer.object("a"));
+    await viewer.drag(from, { x: from.x + 30, y: from.y + 10 });
+
+    const moved = { x: 130, y: 110, width: 200, height: 100 };
+    expect(await viewer.getObject("a")).toMatchObject({ page: null, rect: moved });
+    await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(2));
+    await expect(viewer.pageElement(2).locator('[data-object-id="a"]'))
+      .toHaveAttribute("data-page-rect", "130,110,200,100");
   });
 });

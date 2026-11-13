@@ -6,7 +6,8 @@ import { errorMessage } from "./events.js";
 import type { PageGeometry, Point, Rotation } from "./geometry.js";
 import { displaySize, fitScale, normalizeRotation, pageToDisplay } from "./geometry.js";
 import { InteractionController } from "./interaction-controller.js";
-import type { NewPageObject, ObjectPatch, PageObject, SelectionChanged } from "./object-store.js";
+import type { NewPageObject, ObjectBatch, ObjectPatch, ObjectsChanged, PageObject, SelectionChanged }
+  from "./object-store.js";
 import { checkAppDataKeys, ObjectStore } from "./object-store.js";
 import { PageView } from "./page-view.js";
 import type { DrawDefaults, ToolOptions, ViewerTool } from "./tool.js";
@@ -44,10 +45,7 @@ function loadStyles(): Promise<void> {
  */
 export class PdfViewerElement extends HTMLElement {
   readonly #store = new ObjectStore({
-    onAdded: (change) => this.#onObjectChange("pv-object-added", change, change.object.id),
-    onUpdated: (change) => this.#onObjectChange("pv-object-updated", change, change.object.id),
-    onRemoved: (change) => this.#onObjectChange("pv-object-removed", change, change.object.id),
-    onReplaced: (change) => this.#onObjectChange("pv-objects-replaced", change),
+    onChanged: (change) => this.#onObjectsChanged(change),
     onSelectionChanged: (change) => this.#onSelectionChanged(change),
   });
   #viewport: HTMLElement | undefined;
@@ -225,7 +223,7 @@ export class PdfViewerElement extends HTMLElement {
     if (object === undefined) {
       throw new Error(`No object with id "${id}" exists.`);
     }
-    if (object.page !== this.#view?.pageNumber) {
+    if (object.page !== null && object.page !== this.#view?.pageNumber) {
       await this.goToPage(object.page);
     }
     this.#view?.objects.scrollIntoView(id);
@@ -274,20 +272,37 @@ export class PdfViewerElement extends HTMLElement {
     this.#applyTool();
   }
 
+  /** Adds an object. Throws if its id is taken. */
   addObject(object: NewPageObject): PageObject {
     return this.#store.add(object, "api");
   }
 
+  /** Adds an object, or replaces the one with its id. */
+  upsertObject(object: NewPageObject): PageObject {
+    return this.#store.upsert(object, "api");
+  }
+
+  /** Changes the given fields of an object. Throws if it doesn't exist. */
   updateObject(id: string, patch: ObjectPatch): PageObject {
     return this.#store.update(id, patch, "api");
   }
 
-  removeObject(id: string): void {
-    this.#store.remove(id, "api");
+  /** Removes an object if it exists, and returns whether it did. */
+  removeObject(id: string): boolean {
+    return this.#store.remove(id, "api");
   }
 
+  /** Makes these the only objects. Only what differs from the objects already there changes or is reported. */
   setObjects(objects: readonly NewPageObject[]): void {
     this.#store.replaceAll(objects, "api");
+  }
+
+  /**
+   * Adds, replaces and removes several objects as one change, raising one pv-objects-changed event, or none if nothing
+   * differs.
+   */
+  applyObjects(batch: ObjectBatch): void {
+    this.#store.apply(batch, "api");
   }
 
   /** Selects one object, or none when given null. */
@@ -483,17 +498,13 @@ export class PdfViewerElement extends HTMLElement {
     this.#viewport!.scrollTop += after.top + fractionY * after.height - event.clientY;
   }
 
-  /** Brings the page up to date before listeners hear of the change. Without an id, every object may have changed. */
-  #onObjectChange<Type extends keyof PvEventMap>(type: Type, change: PvEventMap[Type] & { sequence: number },
-    id?: string): void {
+  /** Brings the page up to date before listeners hear of the change. */
+  #onObjectsChanged(change: ObjectsChanged): void {
     this.dataset.lastChange = String(change.sequence);
-    if (id === undefined) {
-      this.#view?.objects.sync();
-    } else {
-      this.#view?.objects.syncObject(id);
-    }
+    const changed = [...change.added, ...change.removed, ...change.updated.map((update) => update.object)];
+    this.#view?.objects.syncObjects(changed.map(({ id }) => id));
     this.#controller?.objectsChanged();
-    this.#emit(type, change);
+    this.#emit("pv-objects-changed", change);
   }
 
   #onSelectionChanged(change: SelectionChanged): void {
@@ -505,9 +516,7 @@ export class PdfViewerElement extends HTMLElement {
   async #closeDocument(): Promise<void> {
     this.#navigation = undefined;
     this.#replaceView(undefined);
-    if (this.#store.all().length > 0) {
-      this.#store.replaceAll([], "api");
-    }
+    this.#store.clear("api");
     const closing = this.#session;
     this.#session = undefined;
     this.#scale = undefined;

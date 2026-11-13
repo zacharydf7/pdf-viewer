@@ -7,9 +7,11 @@ Pages and objects are real DOM elements, so tests can find them by selector, ass
 of working out pixel positions on a canvas. See the [test contract](docs/test-contract.md).
 
 ```razor
-<PdfViewer Source="@documentUrl" Controller="_viewer" Options="_options" OnObjectUpdated="HandleObjectUpdated" />
+<PdfViewer Source="@documentUrl" Objects="_objects" OnObjectsChanged="ApplyUserChanges"
+           Controller="_viewer" Options="_options" />
 
 @code {
+    private readonly List<ViewerObject> _objects = [];       // the source of truth: change it, and the viewer follows
     private readonly PdfViewerController _viewer = new();
     private PdfViewerOptions _options = new() { RoundCoordinates = true };
 
@@ -17,8 +19,10 @@ of working out pixel positions on a canvas. See the [test contract](docs/test-co
 }
 ```
 
-The controller drives the viewer from code, including from other components, and holds commands issued before the viewer
-is ready. Options can change at any time.
+Objects are declarative: when your list changes, the viewer sends the browser only what differs. It reports what the
+user draws, moves, resizes or deletes so you can apply those changes to your list, and any you don't apply are undone on
+the next render. The controller drives the viewer from code, including from other components, and holds commands issued
+before the viewer is ready. Options can change at any time.
 
 `Pv` is a placeholder name, and the project will be renamed.
 

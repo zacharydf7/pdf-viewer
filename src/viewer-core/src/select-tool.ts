@@ -10,8 +10,8 @@ const minimumResizeSize = 1;
 
 interface DragBase {
   id: string;
-  /** The object's page, so the drag ends if the object leaves it. */
-  page: number;
+  /** The object's page, or null for an object on every page, so the drag ends if that changes. */
+  page: number | null;
   /** Where the pointer was pressed, in display space. */
   start: Point;
   original: Rect;

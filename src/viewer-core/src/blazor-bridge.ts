@@ -1,7 +1,7 @@
 import type { DocumentSource } from "./engine.js";
 import type { PageInfo, PvEventMap } from "./events.js";
 import { errorMessage } from "./events.js";
-import type { NewPageObject, PageObject } from "./object-store.js";
+import type { ChangeOrigin, ObjectBatch, ObjectUpdate, PageObject } from "./object-store.js";
 import type { DrawDefaults, ViewerTool } from "./tool.js";
 import type { PdfViewerElement } from "./viewer-element.js";
 import type { ViewerOptions, ZoomSetting } from "./viewer-options.js";
@@ -23,26 +23,33 @@ export interface ViewerSubscriptions {
   selection: boolean;
 }
 
+/**
+ * What .NET hears of in one message: the object changes the user made since the last message, and the selection as it
+ * now stands. The sequence is that of the latest change either part reports.
+ */
+interface ChangesNotification {
+  sequence: number;
+  objects: { added: PageObject[]; updated: ObjectUpdate[]; removed: PageObject[] } | null;
+  selection: { origin: ChangeOrigin; primaryId: string | null; count: number } | null;
+}
+
 /** The .NET side of a viewer. Only state and commands pass through, except when .NET asks for the document's bytes. */
 export class ViewerBridge {
   readonly #host: PdfViewerElement;
   readonly #dotNet: DotNetReference;
   readonly #abort = new AbortController();
   #subscriptions: ViewerSubscriptions;
+  /** Changes waiting to go to .NET together, once the task that made them has finished. */
+  #pending: ChangesNotification | undefined;
 
   constructor(host: PdfViewerElement, dotNet: DotNetReference, subscriptions: ViewerSubscriptions) {
     this.#host = host;
     this.#dotNet = dotNet;
     this.#subscriptions = subscriptions;
     const { signal } = this.#abort;
-    // Each event's detail goes to .NET unchanged, as the one argument of the method named here, unless the event
-    // belongs to a kind .NET hasn't subscribed to.
-    const forward = (type: keyof PvEventMap, method: string, kind?: keyof ViewerSubscriptions) =>
-      host.addEventListener(type, (event) => {
-        if (kind === undefined || this.#subscriptions[kind]) {
-          this.#notify(method, event.detail);
-        }
-      }, { signal });
+    // Each event's detail goes to .NET unchanged, as the one argument of the method named here.
+    const forward = (type: keyof PvEventMap, method: string) =>
+      host.addEventListener(type, (event) => this.#notify(method, event.detail), { signal });
 
     // This one goes without its page labels, which in a long document could exceed the hub's message size limit. .NET
     // asks for a page's label with getPageInfo. It carries the page shown first, so .NET needn't work it out.
@@ -50,15 +57,21 @@ export class ViewerBridge {
       this.#notify("NotifyDocumentLoaded", { pageCount: detail.pageCount, page: host.currentPage }), { signal });
     forward("pv-page-change", "NotifyPageChanged");
     forward("pv-error", "NotifyError");
-    forward("pv-object-added", "NotifyObjectAdded", "objects");
-    forward("pv-object-updated", "NotifyObjectUpdated", "objects");
-    forward("pv-object-removed", "NotifyObjectRemoved", "objects");
-    forward("pv-objects-replaced", "NotifyObjectsReplaced", "objects");
+    // .NET hears only of the object changes the user made. It made the others itself, and a whole document's objects
+    // could exceed the hub's message size limit.
+    host.addEventListener("pv-objects-changed", ({ detail: { sequence, origin, added, updated, removed } }) => {
+      if (origin === "user" && this.#subscriptions.objects) {
+        const objects = this.#pendingChanges(sequence).objects ??= { added: [], updated: [], removed: [] };
+        objects.added.push(...added);
+        objects.updated.push(...updated);
+        objects.removed.push(...removed);
+      }
+    }, { signal });
     // The ids are left out for the same reason as the page labels: any number of objects can be selected. .NET gets
     // their count, and asks for the ids with getSelectedObjectIds.
     host.addEventListener("pv-selection-change", ({ detail: { sequence, origin, primaryId, ids } }) => {
       if (this.#subscriptions.selection) {
-        this.#notify("NotifySelectionChanged", { sequence, origin, primaryId, count: ids.length });
+        this.#pendingChanges(sequence).selection = { origin, primaryId, count: ids.length };
       }
     }, { signal });
   }
@@ -110,13 +123,8 @@ export class ViewerBridge {
   rotateBy = (degrees: number): void => this.#run(this.#host.setRotation(this.#host.rotation + degrees));
   setPageRotation = (page: number, degrees: number | null): void => this.#run(this.#host.setPageRotation(page, degrees));
   setTool = (tool: ViewerTool, defaults: DrawDefaults | null): void => this.#host.setTool(tool, defaults ?? {});
-  addObject = (object: NewPageObject): PageObject => this.#host.addObject(object);
-  /** .NET sends the whole object and leaves out empty values, so anything it left out has to be cleared here. */
-  updateObject = (object: PageObject): PageObject =>
-    this.#host.updateObject(object.id,
-      { label: undefined, kind: undefined, cssClass: undefined, appData: undefined, style: undefined, ...object });
-  removeObject = (id: string): void => this.#host.removeObject(id);
-  setObjects = (objects: NewPageObject[]): void => this.#host.setObjects(objects);
+  /** Every object .NET sends is whole, so one it changed replaces the stored object, clearing whatever it left out. */
+  applyObjects = (batch: ObjectBatch): void => this.#host.applyObjects(batch);
   selectObjects = (ids: string[]): void => this.#host.selectObjects(ids);
   /** The selected ids as UTF-8 JSON, which .NET reads as a stream, so their number isn't limited by the hub. */
   getSelectedObjectIds = (): Uint8Array => new TextEncoder().encode(JSON.stringify(this.#host.selectedObjectIds));
@@ -124,6 +132,26 @@ export class ViewerBridge {
 
   dispose(): void {
     this.#abort.abort();
+    this.#pending = undefined;
+  }
+
+  /**
+   * The message that will carry the changes made in this task. One gesture often makes several, such as drawing an
+   * object and selecting it, and together they cost one message over the circuit.
+   */
+  #pendingChanges(sequence: number): ChangesNotification {
+    if (this.#pending === undefined) {
+      queueMicrotask(() => {
+        const pending = this.#pending;
+        this.#pending = undefined;
+        if (pending !== undefined) {
+          this.#notify("NotifyChanges", pending);
+        }
+      });
+    }
+    this.#pending ??= { sequence, objects: null, selection: null };
+    this.#pending.sequence = sequence;
+    return this.#pending;
   }
 
   /** Commands aren't awaited by .NET, so a command that fails has to report itself. */

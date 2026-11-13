@@ -1,6 +1,7 @@
 import type { PageGeometry, Rect, ResizeHandle } from "./geometry.js";
 import { pageRectToPercent } from "./geometry.js";
 import type { ObjectStore, PageObject } from "./object-store.js";
+import { isOnPage } from "./object-store.js";
 import type { PointerTarget, Preview, ToolPresentation } from "./tool.js";
 
 const handles: readonly ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
@@ -114,21 +115,24 @@ export class ObjectView {
     this.#syncHandles();
   }
 
-  /** Brings one object up to date after a change, without visiting the others. */
-  syncObject(id: string): void {
-    const object = this.#store.get(id);
-    if (object?.page === this.#pageNumber) {
-      this.#applyObject(object);
-    } else {
-      const element = this.#objectElements.get(id);
-      if (element !== undefined) {
-        this.#removeElement(id, element);
+  /** Brings these objects up to date after a change, without visiting the others. */
+  syncObjects(ids: readonly string[]): void {
+    for (const id of ids) {
+      const object = this.#store.get(id);
+      if (object !== undefined && isOnPage(object, this.#pageNumber)) {
+        this.#applyObject(object);
+      } else {
+        const element = this.#objectElements.get(id);
+        if (element !== undefined) {
+          this.#removeElement(id, element);
+        }
       }
     }
     const count = this.#objectElements.size;
     this.#page.dataset.objectCount = String(count);
     this.#syncListboxRole(count);
-    if (this.#store.primarySelectedId === id) {
+    const primary = this.#store.primarySelectedId;
+    if (primary !== null && ids.includes(primary)) {
       this.#syncHandles();
     }
   }
@@ -144,7 +148,7 @@ export class ObjectView {
     }
     for (const id of changed) {
       const object = this.#store.get(id);
-      if (object?.page === this.#pageNumber) {
+      if (object !== undefined && isOnPage(object, this.#pageNumber)) {
         this.#applyObject(object);
       }
     }
@@ -271,7 +275,7 @@ export class ObjectView {
     this.#handlesFor = undefined;
     const [id, ...others] = this.#store.selectedIds;
     const selected = id === undefined || others.length > 0 ? undefined : this.#store.get(id);
-    if (selected === undefined || selected.page !== this.#pageNumber || selected.locked || !selected.selectable
+    if (selected === undefined || !isOnPage(selected, this.#pageNumber) || selected.locked || !selected.selectable
       || selected.hidden || !this.#presentation.handles) {
       return;
     }

@@ -126,7 +126,7 @@ test.describe("page change during a gesture", () => {
   test("drawRect_ShouldAddNothing_WhenPageChangesBeforeRelease", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 }, "mixed-sizes");
     await viewer.setTool("draw-rect");
-    const events = await viewer.recordEvents("pv-object-added");
+    const events = await viewer.recordAdded();
 
     const from = await viewer.pagePoint(0.2, 0.2);
     await page.mouse.move(from.x, from.y);
@@ -144,7 +144,7 @@ test.describe("page change during a gesture", () => {
   test("move_ShouldReportNothing_WhenPageChangesBeforeRelease", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 }, "mixed-sizes");
     await viewer.addObject({ id: "a", page: 1, rect });
-    const events = await viewer.recordEvents("pv-object-updated");
+    const events = await viewer.recordUpdated();
 
     const from = await viewer.center(viewer.object("a"));
     await page.mouse.move(from.x, from.y);

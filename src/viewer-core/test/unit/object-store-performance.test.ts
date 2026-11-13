@@ -6,7 +6,7 @@ import { ObjectStore } from "../../src/object-store.js";
 // in how the cost grows, such as visiting every object inside a per-object operation, still fails by a wide margin.
 const count = 50_000;
 const pageCount = 50;
-const listener = { onAdded() {}, onUpdated() {}, onRemoved() {}, onReplaced() {}, onSelectionChanged() {} };
+const listener = { onChanged() {}, onSelectionChanged() {} };
 
 function manyObjects(): NewPageObject[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -54,6 +54,25 @@ test("replaceAll_ShouldStayWithinBudget_WhenEachOf50000ObjectsHasAppData", () =>
   const time = elapsed(() => store.replaceAll(objects, "api"));
 
   expect(time).toBeLessThan(250);
+});
+
+test("replaceAll_ShouldStayWithinBudget_WhenAll50000ObjectsAreUnchanged", () => {
+  const store = filledStore();
+  const objects = manyObjects();
+
+  const time = elapsed(() => store.replaceAll(objects, "api"));
+
+  expect(time).toBeLessThan(300);
+});
+
+test("apply_ShouldStayWithinBudget_WhenBatchChanges1000Of50000Objects", () => {
+  const store = filledStore();
+  const upsert = manyObjects().slice(0, 1_000).map((object) => ({ ...object, locked: true }));
+  const remove = Array.from({ length: 1_000 }, (_, index) => `object-${count - 1 - index}`);
+
+  const time = elapsed(() => store.apply({ upsert, remove, basedOn: 0 }, "api"));
+
+  expect(time).toBeLessThan(15);
 });
 
 test("update_ShouldStayWithinBudget_WhenUpdatingEachOf50000Objects", () => {

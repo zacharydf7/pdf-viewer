@@ -287,7 +287,7 @@ test.describe("rounding", () => {
   test("move_ShouldReportNoChangeAndRestorePosition_WhenItRoundsBackToOriginal", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 4, roundCoordinates: true });
     await viewer.addObject({ id: "a", page: 1, rect: start });
-    const events = await viewer.recordEvents("pv-object-updated");
+    const events = await viewer.recordUpdated();
     const before = await viewer.boundsOnPage(viewer.object("a"));
 
     const from = await viewer.center(viewer.object("a"));
@@ -330,7 +330,7 @@ test.describe("kinds and styles", () => {
     await viewer.host.evaluate((element: PdfViewerElement) => {
       element.setTool("draw-rect", { kind: "heading", style: { color: "rgb(255, 0, 0)", borderWidth: "5px" } });
     });
-    const events = await viewer.recordEvents("pv-object-added");
+    const events = await viewer.recordAdded();
 
     await viewer.drag(await viewer.pagePoint(0.2, 0.2), await viewer.pagePoint(0.4, 0.4));
 
@@ -386,7 +386,7 @@ test.describe("options changed after opening", () => {
   test("configure_ShouldRoundDragWithoutEndingIt_WhenRoundingIsTurnedOnDuringDrag", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1.37 });
     await viewer.addObject({ id: "a", page: 1, rect: start });
-    const events = await viewer.recordEvents("pv-object-updated");
+    const events = await viewer.recordUpdated();
 
     const from = await viewer.center(viewer.object("a"));
     await page.mouse.move(from.x, from.y);

@@ -24,6 +24,17 @@ public partial class PdfViewer
     private PdfSource? _openedSource;
     private PdfViewerOptions? _sentOptions;
     private ViewerSubscriptions _sentSubscriptions;
+    /// <summary>
+    /// The objects the browser has, as far as .NET knows: those last sent, with the user's changes since.
+    /// </summary>
+    private Dictionary<string, ViewerObject> _knownObjects = [];
+    /// <summary>The sequence of the latest change the browser has reported.</summary>
+    private long _lastSequence;
+    /// <summary>
+    /// Whether a document has been asked for and hasn't loaded yet. Object changes arriving meanwhile were made in the
+    /// document before it, which has gone.
+    /// </summary>
+    private bool _awaitingDocument;
     private bool _disposed;
 
     [Inject] private IJSRuntime JS { get; set; } = default!;
@@ -50,6 +61,14 @@ public partial class PdfViewer
     /// </summary>
     [Parameter] public PdfViewerController? Controller { get; set; }
 
+    /// <summary>
+    /// The objects to display, or null to leave them to the browser. The list is the source of truth: whenever it
+    /// differs from what the viewer has, the difference goes to the browser in one call, so a change of one object in a
+    /// thousand sends one object. Handle <see cref="OnObjectsChanged"/> and apply the user's changes to your list, or
+    /// the next render undoes them. Apply them before the handler first awaits, because awaiting renders.
+    /// </summary>
+    [Parameter] public IReadOnlyCollection<ViewerObject>? Objects { get; set; }
+
     /// <summary>Raised when the document has opened, which can be before its first page has painted.</summary>
     [Parameter] public EventCallback<DocumentLoadedArgs> OnDocumentLoaded { get; set; }
 
@@ -58,24 +77,14 @@ public partial class PdfViewer
     [Parameter] public EventCallback<ViewerError> OnError { get; set; }
 
     /// <summary>
-    /// Raised when an object is added. This and the other object callbacks (<see cref="OnObjectUpdated"/>,
-    /// <see cref="OnObjectRemoved"/> and <see cref="OnObjectsReplaced"/>) are raised when a change finishes, never
-    /// during a drag. Check the origin to tell user edits from your own. Object changes cross the circuit only while at
-    /// least one of the four has a handler.
+    /// Raised when the user draws, moves, resizes or deletes objects, once the gesture has finished and never during a
+    /// drag. Changes your own code makes through <see cref="Objects"/> aren't reported. The user's changes cross the
+    /// circuit only while this has a handler or <see cref="Objects"/> is set.
     /// </summary>
-    [Parameter] public EventCallback<ObjectAddedArgs> OnObjectAdded { get; set; }
-
-    /// <summary>Raised when an object changes, with the object as it was before.</summary>
-    [Parameter] public EventCallback<ObjectUpdatedArgs> OnObjectUpdated { get; set; }
-
-    [Parameter] public EventCallback<ObjectRemovedArgs> OnObjectRemoved { get; set; }
-
-    /// <summary>Raised when every object is replaced in one step.</summary>
-    [Parameter] public EventCallback<ObjectsReplacedArgs> OnObjectsReplaced { get; set; }
+    [Parameter] public EventCallback<ObjectsChangedArgs> OnObjectsChanged { get; set; }
 
     /// <summary>
-    /// Raised when the selection changes. As with the object callbacks, changes cross the circuit only while it has a
-    /// handler.
+    /// Raised when the selection changes, whoever changed it. Changes cross the circuit only while it has a handler.
     /// </summary>
     [Parameter] public EventCallback<SelectionChangedArgs> OnSelectionChanged { get; set; }
 
@@ -86,10 +95,12 @@ public partial class PdfViewer
 
     private PdfViewerOptions CurrentOptions => Options ?? DefaultOptions;
 
-    private ViewerSubscriptions CurrentSubscriptions => new(
-        OnObjectAdded.HasDelegate || OnObjectUpdated.HasDelegate || OnObjectRemoved.HasDelegate
-            || OnObjectsReplaced.HasDelegate,
-        OnSelectionChanged.HasDelegate);
+    /// <summary>
+    /// With <see cref="Objects"/> set, the user's changes are needed even without a handler, to know what the browser
+    /// has.
+    /// </summary>
+    private ViewerSubscriptions CurrentSubscriptions =>
+        new(OnObjectsChanged.HasDelegate || Objects is not null, OnSelectionChanged.HasDelegate);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -170,8 +181,11 @@ public partial class PdfViewer
         if (!_disposed && (Source is null ? _openedSource is not null : !Source.Equals(_openedSource)))
         {
             _openedSource = Source;
-            // Opening or closing ends the document on display at once, so there's nothing to wait for.
+            // Opening or closing ends the document on display at once, so there's nothing to wait for. It also clears
+            // the browser's objects, so whatever the list holds is sent again for the next document.
             ActiveController.SetState(0, 0);
+            _knownObjects = [];
+            _awaitingDocument = true;
             if (Source is null)
             {
                 await bridge.InvokeVoidAsync("close");
@@ -181,10 +195,72 @@ public partial class PdfViewer
                 await bridge.InvokeVoidAsync("open", Source.ToInterop(), InitialPage);
             }
         }
+        if (!_disposed && Objects is not null && TakeObjectChanges(Objects) is { } batch)
+        {
+            await bridge.InvokeVoidAsync("applyObjects", batch);
+        }
     }
+
+    /// <summary>
+    /// Works out what the browser needs so that its objects match the list, and counts it as sent. Returns null when
+    /// nothing differs.
+    /// </summary>
+    private ObjectBatch? TakeObjectChanges(IReadOnlyCollection<ViewerObject> objects)
+    {
+        var wanted = new Dictionary<string, ViewerObject>(objects.Count);
+        foreach (var viewerObject in objects)
+        {
+            if (!wanted.TryAdd(viewerObject.Id, viewerObject))
+            {
+                throw new InvalidOperationException(
+                    $"The Objects list has more than one object with the ID \"{viewerObject.Id}\".");
+            }
+        }
+        var upsert = wanted.Values
+            .Where(wantedObject => !wantedObject.Equals(_knownObjects.GetValueOrDefault(wantedObject.Id)))
+            .ToList();
+        var remove = _knownObjects.Keys.Where(id => !wanted.ContainsKey(id)).ToList();
+        _knownObjects = wanted;
+        return upsert.Count == 0 && remove.Count == 0 ? null : new ObjectBatch(upsert, remove, _lastSequence);
+    }
+
+    internal Task HandleChangesAsync(ChangesNotification notification)
+    {
+        _lastSequence = notification.Sequence;
+        var objectsHandled = Task.CompletedTask;
+        if (notification.Objects is { } changes && !_awaitingDocument)
+        {
+            // Recorded before the handler runs, so when it writes the user's changes into its own list, the list
+            // matches what the browser has and nothing is sent back.
+            foreach (var viewerObject in changes.Added.Concat(changes.Updated.Select(update => update.Object)))
+            {
+                _knownObjects[viewerObject.Id] = viewerObject;
+            }
+            foreach (var viewerObject in changes.Removed)
+            {
+                _knownObjects.Remove(viewerObject.Id);
+            }
+            objectsHandled = RaiseAsync(OnObjectsChanged,
+                new ObjectsChangedArgs(notification.Sequence, changes.Added, changes.Updated, changes.Removed));
+        }
+        // Raised without waiting for the objects handler, which may wait on the user for a long time. Otherwise this
+        // selection would be held back and arrive after newer ones.
+        var selectionHandled = notification.Selection is var (origin, primaryId, count)
+            ? RaiseAsync(OnSelectionChanged, new SelectionChangedArgs(notification.Sequence, origin, primaryId, count))
+            : Task.CompletedTask;
+        return Task.WhenAll(objectsHandled, selectionHandled);
+    }
+
+    /// <summary>
+    /// Raises a callback so that a handler that throws before its first await faults the returned task instead of
+    /// throwing to this caller.
+    /// </summary>
+    private static async Task RaiseAsync<TArgs>(EventCallback<TArgs> callback, TArgs args) =>
+        await callback.InvokeAsync(args);
 
     internal async Task HandleDocumentLoadedAsync(DocumentLoadedNotification notification)
     {
+        _awaitingDocument = false;
         ActiveController.SetState(notification.PageCount, notification.Page);
         await OnDocumentLoaded.InvokeAsync(new DocumentLoadedArgs(notification.PageCount));
         StateHasChanged();

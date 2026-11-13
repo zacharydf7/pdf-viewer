@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { SelectionChanged } from "../../src/object-store.js";
-import { ObjectStore } from "../../src/object-store.js";
+import type { ObjectsChanged, SelectionChanged } from "../../src/object-store.js";
+import { isOnPage, ObjectStore } from "../../src/object-store.js";
 
 const rect = { x: 1, y: 2, width: 3, height: 4 };
+const defaults = { shape: "rect", locked: false, selectable: true, hidden: false };
+
+/** Which objects a change touched, by id. */
+function ids({ added, updated, removed }: ObjectsChanged) {
+  const idsOf = (objects: readonly { id: string }[]) => objects.map(({ id }) => id);
+  return { added: idsOf(added), updated: idsOf(updated.map((update) => update.object)), removed: idsOf(removed) };
+}
 
 describe("ObjectStore", () => {
-  /** Every notification in order, as its kind and its detail. */
-  let changes: [string, { sequence: number; origin: string } & Record<string, unknown>][];
+  let changes: ObjectsChanged[];
   let selections: SelectionChanged[];
   let store: ObjectStore;
 
@@ -14,17 +20,14 @@ describe("ObjectStore", () => {
     changes = [];
     selections = [];
     store = new ObjectStore({
-      onAdded: (change) => changes.push(["added", { ...change }]),
-      onUpdated: (change) => changes.push(["updated", { ...change }]),
-      onRemoved: (change) => changes.push(["removed", { ...change }]),
-      onReplaced: (change) => changes.push(["replaced", { ...change }]),
+      onChanged: (change) => changes.push(change),
       onSelectionChanged: (change) => selections.push(change),
     });
   });
 
   it("add_ShouldApplyDefaults_WhenGivenOnlyRequiredFields", () => {
     const added = store.add({ id: "a", page: 1, rect }, "api");
-    expect(added).toEqual({ id: "a", page: 1, rect, shape: "rect", locked: false, selectable: true, hidden: false });
+    expect(added).toEqual({ id: "a", page: 1, rect, ...defaults });
   });
 
   it("add_ShouldKeepCopyOfAppData_WhenCallerChangesTheirsAfterward", () => {
@@ -75,7 +78,9 @@ describe("ObjectStore", () => {
   it("update_ShouldReportOrigin_WhenChangeComesFromUser", () => {
     store.add({ id: "a", page: 1, rect }, "api");
     store.update("a", { locked: true }, "user");
-    expect(changes.map(([kind, { origin }]) => [origin, kind])).toEqual([["api", "added"], ["user", "updated"]]);
+    expect(changes.map((change) => [change.origin, ids(change)])).toEqual([
+      ["api", { added: ["a"], updated: [], removed: [] }], ["user", { added: [], updated: ["a"], removed: [] }],
+    ]);
     expect(store.get("a")?.locked).toBe(true);
   });
 
@@ -84,14 +89,17 @@ describe("ObjectStore", () => {
 
     store.update("a", { rect: { ...rect, x: 50 } }, "user", "move");
 
-    expect(changes.at(-1)).toEqual(["updated", {
+    expect(changes.at(-1)).toEqual({
       sequence: 2,
       origin: "user",
-      gesture: "move",
-      object: { id: "a", page: 1, rect: { ...rect, x: 50 }, shape: "rect", locked: false, selectable: true,
-        hidden: false },
-      previous: { id: "a", page: 1, rect, shape: "rect", locked: false, selectable: true, hidden: false },
-    }]);
+      added: [],
+      removed: [],
+      updated: [{
+        gesture: "move",
+        object: { id: "a", page: 1, rect: { ...rect, x: 50 }, ...defaults },
+        previous: { id: "a", page: 1, rect, ...defaults },
+      }],
+    });
   });
 
   it("update_ShouldThrow_WhenIdIsUnknown", () => {
@@ -101,26 +109,38 @@ describe("ObjectStore", () => {
   it("remove_ShouldReportObjectAsItWas_WhenRemoved", () => {
     store.add({ id: "a", page: 1, rect, kind: "note" }, "api");
 
-    store.remove("a", "user");
+    const removed = store.remove("a", "user");
 
-    expect(changes.at(-1)).toEqual(["removed", {
-      sequence: 2,
-      origin: "user",
-      object: { id: "a", page: 1, rect, shape: "rect", locked: false, selectable: true, hidden: false, kind: "note" },
-    }]);
+    expect(removed).toBe(true);
+    const object = { id: "a", page: 1, rect, ...defaults, kind: "note" };
+    expect(changes.at(-1)).toEqual({ sequence: 2, origin: "user", added: [], updated: [], removed: [object] });
+  });
+
+  it("remove_ShouldReturnFalseAndReportNothing_WhenIdIsUnknown", () => {
+    expect(store.remove("missing", "api")).toBe(false);
+    expect(changes).toEqual([]);
   });
 
   it("sequence_ShouldIncreaseAcrossChangesAndSelections_WhenStoreIsUsed", () => {
     store.add({ id: "a", page: 1, rect }, "api");
     store.select(["a"], "user");
     store.update("a", { locked: true }, "api");
-    expect([changes[0]?.[1].sequence, selections[0]?.sequence, changes[1]?.[1].sequence]).toEqual([1, 2, 3]);
+    expect([changes[0]?.sequence, selections[0]?.sequence, changes[1]?.sequence]).toEqual([1, 2, 3]);
   });
 
   it("forPage_ShouldReturnOnlyThatPage_WhenObjectsSpanPages", () => {
     store.add({ id: "a", page: 1, rect }, "api");
     store.add({ id: "b", page: 2, rect }, "api");
     expect(store.forPage(2).map(({ id }) => id)).toEqual(["b"]);
+  });
+
+  it("forPage_ShouldIncludeObjectOnEveryPage_WhenItsPageIsNull", () => {
+    store.add({ id: "a", page: 1, rect }, "api");
+    const everywhere = store.add({ id: "b", page: null, rect }, "api");
+
+    expect(store.forPage(1).map(({ id }) => id)).toEqual(["a", "b"]);
+    expect(store.forPage(7).map(({ id }) => id)).toEqual(["b"]);
+    expect([isOnPage(everywhere, 1), isOnPage(everywhere, 7)]).toEqual([true, true]);
   });
 
   it("select_ShouldNotNotify_WhenAlreadySelected", () => {
@@ -211,5 +231,163 @@ describe("ObjectStore", () => {
     store.add({ id: "a", page: 1, rect }, "api");
     expect(() => store.replaceAll([{ id: "b", page: 1, rect }, { id: "b", page: 1, rect }], "api")).toThrow(/unique/);
     expect(store.get("a")).toBeDefined();
+  });
+
+  it("replaceAll_ShouldReportOnlyWhatDiffers_WhenSomeObjectsAreUnchanged", () => {
+    store.replaceAll([{ id: "a", page: 1, rect }, { id: "b", page: 1, rect }, { id: "c", page: 1, rect }], "api");
+
+    store.replaceAll([{ id: "a", page: 1, rect }, { id: "b", page: 1, rect, locked: true }, { id: "d", page: 1, rect }],
+      "api");
+
+    expect(changes).toHaveLength(2);
+    expect(ids(changes[1]!)).toEqual({ added: ["d"], updated: ["b"], removed: ["c"] });
+  });
+
+  it("replaceAll_ShouldReportNothing_WhenEveryObjectIsUnchanged", () => {
+    const objects = [{ id: "a", page: 1, rect, style: { color: "red" }, appData: { section: "3" } }];
+    store.replaceAll(objects, "api");
+
+    const reordered = { page: 1, appData: { section: "3" }, style: { color: "red" }, rect: { ...rect }, id: "a" };
+    store.replaceAll([reordered], "api");
+
+    expect(changes).toHaveLength(1);
+  });
+});
+
+describe("batches", () => {
+  let changes: ObjectsChanged[];
+  let store: ObjectStore;
+
+  beforeEach(() => {
+    changes = [];
+    store = new ObjectStore({ onChanged: (change) => changes.push(change), onSelectionChanged() {} });
+    store.replaceAll([{ id: "a", page: 1, rect }, { id: "b", page: 1, rect }], "api");
+    changes = [];
+  });
+
+  it("apply_ShouldReportEveryChangeOnce_WhenBatchAddsReplacesAndRemoves", () => {
+    store.apply({ upsert: [{ id: "a", page: 2, rect }, { id: "c", page: 1, rect }], remove: ["b", "missing"] }, "api");
+
+    expect(changes).toHaveLength(1);
+    expect(ids(changes[0]!)).toEqual({ added: ["c"], updated: ["a"], removed: ["b"] });
+    expect(changes[0]!.updated[0]!.previous.page).toBe(1);
+    expect(store.all().map(({ id }) => id)).toEqual(["a", "c"]);
+  });
+
+  it("apply_ShouldReplaceWholeObject_WhenUpsertLeavesFieldsOut", () => {
+    store.update("a", { kind: "heading", label: "Title", locked: true }, "api");
+
+    store.apply({ upsert: [{ id: "a", page: 1, rect }] }, "api");
+
+    expect(store.get("a")).toEqual({ id: "a", page: 1, rect, ...defaults });
+  });
+
+  it("apply_ShouldReportNothing_WhenBatchChangesNothing", () => {
+    store.apply({ upsert: [{ id: "a", page: 1, rect }], remove: ["missing"] }, "api");
+
+    expect(changes).toEqual([]);
+  });
+
+  it("apply_ShouldChangeNothing_WhenAnyObjectIsInvalid", () => {
+    const upsert = [{ id: "c", page: 1, rect }, { id: "d", page: 1, rect, appData: { Bad: "x" } }];
+    const batch = { upsert, remove: ["a"] };
+
+    expect(() => store.apply(batch, "api")).toThrow(/App data key/);
+    expect(store.all().map(({ id }) => id)).toEqual(["a", "b"]);
+    expect(changes).toEqual([]);
+  });
+
+  it("apply_ShouldThrow_WhenIdIsBothUpsertedAndRemoved", () => {
+    expect(() => store.apply({ upsert: [{ id: "a", page: 1, rect }], remove: ["a"] }, "api")).toThrow(/both/);
+  });
+
+  it("upsert_ShouldAddOrReplace_WhenIdIsNewOrTaken", () => {
+    const added = store.upsert({ id: "c", page: 1, rect }, "api");
+    const replaced = store.upsert({ id: "a", page: 3, rect }, "api");
+
+    expect([added.id, replaced.page]).toEqual(["c", 3]);
+    expect(changes.map(ids)).toEqual([
+      { added: ["c"], updated: [], removed: [] }, { added: [], updated: ["a"], removed: [] },
+    ]);
+  });
+});
+
+describe("batches based on an earlier state", () => {
+  let changes: ObjectsChanged[];
+  let store: ObjectStore;
+  const moved = { ...rect, x: 50 };
+  const stale = { ...rect, x: 9 };
+
+  beforeEach(() => {
+    changes = [];
+    store = new ObjectStore({ onChanged: (change) => changes.push(change), onSelectionChanged() {} });
+    store.replaceAll([{ id: "a", page: 1, rect }, { id: "b", page: 1, rect }], "api");
+  });
+
+  it("apply_ShouldLeaveUserEditAlone_WhenBatchIsBasedOnStateBeforeIt", () => {
+    const before = changes.at(-1)!.sequence;
+    store.update("a", { rect: moved }, "user", "move");
+
+    const upsert = [{ id: "a", page: 1, rect: stale }, { id: "b", page: 1, rect: stale }];
+    store.apply({ upsert, basedOn: before }, "api");
+
+    expect(store.get("a")!.rect).toEqual(moved);
+    expect(store.get("b")!.rect).toEqual(stale);
+    expect(ids(changes.at(-1)!)).toEqual({ added: [], updated: ["b"], removed: [] });
+  });
+
+  it("apply_ShouldOverwriteUserEdit_WhenBatchIsBasedOnStateAfterIt", () => {
+    store.update("a", { rect: moved }, "user", "move");
+    const after = changes.at(-1)!.sequence;
+
+    store.apply({ upsert: [{ id: "a", page: 1, rect: stale }], basedOn: after }, "api");
+
+    expect(store.get("a")!.rect).toEqual(stale);
+  });
+
+  it("apply_ShouldNotBringBackObjectUserRemoved_WhenBatchIsBasedOnStateBeforeRemoval", () => {
+    const before = changes.at(-1)!.sequence;
+    store.remove("a", "user");
+
+    store.apply({ upsert: [{ id: "a", page: 1, rect: stale }], basedOn: before }, "api");
+
+    expect(store.get("a")).toBeUndefined();
+  });
+
+  it("apply_ShouldNotRemoveObjectUserChanged_WhenBatchIsBasedOnStateBeforeChange", () => {
+    const before = changes.at(-1)!.sequence;
+    store.update("a", { rect: moved }, "user", "move");
+
+    store.apply({ remove: ["a"], basedOn: before }, "api");
+
+    expect(store.get("a")!.rect).toEqual(moved);
+  });
+
+  it("apply_ShouldApplyToReusedId_WhenStoreWasClearedAfterUserChangedThatId", () => {
+    const before = changes.at(-1)!.sequence;
+    store.update("a", { rect: moved }, "user", "move");
+
+    store.clear("api");
+    store.apply({ upsert: [{ id: "a", page: 1, rect: stale }], basedOn: before }, "api");
+
+    expect(store.get("a")!.rect).toEqual(stale);
+    expect(store.all()).toHaveLength(1);
+  });
+
+  it("apply_ShouldOverwriteUserEdit_WhenBatchGivesNoBase", () => {
+    store.update("a", { rect: moved }, "user", "move");
+
+    store.apply({ upsert: [{ id: "a", page: 1, rect: stale }] }, "api");
+
+    expect(store.get("a")!.rect).toEqual(stale);
+  });
+
+  it("apply_ShouldOverwriteChangeMadeByCode_WhenBatchIsBasedOnStateBeforeIt", () => {
+    const before = changes.at(-1)!.sequence;
+    store.update("a", { rect: moved }, "api");
+
+    store.apply({ upsert: [{ id: "a", page: 1, rect: stale }], basedOn: before }, "api");
+
+    expect(store.get("a")!.rect).toEqual(stale);
   });
 });

@@ -1,6 +1,6 @@
 import type { DocumentErrorCode } from "./engine.js";
 import type { Rotation } from "./geometry.js";
-import type { ObjectAdded, ObjectRemoved, ObjectsReplaced, ObjectUpdated, SelectionChanged } from "./object-store.js";
+import type { ObjectsChanged, SelectionChanged } from "./object-store.js";
 
 /**
  * Why the viewer failed. The document codes mean the document couldn't open and is now closed. "page" and "render"
@@ -49,10 +49,7 @@ export interface PvEventMap {
   "pv-document-loaded": DocumentLoaded;
   "pv-page-rendered": PageRendered;
   "pv-page-change": PageChanged;
-  "pv-object-added": ObjectAdded;
-  "pv-object-updated": ObjectUpdated;
-  "pv-object-removed": ObjectRemoved;
-  "pv-objects-replaced": ObjectsReplaced;
+  "pv-objects-changed": ObjectsChanged;
   "pv-selection-change": SelectionChanged;
   "pv-error": ViewerErrorDetail;
 }
