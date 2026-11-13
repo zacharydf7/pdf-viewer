@@ -20,6 +20,9 @@ public sealed class ViewerPage(IPage page)
 
     public ILocator Objects => Page.Locator("[data-object-id]");
 
+    /// <summary>The drawn objects on the displayed page that are still drafts.</summary>
+    public ILocator Drafts => Page.Locator("[data-draft-id]");
+
     public async Task WaitForPageAsync(int number = 1)
     {
         await Expect(PageElement(number)).ToHaveAttributeAsync("data-page-state", "rendered");

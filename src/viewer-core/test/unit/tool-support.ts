@@ -3,10 +3,14 @@ import type { ChangeOrigin, ObjectUpdate, PageObject, SelectionChanged } from ".
 import { ObjectStore } from "../../src/object-store.js";
 import type { PointerInput, Preview, ToolContext, ToolOptions } from "../../src/tool.js";
 
-/** What a tool did, in order: "show:draft", "show:object" or "show:none" for previews, and the store changes. */
+/**
+ * What a tool did, in order: "show:draft", "show:object" or "show:none" for previews, "draft" for a drawn object left
+ * as a draft, and the store changes.
+ */
 export interface ToolRecord {
   log: string[];
   shown: (Preview | undefined)[];
+  drafts: PageObject[];
   added: { origin: ChangeOrigin; object: PageObject }[];
   updated: (ObjectUpdate & { origin: ChangeOrigin })[];
   selections: SelectionChanged[];
@@ -17,7 +21,7 @@ export type TestContext = ToolContext & { options: ToolOptions };
 
 export function recordingContext(options: Partial<ToolOptions> = {}):
   { context: TestContext; store: ObjectStore; record: ToolRecord } {
-  const record: ToolRecord = { log: [], shown: [], added: [], updated: [], selections: [] };
+  const record: ToolRecord = { log: [], shown: [], drafts: [], added: [], updated: [], selections: [] };
   const store = new ObjectStore({
     onChanged: ({ origin, added, updated, removed }) => {
       for (const object of added) {
@@ -31,6 +35,8 @@ export function recordingContext(options: Partial<ToolOptions> = {}):
       removed.forEach(() => record.log.push("remove"));
     },
     onSelectionChanged: (change) => { record.log.push("select"); record.selections.push(change); },
+    onDraftAdded: (draft) => { record.log.push("draft"); record.drafts.push(draft); },
+    onDraftResolved() {},
   });
   const show = (preview: Preview | undefined) => {
     record.log.push(`show:${preview?.kind ?? "none"}`);

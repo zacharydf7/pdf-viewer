@@ -15,6 +15,8 @@ export interface ViewerOptions {
   keyboardEditing?: boolean;
   /** Rounds rectangles the user creates or changes to whole page units. Defaults to false. */
   roundCoordinates?: boolean;
+  /** Whether an object the user draws is selected once it's one of the viewer's objects. Defaults to true. */
+  selectOnCreate?: boolean;
   /** Whether Ctrl+wheel and pinch gestures zoom. Defaults to true. */
   wheelZoom?: boolean;
   /**
@@ -39,6 +41,7 @@ export const defaultOptions: ResolvedOptions = Object.freeze({
   hideFormFields: false,
   keyboardEditing: true,
   roundCoordinates: false,
+  selectOnCreate: true,
   wheelZoom: true,
   coordinates: "page",
   objectHitArea: "fill",
@@ -55,6 +58,7 @@ export function mergeOptions(current: ResolvedOptions, options: ViewerOptions): 
     hideFormFields: options.hideFormFields ?? current.hideFormFields,
     keyboardEditing: options.keyboardEditing ?? current.keyboardEditing,
     roundCoordinates: options.roundCoordinates ?? current.roundCoordinates,
+    selectOnCreate: options.selectOnCreate ?? current.selectOnCreate,
     wheelZoom: options.wheelZoom ?? current.wheelZoom,
     coordinates: options.coordinates ?? current.coordinates,
     objectHitArea: options.objectHitArea ?? current.objectHitArea,

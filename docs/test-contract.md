@@ -72,6 +72,30 @@ real elements, so a test can drag them with the real mouse. They appear only whe
 `selectObjects(ids)` selects several objects, each with `aria-selected="true"`. `selectedObjectIds` on the element lists
 them in the order selected.
 
+## Draft: `[data-draft-id]`
+
+A drawn object becomes a draft when a `pv-object-drawn` listener cancels the event, and stays one until something
+decides whether to keep it. The Blazor component cancels the event whenever `OnObjectDrawn` has a handler. Otherwise a
+drawn object is added at once and never shows as a draft.
+
+| Attribute | Values |
+|---|---|
+| `data-draft-id` | The ID the object will have if it's kept, a generated version 4 UUID |
+| `data-page-rect` | `x,y,width,height` in the coordinates objects use |
+| `class` | `pv-draft` |
+
+A draft is visible, but it isn't an object. It has no `data-object-id`, isn't counted in `data-object-count`, isn't
+returned by `getObjects()`, and can't be selected, moved or resized. Like an object, it appears only while its page is
+displayed.
+
+`commitDraft(id)` on the element adds the draft as an object and reports it as a change the user made.
+`discardDraft(id)` drops it. Each returns whether there was such a draft. Adding an object with a draft's ID, through
+`addObject`, `upsertObject`, `setObjects` or `applyObjects`, also commits the draft, with the values given instead of
+those drawn. Closing the document discards its drafts.
+
+The rectangle that follows the pointer during a draw is `.pv-draft[data-draft="true"]`. It has no ID, and it's gone
+when the pointer is released.
+
 ## Page space
 
 By default, every public rectangle uses page space: PDF user-space units, measured from the top-left corner of the unrotated
@@ -96,6 +120,7 @@ These are bubbling `CustomEvent`s on `<pdf-viewer>`.
 | `pv-document-loaded` | `{ pageCount, pageLabels }`, where `pageLabels` has each page's label in page order, or is `null` if the document defines none |
 | `pv-page-rendered` | `{ page, scale }` |
 | `pv-page-change` | `{ page }` |
+| `pv-object-drawn` | `{ object }`, the object the user finished drawing, with the draw tool's defaults applied. It's raised before the object is added, and it's the only event that can be canceled. Unless a listener calls `preventDefault()`, the object is added at once and `pv-objects-changed` follows. A listener that cancels it keeps the object as a draft, and commits or discards it later |
 | `pv-objects-changed` | `{ sequence, origin, added, updated, removed }`, where `origin` is `user` or `api`. One event reports one change, however many objects it touched. `added` and `removed` list objects, the removed ones as they were. `updated` lists `{ object, previous, gesture }`, where `previous` is the object before the change. `gesture` is set when the user changed the rectangle: `move` for dragging the object, `resize` for dragging a handle or pressing Shift with an arrow key, `nudge` for an arrow key without Shift |
 | `pv-selection-change` | `{ sequence, origin, ids, primaryId }`. `ids` has every selected object in the order selected, and `primaryId` is the last of them, or `null` |
 | `pv-error` | `{ code, message, documentFailed }`, where `code` is one of the `data-error-code` values when `documentFailed` is true. Otherwise it's `page` or `render` for a page that failed, or `command` for a rejected command from .NET. For a URL source, `network` also covers any other error from pdf.js, because it reports a refused connection as a generic error |
@@ -116,6 +141,8 @@ so it tells which of two events is newer.
   zoom or viewport. See `tests/Pv.EndToEnd/ViewerPage.cs` for an example.
 - **Assert page units for geometry.** `data-page-rect` is exact at any zoom. On-screen measurements need a tolerance of
   about 1 CSS pixel.
+- **Wait for the draft when a handler decides on drawn objects.** With `OnObjectDrawn` handled, a finished draw leaves
+  `[data-draft-id]` and no object. The object appears, under the same ID, only once the handler keeps it.
 - **After a drag, the DOM is right immediately, but .NET hears about it slightly later.** Use retrying assertions on anything
   Razor renders from a change event.
 - **`bUnit` can't see objects.** They belong to JavaScript, so test your handlers in bUnit and the objects in a browser.

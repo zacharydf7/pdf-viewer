@@ -35,20 +35,19 @@ describe("drawing", () => {
     expect(record.shown.at(-1)).toEqual({ kind: "draft", page: 1, rect: { x: 50, y: 200, width: 50, height: 60 } });
   });
 
-  it("pointerUp_ShouldAddUserObjectWithNewIdAndSelectIt_WhenDraggedFarEnough", () => {
+  it("pointerUp_ShouldLeaveDraftWithNewIdAndNoObject_WhenDraggedFarEnough", () => {
     const { tool, store, record } = setup();
 
     tool.pointerDown(press(100, 200));
     tool.pointerMove(at(150, 250));
     tool.pointerUp(at(200, 260));
 
-    expect(record.added).toHaveLength(1);
-    const { origin, object } = record.added[0]!;
-    expect(origin).toBe("user");
-    expect(object).toMatchObject({ page: 1, rect: { x: 100, y: 200, width: 100, height: 60 } });
-    expect(object.id).toMatch(uuid);
-    expect(store.selectedIds).toEqual([object.id]);
-    expect(record.selections[0]!.origin).toBe("user");
+    const draft = record.drafts[0]!;
+    expect(record.drafts).toHaveLength(1);
+    expect(draft).toMatchObject({ page: 1, rect: { x: 100, y: 200, width: 100, height: 60 } });
+    expect(draft.id).toMatch(uuid);
+    expect(store.all()).toEqual([]);
+    expect(store.selectedIds).toEqual([]);
   });
 
   it("pointerUp_ShouldCountReleasePosition_WhenNoMoveCameFirst", () => {
@@ -57,10 +56,10 @@ describe("drawing", () => {
     tool.pointerDown(press(100, 200));
     tool.pointerUp(at(130, 240));
 
-    expect(record.added[0]!.object.rect).toEqual({ x: 100, y: 200, width: 30, height: 40 });
+    expect(record.drafts[0]!.rect).toEqual({ x: 100, y: 200, width: 30, height: 40 });
   });
 
-  it("pointerUp_ShouldGiveEachObjectItsOwnId_WhenDrawingTwice", () => {
+  it("pointerUp_ShouldGiveEachDraftItsOwnId_WhenDrawingTwice", () => {
     const { tool, record } = setup();
 
     for (let index = 0; index < 2; index++) {
@@ -68,27 +67,27 @@ describe("drawing", () => {
       tool.pointerUp(at(130, 240));
     }
 
-    expect(record.added[0]!.object.id).not.toBe(record.added[1]!.object.id);
+    expect(record.drafts[0]!.id).not.toBe(record.drafts[1]!.id);
   });
 
   it.each([["Wide", 1.9, 50], ["High", 50, 1.9]] as const)(
-    "pointerUp_ShouldAddNothing_WhenDraftIsUnderTwoUnits%s", (_, width, height) => {
+    "pointerUp_ShouldLeaveNoDraft_WhenRectangleIsUnderTwoUnits%s", (_, width, height) => {
       const { tool, record } = setup();
 
       tool.pointerDown(press(100, 200));
       tool.pointerUp(at(100 + width, 200 + height));
 
-      expect(record.added).toEqual([]);
+      expect(record.drafts).toEqual([]);
       expect(record.shown.at(-1)).toBeUndefined();
     });
 
-  it("pointerUp_ShouldAddObject_WhenDraftIsExactlyTwoUnitsWideAndHigh", () => {
+  it("pointerUp_ShouldLeaveDraft_WhenRectangleIsExactlyTwoUnitsWideAndHigh", () => {
     const { tool, record } = setup();
 
     tool.pointerDown(press(100, 200));
     tool.pointerUp(at(102, 202));
 
-    expect(record.added).toHaveLength(1);
+    expect(record.drafts).toHaveLength(1);
   });
 
   it("pointerUp_ShouldKeepRectOnPage_WhenPointerLeavesPage", () => {
@@ -97,7 +96,7 @@ describe("drawing", () => {
     tool.pointerDown(press(500, 700));
     tool.pointerUp(at(900, 1_000));
 
-    expect(record.added[0]!.object.rect).toEqual({ x: 500, y: 700, width: 100, height: 100 });
+    expect(record.drafts[0]!.rect).toEqual({ x: 500, y: 700, width: 100, height: 100 });
   });
 
   it("pointerUp_ShouldDrawOnPressedPage_WhenPressedOnPage2", () => {
@@ -106,7 +105,7 @@ describe("drawing", () => {
     tool.pointerDown({ ...press(100, 200), page: 2 });
     tool.pointerUp({ ...at(130, 240), page: 2 });
 
-    expect(record.added[0]!.object.page).toBe(2);
+    expect(record.drafts[0]!.page).toBe(2);
   });
 
   it("pointerUp_ShouldApplyDefaults_WhenToolHasThem", () => {
@@ -117,7 +116,7 @@ describe("drawing", () => {
     tool.pointerDown(press(100, 200));
     tool.pointerUp(at(130, 240));
 
-    expect(record.added[0]!.object).toMatchObject(drawDefaults);
+    expect(record.drafts[0]).toMatchObject(drawDefaults);
   });
 
   it("pointerUp_ShouldRoundToWholeUnits_WhenRoundingIsOn", () => {
@@ -126,7 +125,7 @@ describe("drawing", () => {
     tool.pointerDown(press(100.4, 200.6));
     tool.pointerUp(at(130.2, 240.7));
 
-    expect(record.added[0]!.object.rect).toEqual({ x: 100, y: 201, width: 30, height: 40 });
+    expect(record.drafts[0]!.rect).toEqual({ x: 100, y: 201, width: 30, height: 40 });
   });
 
   it("pointerUp_ShouldRoundToWholeUnits_WhenRoundingIsTurnedOnDuringDraw", () => {
@@ -136,16 +135,16 @@ describe("drawing", () => {
     context.options = { ...context.options, roundCoordinates: true };
     tool.pointerUp(at(130.2, 240.7));
 
-    expect(record.added[0]!.object.rect).toEqual({ x: 100, y: 201, width: 30, height: 40 });
+    expect(record.drafts[0]!.rect).toEqual({ x: 100, y: 201, width: 30, height: 40 });
   });
 
-  it("pointerUp_ShouldClearDraftBeforeAdding_WhenFinished", () => {
+  it("pointerUp_ShouldClearPreviewBeforeLeavingDraft_WhenFinished", () => {
     const { tool, record } = setup();
 
     tool.pointerDown(press(100, 200));
     tool.pointerUp(at(130, 240));
 
-    expect(record.log).toEqual(["show:draft", "show:none", "add", "select"]);
+    expect(record.log).toEqual(["show:draft", "show:none", "draft"]);
   });
 
   it("pointerMove_ShouldShowNothing_WhenNotDrawing", () => {
@@ -159,7 +158,7 @@ describe("drawing", () => {
 });
 
 describe("canceling", () => {
-  it("cancel_ShouldClearDraftAndAddNothing_WhenDrawing", () => {
+  it("cancel_ShouldClearPreviewAndLeaveNoDraft_WhenDrawing", () => {
     const { tool, record } = setup();
     tool.pointerDown(press(100, 200));
     tool.pointerMove(at(150, 250));
@@ -169,7 +168,7 @@ describe("canceling", () => {
 
     expect(canceled).toBe(true);
     expect(record.shown.at(-1)).toBeUndefined();
-    expect(record.added).toEqual([]);
+    expect(record.drafts).toEqual([]);
   });
 
   it("cancel_ShouldReturnFalse_WhenNotDrawing", () => {

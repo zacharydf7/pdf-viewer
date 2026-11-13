@@ -27,10 +27,10 @@
         {
             <div role="dialog" aria-label="Keep this region?" data-testid="confirm-dialog">
                 <p>Keep this region?</p>
-                <button type="button" data-testid="dialog-save" @onclick="() => _pendingDialog.SetResult(true)">
+                <button type="button" data-testid="dialog-save" @onclick="() => _pendingDialog.TrySetResult(true)">
                     Save
                 </button>
-                <button type="button" data-testid="dialog-cancel" @onclick="() => _pendingDialog.SetResult(false)">
+                <button type="button" data-testid="dialog-cancel" @onclick="() => _pendingDialog.TrySetResult(false)">
                     Cancel
                 </button>
             </div>
@@ -70,6 +70,7 @@
         <PdfViewer Controller="_controller" Source="_source" InitialPage="Page ?? 1" ShowToolbar="!Headless"
                    Options="_options" Objects="_objects" OnDocumentLoaded="() => _loadCount++"
                    OnObjectsChanged="HandleObjectsChanged" OnSelectionChanged="HandleSelectionChanged"
+                   OnObjectDrawn="DrawnObjectHandler"
                    OnError="error => _lastError = error.Code.ToString()" />
     </main>
 </div>
@@ -101,9 +102,17 @@
     [SupplyParameterFromQuery] public bool Headless { get; set; }
 
     /// <summary>
-    /// Shows a dialog after each drawing and waits for it inside the change handler, then keeps or removes the object.
+    /// Shows a dialog after each drawing and waits for it inside the drawn-object handler, then keeps the object or
+    /// lets the viewer discard it.
     /// </summary>
     [SupplyParameterFromQuery] public bool ConfirmDraw { get; set; }
+
+    /// <summary>
+    /// Set only when drawings are confirmed, because the viewer holds drawn objects as drafts only while this has a
+    /// handler.
+    /// </summary>
+    private EventCallback<ObjectDrawnArgs> DrawnObjectHandler =>
+        ConfirmDraw ? EventCallback.Factory.Create<ObjectDrawnArgs>(this, ConfirmDrawnObject) : default;
 
     /// <summary>
     /// Picks the draw tool and turns to page 3 before the viewer has attached. The controller holds the commands until
@@ -183,7 +192,7 @@
     }
 
     /// <summary>Writes what the user did into the list, which is what keeps it from being undone.</summary>
-    private async Task HandleObjectsChanged(ObjectsChangedArgs args)
+    private void HandleObjectsChanged(ObjectsChangedArgs args)
     {
         foreach (var added in args.Added)
         {
@@ -205,17 +214,27 @@
             _objects.RemoveAll(viewerObject => viewerObject.Id == removed.Id);
             Record("Removed", ChangeOrigin.User, removed);
         }
+    }
 
-        if (ConfirmDraw && args.Added is [var drawn, ..])
+    /// <summary>
+    /// Adding the drawn object to the list keeps it. Returning without adding it, as on Cancel or while an earlier
+    /// drawing's dialog is still open, leaves the viewer to discard it. A draft discarded along with its document
+    /// counts as canceled, which also closes the dialog.
+    /// </summary>
+    private async Task ConfirmDrawnObject(ObjectDrawnArgs args)
+    {
+        if (_pendingDialog is not null)
         {
-            _pendingDialog = new TaskCompletionSource<bool>();
-            StateHasChanged();
-            var keep = await _pendingDialog.Task;
-            _pendingDialog = null;
-            if (!keep)
-            {
-                _objects.RemoveAll(viewerObject => viewerObject.Id == drawn.Id);
-            }
+            return;
+        }
+        var dialog = _pendingDialog = new TaskCompletionSource<bool>();
+        using var discarded = args.CancellationToken.Register(() => dialog.TrySetResult(false));
+        var keep = await dialog.Task;
+        _pendingDialog = null;
+        if (keep)
+        {
+            _objects.Add(args.Object);
+            Record("Added", ChangeOrigin.User, args.Object);
         }
     }
 

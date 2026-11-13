@@ -4,6 +4,8 @@ import { isOnPage, ObjectStore } from "../../src/object-store.js";
 
 const rect = { x: 1, y: 2, width: 3, height: 4 };
 const defaults = { shape: "rect", locked: false, selectable: true, hidden: false };
+/** A listener that ignores everything, for tests to override the parts they watch. */
+const silent = { onChanged() {}, onSelectionChanged() {}, onDraftAdded() {}, onDraftResolved() {} };
 
 /** Which objects a change touched, by id. */
 function ids({ added, updated, removed }: ObjectsChanged) {
@@ -20,6 +22,7 @@ describe("ObjectStore", () => {
     changes = [];
     selections = [];
     store = new ObjectStore({
+      ...silent,
       onChanged: (change) => changes.push(change),
       onSelectionChanged: (change) => selections.push(change),
     });
@@ -260,7 +263,7 @@ describe("batches", () => {
 
   beforeEach(() => {
     changes = [];
-    store = new ObjectStore({ onChanged: (change) => changes.push(change), onSelectionChanged() {} });
+    store = new ObjectStore({ ...silent, onChanged: (change) => changes.push(change) });
     store.replaceAll([{ id: "a", page: 1, rect }, { id: "b", page: 1, rect }], "api");
     changes = [];
   });
@@ -320,7 +323,7 @@ describe("batches based on an earlier state", () => {
 
   beforeEach(() => {
     changes = [];
-    store = new ObjectStore({ onChanged: (change) => changes.push(change), onSelectionChanged() {} });
+    store = new ObjectStore({ ...silent, onChanged: (change) => changes.push(change) });
     store.replaceAll([{ id: "a", page: 1, rect }, { id: "b", page: 1, rect }], "api");
   });
 
@@ -389,5 +392,124 @@ describe("batches based on an earlier state", () => {
     store.apply({ upsert: [{ id: "a", page: 1, rect: stale }], basedOn: before }, "api");
 
     expect(store.get("a")!.rect).toEqual(stale);
+  });
+});
+
+describe("drafts", () => {
+  /** What the store reported, in order: "drawn", "committed" or "discarded" with the draft's id, and "changed". */
+  let log: string[];
+  let changes: ObjectsChanged[];
+  let store: ObjectStore;
+
+  beforeEach(() => {
+    log = [];
+    changes = [];
+    store = new ObjectStore({
+      ...silent,
+      onChanged: (change) => { log.push("changed"); changes.push(change); },
+      onDraftAdded: ({ id }) => log.push(`drawn ${id}`),
+      onDraftResolved: (id, committed) => log.push(`${committed ? "committed" : "discarded"} ${id}`),
+    });
+  });
+
+  it("addDraft_ShouldHoldDraftWithoutAddingObject_WhenCalled", () => {
+    store.addDraft({ id: "d", page: 2, rect, kind: "heading" });
+
+    expect(store.draftsForPage(2)).toEqual([{ id: "d", page: 2, rect, kind: "heading", ...defaults }]);
+    expect(store.all()).toEqual([]);
+    expect(log).toEqual(["drawn d"]);
+  });
+
+  it("draftsForPage_ShouldLeaveOutOtherPages_WhenDraftsAreOnSeveral", () => {
+    store.addDraft({ id: "d", page: 1, rect });
+    store.addDraft({ id: "e", page: 2, rect });
+
+    expect(store.draftsForPage(2).map(({ id }) => id)).toEqual(["e"]);
+  });
+
+  it("select_ShouldThrow_WhenGivenDraftId", () => {
+    store.addDraft({ id: "d", page: 1, rect });
+
+    expect(() => store.select(["d"], "api")).toThrow(/No object/);
+  });
+
+  it("commitDraft_ShouldAddDraftAsUserChange_WhenDraftExists", () => {
+    store.addDraft({ id: "d", page: 1, rect, kind: "heading" });
+
+    const committed = store.commitDraft("d");
+
+    expect(committed).toBe(true);
+    expect(store.get("d")).toEqual({ id: "d", page: 1, rect, kind: "heading", ...defaults });
+    expect(store.draftsForPage(1)).toEqual([]);
+    expect(changes.map(({ origin }) => origin)).toEqual(["user"]);
+    expect(log).toEqual(["drawn d", "changed", "committed d"]);
+  });
+
+  it("commitDraft_ShouldChangeNothing_WhenNoSuchDraft", () => {
+    expect(store.commitDraft("missing")).toBe(false);
+    expect(log).toEqual([]);
+  });
+
+  it("commitDraft_ShouldChangeNothing_WhenDraftWasAlreadyCommitted", () => {
+    store.addDraft({ id: "d", page: 1, rect });
+    store.commitDraft("d");
+
+    expect(store.commitDraft("d")).toBe(false);
+    expect(changes).toHaveLength(1);
+  });
+
+  it("discardDraft_ShouldDropDraftWithoutAddingObject_WhenDraftExists", () => {
+    store.addDraft({ id: "d", page: 1, rect });
+
+    const discarded = store.discardDraft("d");
+
+    expect(discarded).toBe(true);
+    expect(store.draftsForPage(1)).toEqual([]);
+    expect(store.all()).toEqual([]);
+    expect(log).toEqual(["drawn d", "discarded d"]);
+  });
+
+  it("discardDraft_ShouldChangeNothing_WhenNoSuchDraft", () => {
+    expect(store.discardDraft("missing")).toBe(false);
+    expect(log).toEqual([]);
+  });
+
+  it("apply_ShouldCommitDraftUnderGivenValues_WhenBatchAddsObjectWithItsId", () => {
+    store.addDraft({ id: "d", page: 1, rect, kind: "heading" });
+    store.addDraft({ id: "e", page: 1, rect });
+
+    store.apply({ upsert: [{ id: "d", page: 1, rect, label: "Title" }, { id: "other", page: 1, rect }] }, "api");
+
+    expect(store.get("d")).toEqual({ id: "d", page: 1, rect, label: "Title", ...defaults });
+    expect(store.draftsForPage(1).map(({ id }) => id)).toEqual(["e"]);
+    expect(changes.map(({ origin }) => origin)).toEqual(["api"]);
+    expect(log).toEqual(["drawn d", "drawn e", "changed", "committed d"]);
+  });
+
+  it("add_ShouldCommitDraft_WhenObjectHasItsId", () => {
+    store.addDraft({ id: "d", page: 1, rect });
+
+    store.add({ id: "d", page: 1, rect }, "api");
+
+    expect(store.draftsForPage(1)).toEqual([]);
+    expect(log).toEqual(["drawn d", "changed", "committed d"]);
+  });
+
+  it("replaceAll_ShouldKeepDraft_WhenListDoesNotHaveItsId", () => {
+    store.addDraft({ id: "d", page: 1, rect });
+
+    store.replaceAll([{ id: "a", page: 1, rect }], "api");
+
+    expect(store.draftsForPage(1).map(({ id }) => id)).toEqual(["d"]);
+  });
+
+  it("clear_ShouldDiscardEveryDraft_WhenDocumentCloses", () => {
+    store.addDraft({ id: "d", page: 1, rect });
+    store.addDraft({ id: "e", page: 2, rect });
+
+    store.clear("api");
+
+    expect([store.draftsForPage(1), store.draftsForPage(2)]).toEqual([[], []]);
+    expect(log).toEqual(["drawn d", "drawn e", "discarded d", "discarded e"]);
   });
 });

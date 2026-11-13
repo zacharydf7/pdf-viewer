@@ -69,6 +69,27 @@ export class Viewer {
     return this.page.locator(`[data-handle="${name}"]`);
   }
 
+  /** The drawn objects that are still drafts, on the displayed page. */
+  get drafts(): Locator {
+    return this.page.locator("[data-draft-id]");
+  }
+
+  /** Makes every drawn object stay a draft, as a listener that decides its fate later does. */
+  async keepDrawnObjectsAsDrafts(): Promise<void> {
+    await this.host.evaluate((element) =>
+      element.addEventListener("pv-object-drawn", (event) => event.preventDefault()));
+  }
+
+  /**
+   * Draws a rectangle with the real mouse and returns the id of the draft it leaves. Something must already keep
+   * drawn objects as drafts.
+   */
+  async drawDraft(): Promise<string> {
+    await this.setTool("draw-rect");
+    await this.drag(await this.pagePoint(0.2, 0.2), await this.pagePoint(0.4, 0.3));
+    return (await this.drafts.getAttribute("data-draft-id"))!;
+  }
+
   async waitForPage(pageNumber = 1): Promise<void> {
     const page = this.pageElement(pageNumber);
     await expect(page).toHaveAttribute("data-page-state", "rendered");

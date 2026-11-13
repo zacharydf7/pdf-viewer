@@ -97,6 +97,10 @@ export interface SelectionChanged extends Change {
 export interface ObjectStoreListener {
   onChanged(change: ObjectsChanged): void;
   onSelectionChanged(change: SelectionChanged): void;
+  /** The user finished drawing an object, which the store now holds as a draft. */
+  onDraftAdded(draft: PageObject): void;
+  /** A draft became an object, or was discarded. */
+  onDraftResolved(id: string, committed: boolean): void;
 }
 
 /** Whether an object shows on a page: its own, or any page for an object that isn't tied to one. */
@@ -107,6 +111,8 @@ export function isOnPage(object: PageObject, page: number): boolean {
 /** Holds every object in the document, including those on pages that are not currently displayed. */
 export class ObjectStore {
   readonly #objects = new Map<string, PageObject>();
+  /** What the user has drawn that isn't an object yet. A draft can't be read, changed or selected as an object. */
+  readonly #drafts = new Map<string, PageObject>();
   readonly #listener: ObjectStoreListener;
   /** The sequence of the user's latest change to each object, removals included, for batches that give basedOn. */
   readonly #userChanges = new Map<string, number>();
@@ -215,12 +221,48 @@ export class ObjectStore {
   }
 
   /**
-   * Removes every object and forgets which ones the user changed, for when their document closes. A batch for the next
-   * document must not skip an id just because the user edited an object with that id in the last one.
+   * Removes every object, discards every draft and forgets which objects the user changed, for when their document
+   * closes. A batch for the next document must not skip an id just because the user edited an object with that id in
+   * the last one.
    */
   clear(origin: ChangeOrigin): void {
     this.replaceAll([], origin);
     this.#userChanges.clear();
+    for (const id of [...this.#drafts.keys()]) {
+      this.discardDraft(id);
+    }
+  }
+
+  draftsForPage(page: number): PageObject[] {
+    return [...this.#drafts.values()].filter((draft) => draft.page === page);
+  }
+
+  /**
+   * Holds an object the user drew as a draft. It becomes an object when it's committed, or when an object with its id
+   * is added, which is how an application keeps it under values of its own.
+   */
+  addDraft(object: NewPageObject): void {
+    const draft = frozenObject(object);
+    this.#drafts.set(draft.id, draft);
+    this.#listener.onDraftAdded(draft);
+  }
+
+  /** Adds a draft as an object, reported as a change the user made. Returns whether there was such a draft. */
+  commitDraft(id: string): boolean {
+    const draft = this.#drafts.get(id);
+    if (draft !== undefined) {
+      this.#commit([draft], [], [], "user");
+    }
+    return draft !== undefined;
+  }
+
+  /** Drops a draft without adding anything. Returns whether there was such a draft. */
+  discardDraft(id: string): boolean {
+    const existed = this.#drafts.delete(id);
+    if (existed) {
+      this.#listener.onDraftResolved(id, false);
+    }
+    return existed;
   }
 
   /** Selects exactly these objects. A repeated id counts once, at its first position. */
@@ -240,7 +282,10 @@ export class ObjectStore {
     });
   }
 
-  /** Stores a change and reports it once. Removed objects leave the selection first, as a change of its own. */
+  /**
+   * Stores a change and reports it once. Removed objects leave the selection first, as a change of its own, and
+   * drafts the change committed are reported after it.
+   */
   #commit(added: PageObject[], updated: ObjectUpdate[], removed: PageObject[], origin: ChangeOrigin): void {
     if (added.length + updated.length + removed.length === 0) {
       return;
@@ -249,6 +294,8 @@ export class ObjectStore {
       const gone = new Set(removed.map(({ id }) => id));
       this.select(this.#selectedIds.filter((id) => !gone.has(id)), origin);
     }
+    // An added object with a draft's id is that draft, committed.
+    const committed = this.#drafts.size === 0 ? [] : added.filter(({ id }) => this.#drafts.delete(id));
     const sequence = ++this.#sequence;
     // Most changes touch one object, so this avoids building lists just to walk them.
     const noteUserChange = origin === "user" ? (id: string) => this.#userChanges.set(id, sequence) : undefined;
@@ -265,6 +312,9 @@ export class ObjectStore {
       noteUserChange?.(object.id);
     }
     this.#listener.onChanged({ sequence, origin, added, updated, removed });
+    for (const { id } of committed) {
+      this.#listener.onDraftResolved(id, true);
+    }
   }
 
   /** A sender that has heard of a change won't send a batch based on anything older, so it needn't be kept. */

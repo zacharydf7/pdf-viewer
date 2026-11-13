@@ -47,6 +47,8 @@ export class PdfViewerElement extends HTMLElement {
   readonly #store = new ObjectStore({
     onChanged: (change) => this.#onObjectsChanged(change),
     onSelectionChanged: (change) => this.#onSelectionChanged(change),
+    onDraftAdded: (draft) => this.#onDraftAdded(draft),
+    onDraftResolved: (id, committed) => this.#onDraftResolved(id, committed),
   });
   #viewport: HTMLElement | undefined;
   /** Exists once the element is connected, as the viewport does. */
@@ -305,6 +307,19 @@ export class PdfViewerElement extends HTMLElement {
     this.#store.apply(batch, "api");
   }
 
+  /**
+   * Adds a drawn object that a pv-object-drawn listener kept as a draft, reported as a change the user made. Returns
+   * whether there was such a draft.
+   */
+  commitDraft(id: string): boolean {
+    return this.#store.commitDraft(id);
+  }
+
+  /** Drops a drawn object that a pv-object-drawn listener kept as a draft. Returns whether there was such a draft. */
+  discardDraft(id: string): boolean {
+    return this.#store.discardDraft(id);
+  }
+
   /** Selects one object, or none when given null. */
   selectObject(id: string | null): void {
     this.#store.select(id === null ? [] : [id], "api");
@@ -513,6 +528,29 @@ export class PdfViewerElement extends HTMLElement {
     this.#emit("pv-selection-change", change);
   }
 
+  /**
+   * Shows the draft, then asks listeners what becomes of it. One that cancels the event keeps it as a draft, and
+   * commits or discards it later. Otherwise it's committed at once.
+   */
+  #onDraftAdded(draft: PageObject): void {
+    this.#view?.objects.syncDrafts();
+    if (this.#emit("pv-object-drawn", { object: draft }, true)) {
+      this.#store.commitDraft(draft.id);
+    }
+  }
+
+  /**
+   * Updates the shown drafts, and selects a committed draft when selectOnCreate is on. The application may have
+   * committed it as hidden or unselectable, and then it isn't selected.
+   */
+  #onDraftResolved(id: string, committed: boolean): void {
+    this.#view?.objects.syncDrafts();
+    const object = this.#store.get(id);
+    if (committed && this.#options.selectOnCreate && object?.selectable && !object.hidden) {
+      this.#store.select([id], "user");
+    }
+  }
+
   async #closeDocument(): Promise<void> {
     this.#navigation = undefined;
     this.#replaceView(undefined);
@@ -560,8 +598,9 @@ export class PdfViewerElement extends HTMLElement {
     this.#emit("pv-error", { code, message: errorMessage(error), documentFailed: false });
   }
 
-  #emit<Type extends keyof PvEventMap>(type: Type, detail: PvEventMap[Type]): void {
-    this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true }));
+  /** Returns false if the event could be canceled and a listener canceled it. */
+  #emit<Type extends keyof PvEventMap>(type: Type, detail: PvEventMap[Type], cancelable = false): boolean {
+    return this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, cancelable }));
   }
 }
 

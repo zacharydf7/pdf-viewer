@@ -1,5 +1,7 @@
 using System.Reflection;
 using Bunit;
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
@@ -70,6 +72,44 @@ public class PdfViewerTests : BunitContext
             object?[]? args) => InvokeAsync<TValue>(identifier, args);
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// An application page that owns the list its viewer displays, and keeps a drawn object once its button is
+    /// clicked, as a dialog would. Like any component, it renders again after its handlers, which is what sends the
+    /// viewer the changed list.
+    /// </summary>
+    private sealed class DrawingPage : ComponentBase
+    {
+        private readonly List<ViewerObject> _objects = [];
+        private readonly TaskCompletionSource _confirmed = new();
+        private PdfViewerOptions _options = new();
+
+        /// <summary>Whether keeping the object also changes an option, which the viewer sends first.</summary>
+        [Parameter] public bool ChangeOptionsOnKeep { get; set; }
+
+        protected override void BuildRenderTree(RenderTreeBuilder builder)
+        {
+            builder.OpenElement(0, "button");
+            builder.AddAttribute(1, "onclick", EventCallback.Factory.Create(this, _confirmed.SetResult));
+            builder.CloseElement();
+            builder.OpenComponent<PdfViewer>(2);
+            builder.AddComponentParameter(3, nameof(PdfViewer.Objects), _objects);
+            builder.AddComponentParameter(4, nameof(PdfViewer.OnObjectDrawn),
+                EventCallback.Factory.Create<ObjectDrawnArgs>(this, KeepOnceConfirmedAsync));
+            builder.AddComponentParameter(5, nameof(PdfViewer.Options), _options);
+            builder.CloseComponent();
+        }
+
+        private async Task KeepOnceConfirmedAsync(ObjectDrawnArgs args)
+        {
+            await _confirmed.Task;
+            _objects.Add(args.Object);
+            if (ChangeOptionsOnKeep)
+            {
+                _options = new() { WheelZoom = false };
+            }
+        }
     }
 
     public PdfViewerTests()
@@ -482,7 +522,7 @@ public class PdfViewerTests : BunitContext
         Render<PdfViewer>(parameters =>
             parameters.Add(component => component.OnSelectionChanged, (SelectionChangedArgs _) => { }));
 
-        Assert.Equal(new ViewerSubscriptions(Objects: false, Selection: true), AttachArgument(3));
+        Assert.Equal(new ViewerSubscriptions(Objects: false, Selection: true, Drawn: false), AttachArgument(3));
     }
 
     [Fact]
@@ -528,15 +568,15 @@ public class PdfViewerTests : BunitContext
         var options = new PdfViewerOptions
         {
             InitialZoom = ViewerZoomMode.FitPage, HideFormFields = true, KeyboardEditing = false,
-            RoundCoordinates = true, WheelZoom = false, Coordinates = ViewerCoordinates.Display,
-            ObjectHitArea = ViewerObjectHitArea.Border,
+            RoundCoordinates = true, SelectOnCreate = false, WheelZoom = false,
+            Coordinates = ViewerCoordinates.Display, ObjectHitArea = ViewerObjectHitArea.Border,
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(options, InteropJson);
 
         const string expected = """
             {"initialZoom":"fit-page","hideFormFields":true,"keyboardEditing":false,"roundCoordinates":true,
-            "wheelZoom":false,"coordinates":"display","objectHitArea":"border"}
+            "selectOnCreate":false,"wheelZoom":false,"coordinates":"display","objectHitArea":"border"}
             """;
         Assert.Equal(expected.Replace("\n", "").Replace("\r", ""), json);
     }
@@ -589,7 +629,7 @@ public class PdfViewerTests : BunitContext
 
         var call = Assert.Single(_bridge.Invocations);
         Assert.Equal("subscribe", call.Identifier);
-        Assert.Equal(new ViewerSubscriptions(Objects: true, Selection: false), call.Arguments[0]);
+        Assert.Equal(new ViewerSubscriptions(Objects: true, Selection: false, Drawn: false), call.Arguments[0]);
         Assert.Equal([drawn], received!.Added);
     }
 
@@ -1084,5 +1124,225 @@ public class PdfViewerTests : BunitContext
         // One batch per document, and none to undo the late change, which was never taken as known.
         Assert.Equal((0, 2), whileOpening);
         Assert.Single(received);
+    }
+
+    [Fact]
+    public void PdfViewer_ShouldSubscribeToDrawnObjects_WhenOnObjectDrawnHasHandler()
+    {
+        Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.OnObjectDrawn, (ObjectDrawnArgs _) => { }));
+
+        Assert.Equal(new ViewerSubscriptions(Objects: false, Selection: false, Drawn: true), AttachArgument(3));
+    }
+
+    [Fact]
+    public void ObjectDrawnNotification_ShouldReadDrawnObject_WhenDeserializedFromBridge()
+    {
+        const string json = """
+            {"object":{"id":"d","page":2,"rect":{"x":1,"y":2,"width":3,"height":4},"shape":"rect","kind":"heading",
+                       "locked":false,"selectable":true,"hidden":false}}
+            """;
+
+        var notification = System.Text.Json.JsonSerializer.Deserialize<ObjectDrawnNotification>(json, InteropJson)!;
+
+        Assert.Equal(new ViewerObject("d", 2, new PageRect(1, 2, 3, 4)) { Kind = "heading" }, notification.Object);
+    }
+
+    [Fact]
+    public async Task OnObjectDrawn_ShouldReceiveDrawnObject_WhenBridgeNotifies()
+    {
+        ObjectDrawnArgs? received = null;
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.OnObjectDrawn, args => received = args));
+        var drawn = new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4)) { Kind = "heading" };
+
+        await viewer.InvokeAsync(() => Notifications.NotifyObjectDrawn(new ObjectDrawnNotification(drawn)));
+
+        Assert.Equal(drawn, received!.Object);
+    }
+
+    [Fact]
+    public async Task NotifyObjectDrawn_ShouldCompleteOnlyOnceHandlerHasFinished_WhenHandlerWaits()
+    {
+        var waiting = new TaskCompletionSource();
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.OnObjectDrawn, (ObjectDrawnArgs _) => waiting.Task));
+        var drawn = new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4));
+
+        // The notification's own task, which the browser keeps the draft for as long as it's unanswered.
+        var notified = await viewer.InvokeAsync(() => Task.FromResult(
+            Notifications.NotifyObjectDrawn(new ObjectDrawnNotification(drawn))));
+        // Whatever the notification had queued has run by the time this returns.
+        await viewer.InvokeAsync(() => { });
+        var answeredWhileWaiting = notified.IsCompleted;
+        waiting.SetResult();
+        await notified;
+
+        Assert.False(answeredWhileWaiting);
+    }
+
+    [Fact]
+    public async Task Objects_ShouldSendDrawnObjectBeforeNotificationCompletes_WhenButtonClickLetsHandlerKeepIt()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var page = Render<DrawingPage>();
+        var viewer = page.FindComponent<PdfViewer>().Instance;
+        var drawn = new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4));
+
+        // The notification's own task, which is what the browser waits on. The dispatcher's task completes later.
+        var notified = await page.InvokeAsync(() => Task.FromResult(
+            viewer.HandleObjectDrawnAsync(new ObjectDrawnNotification(drawn))));
+        // The browser discards the draft when the notification completes, so the object must be on its way by then.
+        var sentByThen = notified.ContinueWith(_ => bridge.Calls.Contains("applyObjects"),
+            TaskContinuationOptions.ExecuteSynchronously);
+        var sentWhileWaiting = bridge.Calls.Contains("applyObjects");
+        await page.Find("button").ClickAsync(new());
+
+        Assert.False(sentWhileWaiting);
+        Assert.True(await sentByThen);
+        Assert.Equal([drawn], Assert.IsType<ObjectBatch>(bridge.Arguments[^1][0]).Upsert);
+    }
+
+    [Fact]
+    public async Task Objects_ShouldSendDrawnObjectBeforeNotificationCompletes_WhenSameRenderSendsOptionsFirst()
+    {
+        var bridge = new RecordingBridge();
+        Services.AddSingleton<IJSRuntime>(new StubRuntime(Task.FromResult<IJSObjectReference>(bridge)));
+        var page = Render<DrawingPage>(parameters => parameters.Add(component => component.ChangeOptionsOnKeep, true));
+        var viewer = page.FindComponent<PdfViewer>().Instance;
+        var drawn = new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4));
+        var optionsAnswered = new TaskCompletionSource();
+        bridge.Held = ("configure", optionsAnswered.Task);
+
+        var notified = await page.InvokeAsync(() => Task.FromResult(
+            viewer.HandleObjectDrawnAsync(new ObjectDrawnNotification(drawn))));
+        var sentByThen = notified.ContinueWith(_ => bridge.Calls.Contains("applyObjects"),
+            TaskContinuationOptions.ExecuteSynchronously);
+        await page.Find("button").ClickAsync(new());
+        // Whatever the notification had queued has run by the time this returns.
+        await page.InvokeAsync(() => { });
+        var answeredBeforeObjectsWereSent = notified.IsCompleted;
+        await page.InvokeAsync(optionsAnswered.SetResult);
+
+        Assert.False(answeredBeforeObjectsWereSent);
+        Assert.True(await sentByThen);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OnObjectDrawn_ShouldCancelToken_WhenDraftIsDiscardedWhileHandlerWaits(bool byDisposal)
+    {
+        var waiting = new TaskCompletionSource();
+        var token = CancellationToken.None;
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Source, "/a.pdf")
+            .Add(component => component.OnObjectDrawn, (ObjectDrawnArgs args) =>
+            {
+                token = args.CancellationToken;
+                return waiting.Task;
+            }));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(3, 1)));
+        var drawn = new ObjectDrawnNotification(new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4)));
+        var notified = viewer.InvokeAsync(() => Notifications.NotifyObjectDrawn(drawn));
+        var canceledWhileDraftWasThere = token.IsCancellationRequested;
+
+        if (byDisposal)
+        {
+            await viewer.Instance.DisposeAsync();
+        }
+        else
+        {
+            viewer.Render(parameters => parameters.Add(component => component.Source, "/b.pdf"));
+        }
+        var canceledOnceDraftWasDiscarded = token.IsCancellationRequested;
+        waiting.SetResult();
+        await notified;
+
+        Assert.Equal((false, true), (canceledWhileDraftWasThere, canceledOnceDraftWasDiscarded));
+    }
+
+    [Fact]
+    public async Task OnObjectDrawn_ShouldNotBeRaised_WhenDrawIsReportedAfterViewerIsDisposed()
+    {
+        var received = new List<ObjectDrawnArgs>();
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.OnObjectDrawn, received.Add));
+        var drawn = new ObjectDrawnNotification(new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4)));
+        var notifications = Notifications;
+        await viewer.Instance.DisposeAsync();
+
+        await viewer.InvokeAsync(() => notifications.NotifyObjectDrawn(drawn));
+
+        Assert.Empty(received);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_ShouldNotThrow_WhenCalledTwice()
+    {
+        var viewer = Render<PdfViewer>();
+
+        await viewer.Instance.DisposeAsync();
+        await viewer.Instance.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OnObjectDrawn_ShouldGiveTokenThatIsNotCanceled_WhenDrawnOnDocumentOpenedAfterAnother()
+    {
+        var received = new List<ObjectDrawnArgs>();
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Source, "/a.pdf")
+            .Add(component => component.OnObjectDrawn, received.Add));
+        var drawn = new ObjectDrawnNotification(new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4)));
+        viewer.Render(parameters => parameters.Add(component => component.Source, "/b.pdf"));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(3, 1)));
+
+        await viewer.InvokeAsync(() => Notifications.NotifyObjectDrawn(drawn));
+
+        Assert.False(Assert.Single(received).CancellationToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task OnObjectDrawn_ShouldIgnoreDraftFromPreviousDocument_WhenSourceHasChanged()
+    {
+        var received = new List<ObjectDrawnArgs>();
+        var viewer = Render<PdfViewer>(parameters => parameters
+            .Add(component => component.Source, "/a.pdf")
+            .Add(component => component.OnObjectDrawn, received.Add));
+        var drawn = new ObjectDrawnNotification(new ViewerObject("drawn", 1, new PageRect(1, 2, 3, 4)));
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(3, 1)));
+
+        viewer.Render(parameters => parameters.Add(component => component.Source, "/b.pdf"));
+        await viewer.InvokeAsync(() => Notifications.NotifyObjectDrawn(drawn));
+        var whileOpening = received.Count;
+        await viewer.InvokeAsync(() => Notifications.NotifyDocumentLoaded(new DocumentLoadedNotification(3, 1)));
+        await viewer.InvokeAsync(() => Notifications.NotifyObjectDrawn(drawn));
+
+        Assert.Equal(0, whileOpening);
+        Assert.Single(received);
+    }
+
+    [Fact]
+    public async Task CommitDraftAsync_ShouldSendDraftId_WhenCalled()
+    {
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+
+        await controller.CommitDraftAsync("drawn");
+
+        var call = Assert.Single(_bridge.Invocations);
+        Assert.Equal(("commitDraft", "drawn"), (call.Identifier, call.Arguments[0]));
+    }
+
+    [Fact]
+    public async Task DiscardDraftAsync_ShouldSendDraftId_WhenCalled()
+    {
+        var controller = new PdfViewerController();
+        Render<PdfViewer>(parameters => parameters.Add(component => component.Controller, controller));
+
+        await controller.DiscardDraftAsync("drawn");
+
+        var call = Assert.Single(_bridge.Invocations);
+        Assert.Equal(("discardDraft", "drawn"), (call.Identifier, call.Arguments[0]));
     }
 }

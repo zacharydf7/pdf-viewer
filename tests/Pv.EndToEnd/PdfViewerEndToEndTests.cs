@@ -241,52 +241,116 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await Expect(_viewer.Objects).ToHaveCountAsync(1);
     }
 
-    [Fact]
-    public async Task DrawDialog_ShouldLeaveViewerInteractive_WhenChangeHandlerIsWaiting()
+    /// <summary>
+    /// Draws on a sample whose drawn-object handler waits on a dialog, and returns the ID of the draft it leaves.
+    /// </summary>
+    private async Task<string> DrawWithConfirmDialogAsync()
     {
         await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&confirmDraw=true");
         await _viewer.WaitForPageAsync();
         await ActivateDrawToolAsync();
         await _viewer.DragOnPageAsync(0.2f, 0.2f, 0.5f, 0.4f);
         await Expect(TestId("confirm-dialog")).ToBeVisibleAsync();
+        return (await _viewer.Drafts.GetAttributeAsync("data-draft-id"))!;
+    }
+
+    [Fact]
+    public async Task DrawDialog_ShouldShowDraftThatIsNotAnObject_WhenDrawnHandlerIsWaiting()
+    {
+        await DrawWithConfirmDialogAsync();
+
+        await Expect(_viewer.Drafts).ToBeVisibleAsync();
+        await Expect(_viewer.Objects).ToHaveCountAsync(0);
+        await Expect(_viewer.Host).ToHaveAttributeAsync("data-selected-object", "");
+        await Expect(TestId("object-list").Locator("li")).ToHaveCountAsync(0);
+        await Expect(TestId("last-change")).ToHaveTextAsync("");
+    }
+
+    [Fact]
+    public async Task DrawDialog_ShouldLeaveViewerInteractive_WhenDrawnHandlerIsWaiting()
+    {
+        await DrawWithConfirmDialogAsync();
 
         // The handler is still waiting on the dialog, but commands and rendering must keep working.
         await TestId("add-object").ClickAsync();
         await Expect(TestId("last-change")).ToHaveTextAsync("Added Api code-1");
+        await ActivateSelectToolAsync();
+        await _viewer.DragObjectAsync("code-1", 40, 20);
+        await Expect(TestId("last-change")).ToHaveTextAsync("Updated User code-1");
         await _viewer.Page.GetByRole(AriaRole.Button, new() { Name = "Next page" }).ClickAsync();
         await _viewer.WaitForPageAsync(2);
         await Expect(TestId("confirm-dialog")).ToBeVisibleAsync();
     }
 
     [Fact]
-    public async Task DrawDialog_ShouldRemoveObject_WhenCanceled()
+    public async Task DrawDialog_ShouldLeaveNoObjectBehind_WhenCanceled()
     {
-        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&confirmDraw=true");
-        await _viewer.WaitForPageAsync();
-        await ActivateDrawToolAsync();
-        await _viewer.DragOnPageAsync(0.2f, 0.2f, 0.5f, 0.4f);
-        await Expect(_viewer.Objects).ToHaveCountAsync(1);
+        await DrawWithConfirmDialogAsync();
 
         await TestId("dialog-cancel").ClickAsync();
 
-        await Expect(_viewer.Objects).ToHaveCountAsync(0);
         await Expect(TestId("confirm-dialog")).ToBeHiddenAsync();
+        await Expect(_viewer.Drafts).ToHaveCountAsync(0);
+        await Expect(_viewer.Objects).ToHaveCountAsync(0);
         await Expect(TestId("object-list").Locator("li")).ToHaveCountAsync(0);
     }
 
     [Fact]
-    public async Task DrawDialog_ShouldKeepObject_WhenSaved()
+    public async Task DrawDialog_ShouldCommitOneObjectWithDrawnId_WhenSaved()
     {
-        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&confirmDraw=true");
-        await _viewer.WaitForPageAsync();
-        await ActivateDrawToolAsync();
-        await _viewer.DragOnPageAsync(0.2f, 0.2f, 0.5f, 0.4f);
+        var id = await DrawWithConfirmDialogAsync();
 
         await TestId("dialog-save").ClickAsync();
 
         await Expect(TestId("confirm-dialog")).ToBeHiddenAsync();
         await Expect(_viewer.Objects).ToHaveCountAsync(1);
+        await Expect(_viewer.Object(id)).ToHaveAttributeAsync("aria-selected", "true");
+        await Expect(_viewer.Drafts).ToHaveCountAsync(0);
         await Expect(TestId("object-list").Locator("li")).ToHaveCountAsync(1);
+        await Expect(_viewer.Page.Locator($"[data-listed-object=\"{id}\"]")).ToBeVisibleAsync();
+        await Expect(TestId("last-kind")).ToHaveTextAsync("heading");
+    }
+
+    [Fact]
+    public async Task DrawDialog_ShouldDiscardSecondDraftAndKeepFirst_WhenUserDrawsAgainWhileDialogIsOpen()
+    {
+        var first = await DrawWithConfirmDialogAsync();
+
+        await _viewer.DragOnPageAsync(0.6f, 0.5f, 0.8f, 0.7f);
+
+        // The sample's handler returns at once for the second drawing, so only that draft is discarded.
+        await Expect(_viewer.Drafts).ToHaveCountAsync(1);
+        await Expect(_viewer.Drafts).ToHaveAttributeAsync("data-draft-id", first);
+        await Expect(TestId("confirm-dialog")).ToBeVisibleAsync();
+    }
+
+    [Fact]
+    public async Task DrawDialog_ShouldCloseAndAddNothingToNewDocument_WhenAnotherFileOpensWhileItWaits()
+    {
+        await DrawWithConfirmDialogAsync();
+
+        await TestId("file-input").SetInputFilesAsync(Path.Combine(DocumentsDirectory, "a4.pdf"));
+
+        await Expect(_viewer.Host).ToHaveAttributeAsync("data-page-count", "1");
+        await _viewer.WaitForPageAsync();
+        await Expect(TestId("confirm-dialog")).ToBeHiddenAsync();
+        await Expect(_viewer.Drafts).ToHaveCountAsync(0);
+        await Expect(_viewer.Objects).ToHaveCountAsync(0);
+        await Expect(TestId("object-list").Locator("li")).ToHaveCountAsync(0);
+    }
+
+    [Fact]
+    public async Task DrawTool_ShouldDiscardDrawnObject_WhenCircuitIsLostAndHandlerCannotBeAsked()
+    {
+        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&confirmDraw=true");
+        await _viewer.WaitForPageAsync();
+        await ActivateDrawToolAsync();
+        await _viewer.Page.EvaluateAsync("() => Blazor.disconnect()");
+
+        await _viewer.DragOnPageAsync(0.2f, 0.2f, 0.5f, 0.4f);
+
+        await Expect(_viewer.Drafts).ToHaveCountAsync(0);
+        await Expect(_viewer.Objects).ToHaveCountAsync(0);
     }
 
     [Fact]

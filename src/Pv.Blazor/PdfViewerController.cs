@@ -97,6 +97,19 @@ public sealed class PdfViewerController
             await source.CopyToAsync(destination, cancellationToken);
         }, cancellationToken);
 
+    /// <summary>
+    /// Keeps a draft from <see cref="PdfViewer.OnObjectDrawn"/> as it was drawn. It becomes an object the user added,
+    /// so it's reported through <see cref="PdfViewer.OnObjectsChanged"/>, and with <see cref="PdfViewer.Objects"/> set
+    /// it has to go into your list like any other. Does nothing if the draft is gone.
+    /// </summary>
+    public Task CommitDraftAsync(string id) => SendAsync("commitDraft", id);
+
+    /// <summary>
+    /// Discards a draft from <see cref="PdfViewer.OnObjectDrawn"/> without waiting for its handler to finish. Does
+    /// nothing if the draft is gone.
+    /// </summary>
+    public Task DiscardDraftAsync(string id) => SendAsync("discardDraft", id);
+
     /// <summary>Selects one object, or none when given null.</summary>
     public Task SelectObjectAsync(string? id) => SelectObjectsAsync(id is null ? [] : [id]);
 

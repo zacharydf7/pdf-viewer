@@ -77,6 +77,203 @@ test.describe("drawing", () => {
 
     await expect(page.getByRole("option", { selected: true })).toHaveCount(1);
   });
+
+  test("drawRect_ShouldNotSelectNewObject_WhenSelectOnCreateIsOff", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ selectOnCreate: false }));
+    await viewer.setTool("draw-rect");
+
+    await viewer.drag(await viewer.pagePoint(0.1, 0.1), await viewer.pagePoint(0.3, 0.3));
+
+    await expect(page.locator("[data-object-id]")).toHaveCount(1);
+    await expect(page.getByRole("option", { selected: true })).toHaveCount(0);
+  });
+});
+
+test.describe("drafts", () => {
+  test("objectDrawn_ShouldReportDraftBeforeItBecomesObject_WhenDrawFinishes", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.setTool("draw-rect", { kind: "heading" });
+      element.addEventListener("pv-object-drawn", ({ detail: { object } }) => {
+        const shown = element.querySelectorAll(`[data-draft-id="${object.id}"]`).length;
+        (window as unknown as { drawn: unknown }).drawn = { object, shown, stored: element.getObject(object.id) };
+      });
+    });
+
+    await viewer.drag(await viewer.pagePoint(0.2, 0.2), await viewer.pagePoint(0.4, 0.3));
+
+    const [added] = await viewer.getObjects();
+    const drawn = await page.evaluate(() => (window as unknown as { drawn: Record<string, unknown> }).drawn);
+    expect(drawn).toEqual({ object: added, shown: 1, stored: undefined });
+    expect(added).toMatchObject({ page: 1, kind: "heading" });
+    await expect(viewer.drafts).toHaveCount(0);
+  });
+
+  test("objectDrawn_ShouldLeaveVisibleDraftAndNoObject_WhenListenerCancelsEvent", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    const changes = await viewer.recordEvents("pv-objects-changed");
+    const from = await viewer.pagePoint(0.2, 0.2);
+    const to = await viewer.pagePoint(0.4, 0.3);
+    await viewer.setTool("draw-rect");
+
+    await viewer.drag(from, to);
+
+    await expect(viewer.drafts).toBeVisible();
+    const pageBox = (await viewer.pageElement().boundingBox())!;
+    expectRectsClose(await viewer.boundsOnPage(viewer.drafts), {
+      x: from.x - pageBox.x, y: from.y - pageBox.y, width: to.x - from.x, height: to.y - from.y,
+    }, 1);
+    const rect = parseRect(await viewer.drafts.getAttribute("data-page-rect"));
+    expect(rect.width).toBeCloseTo(612 * 0.2, 0);
+    await expect(viewer.pageElement()).toHaveAttribute("data-object-count", "0");
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "");
+    expect(await viewer.getObjects()).toEqual([]);
+    expect(await changes()).toEqual([]);
+  });
+
+  test("commitDraft_ShouldAddDrawnObjectAsUserChangeAndSelectIt_WhenListenerKeptDraft", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    const added = await viewer.recordAdded();
+    const id = await viewer.drawDraft();
+
+    const committed = await viewer.host.evaluate((element: PdfViewerElement, value) => element.commitDraft(value), id);
+
+    expect(committed).toBe(true);
+    await expect(viewer.object(id)).toBeVisible();
+    await expect(viewer.drafts).toHaveCount(0);
+    await expect(viewer.host).toHaveAttribute("data-selected-object", id);
+    expect((await added()).map(({ origin, object }) => [origin, object.id])).toEqual([["user", id]]);
+  });
+
+  test("discardDraft_ShouldLeaveNothingBehind_WhenListenerKeptDraft", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    const changes = await viewer.recordEvents("pv-objects-changed");
+    const id = await viewer.drawDraft();
+
+    const discarded = await viewer.host.evaluate((element: PdfViewerElement, value) => element.discardDraft(value), id);
+
+    expect(discarded).toBe(true);
+    await expect(viewer.drafts).toHaveCount(0);
+    await expect(page.locator("[data-object-id]")).toHaveCount(0);
+    expect(await changes()).toEqual([]);
+  });
+
+  test("addObject_ShouldCommitDraftUnderGivenValues_WhenObjectHasDraftId", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    const added = await viewer.recordAdded();
+    const id = await viewer.drawDraft();
+
+    await viewer.addObject({ id, page: 1, rect: start, label: "Kept region" });
+
+    await expect(page.locator("[data-object-id]")).toHaveCount(1);
+    await expect(viewer.object(id)).toHaveAttribute("aria-label", "Kept region");
+    await expect(viewer.object(id)).toHaveAttribute("aria-selected", "true");
+    await expect(viewer.drafts).toHaveCount(0);
+    expect((await added()).map(({ origin }) => origin)).toEqual(["api"]);
+  });
+
+  for (const [state, values] of [["Unselectable", { selectable: false }], ["Hidden", { hidden: true }]] as const) {
+    test(`addObject_ShouldNotSelectCommittedDraft_WhenObjectIs${state}`, async ({ page }) => {
+      const viewer = await openViewer(page);
+      await viewer.keepDrawnObjectsAsDrafts();
+      const id = await viewer.drawDraft();
+
+      await viewer.addObject({ id, page: 1, rect: start, ...values });
+
+      await expect(viewer.drafts).toHaveCount(0);
+      await expect(viewer.host).toHaveAttribute("data-selected-object", "");
+    });
+  }
+
+  test("draft_ShouldBeGoneFromPage_WhenObjectsChangedReportsItsCommit", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    const id = await viewer.drawDraft();
+
+    const shownDuringEvent = await viewer.host.evaluate((element: PdfViewerElement, value) => {
+      let shown = -1;
+      element.addEventListener("pv-objects-changed", () => {
+        shown = element.querySelectorAll("[data-draft-id]").length;
+      });
+      element.commitDraft(value);
+      return shown;
+    }, id);
+
+    expect(shownDuringEvent).toBe(0);
+  });
+
+  test("draft_ShouldLetPressReachObjectUnderIt_WhenSelectToolIsActive", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "under", page: 1, rect: { x: 0, y: 0, width: 612, height: 792 } });
+    await viewer.keepDrawnObjectsAsDrafts();
+    await viewer.drawDraft();
+    await viewer.setTool("select");
+
+    const center = await viewer.center(viewer.drafts);
+    await page.mouse.click(center.x, center.y);
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "under");
+    await expect(viewer.drafts).toHaveCount(1);
+  });
+
+  test("drawRect_ShouldKeepEarlierDraft_WhenUserDrawsAgainWhileItIsPending", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    const first = await viewer.drawDraft();
+
+    await viewer.drag(await viewer.pagePoint(0.25, 0.22), await viewer.pagePoint(0.6, 0.6));
+
+    await expect(viewer.drafts).toHaveCount(2);
+    const ids = await viewer.drafts.evaluateAll((elements) => elements.map((element) => element.dataset.draftId));
+    expect(ids[0]).toBe(first);
+    expect(ids[1]).not.toBe(first);
+  });
+
+  test("draft_ShouldShowOnlyOnItsPage_WhenPageTurnsAwayAndBack", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    const id = await viewer.drawDraft();
+    const rect = await viewer.drafts.getAttribute("data-page-rect");
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(2));
+    const onSecondPage = await viewer.drafts.count();
+    await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(1));
+
+    expect(onSecondPage).toBe(0);
+    await expect(viewer.drafts).toHaveAttribute("data-draft-id", id);
+    await expect(viewer.drafts).toHaveAttribute("data-page-rect", rect!);
+  });
+
+  test("draft_ShouldShowWhereItsObjectWillBe_WhenPageIsRotatedBeforeCommit", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    const id = await viewer.drawDraft();
+
+    await viewer.setRotation(90);
+    const draftBounds = await viewer.boundsOnPage(viewer.drafts);
+    await viewer.host.evaluate((element: PdfViewerElement, value) => element.commitDraft(value), id);
+
+    expect(draftBounds.height).toBeGreaterThan(draftBounds.width);
+    expectRectsClose(await viewer.boundsOnPage(viewer.object(id)), draftBounds, 0.01);
+  });
+
+  test("close_ShouldDiscardDrafts_WhenDocumentCloses", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.keepDrawnObjectsAsDrafts();
+    const id = await viewer.drawDraft();
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.close());
+    await viewer.open("letter");
+
+    await expect(viewer.drafts).toHaveCount(0);
+    expect(await viewer.host.evaluate((element: PdfViewerElement, value) => element.commitDraft(value), id))
+      .toBe(false);
+  });
 });
 
 test.describe("selecting", () => {

@@ -1,6 +1,6 @@
 import type { DocumentErrorCode } from "./engine.js";
 import type { Rotation } from "./geometry.js";
-import type { ObjectsChanged, SelectionChanged } from "./object-store.js";
+import type { ObjectsChanged, PageObject, SelectionChanged } from "./object-store.js";
 
 /**
  * Why the viewer failed. The document codes mean the document couldn't open and is now closed. "page" and "render"
@@ -40,15 +40,24 @@ export interface PageInfo {
   rotation: Rotation;
 }
 
+export interface ObjectDrawn {
+  /** What the user drew, with the draw tool's defaults applied. It's a draft, not yet one of the viewer's objects. */
+  object: PageObject;
+}
+
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Every event the viewer raises, with its detail. All are bubbling CustomEvents on the element. */
+/**
+ * Every event the viewer raises, with its detail. All are bubbling CustomEvents on the element. Only pv-object-drawn
+ * can be canceled.
+ */
 export interface PvEventMap {
   "pv-document-loaded": DocumentLoaded;
   "pv-page-rendered": PageRendered;
   "pv-page-change": PageChanged;
+  "pv-object-drawn": ObjectDrawn;
   "pv-objects-changed": ObjectsChanged;
   "pv-selection-change": SelectionChanged;
   "pv-error": ViewerErrorDetail;

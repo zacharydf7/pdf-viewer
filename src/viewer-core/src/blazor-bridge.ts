@@ -1,5 +1,5 @@
 import type { DocumentSource } from "./engine.js";
-import type { PageInfo, PvEventMap } from "./events.js";
+import type { ObjectDrawn, PageInfo, PvEventMap } from "./events.js";
 import { errorMessage } from "./events.js";
 import type { ChangeOrigin, ObjectBatch, ObjectUpdate, PageObject } from "./object-store.js";
 import type { DrawDefaults, ViewerTool } from "./tool.js";
@@ -21,6 +21,8 @@ type BlazorSource = DocumentSource | { kind: "file-input"; input: HTMLInputEleme
 export interface ViewerSubscriptions {
   objects: boolean;
   selection: boolean;
+  /** Whether .NET decides what becomes of each object the user draws. Without that, a drawn object is added at once. */
+  drawn: boolean;
 }
 
 /**
@@ -41,6 +43,8 @@ export class ViewerBridge {
   #subscriptions: ViewerSubscriptions;
   /** Changes waiting to go to .NET together, once the task that made them has finished. */
   #pending: ChangesNotification | undefined;
+  /** The drafts whose handlers .NET is still running. */
+  readonly #heldDrafts = new Set<string>();
 
   constructor(host: PdfViewerElement, dotNet: DotNetReference, subscriptions: ViewerSubscriptions) {
     this.#host = host;
@@ -57,6 +61,12 @@ export class ViewerBridge {
       this.#notify("NotifyDocumentLoaded", { pageCount: detail.pageCount, page: host.currentPage }), { signal });
     forward("pv-page-change", "NotifyPageChanged");
     forward("pv-error", "NotifyError");
+    host.addEventListener("pv-object-drawn", (event) => {
+      if (this.#subscriptions.drawn) {
+        event.preventDefault();
+        this.#hold(event.detail);
+      }
+    }, { signal });
     // .NET hears only of the object changes the user made. It made the others itself, and a whole document's objects
     // could exceed the hub's message size limit.
     host.addEventListener("pv-objects-changed", ({ detail: { sequence, origin, added, updated, removed } }) => {
@@ -125,14 +135,37 @@ export class ViewerBridge {
   setTool = (tool: ViewerTool, defaults: DrawDefaults | null): void => this.#host.setTool(tool, defaults ?? {});
   /** Every object .NET sends is whole, so one it changed replaces the stored object, clearing whatever it left out. */
   applyObjects = (batch: ObjectBatch): void => this.#host.applyObjects(batch);
+  commitDraft = (id: string): boolean => this.#host.commitDraft(id);
+  discardDraft = (id: string): boolean => this.#host.discardDraft(id);
   selectObjects = (ids: string[]): void => this.#host.selectObjects(ids);
   /** The selected ids as UTF-8 JSON, which .NET reads as a stream, so their number isn't limited by the hub. */
   getSelectedObjectIds = (): Uint8Array => new TextEncoder().encode(JSON.stringify(this.#host.selectedObjectIds));
   getPageInfo = (page: number): Promise<PageInfo> => this.#host.getPageInfo(page);
 
+  /** Discards the drafts .NET was still deciding on, since nothing will answer for them now. */
   dispose(): void {
     this.#abort.abort();
     this.#pending = undefined;
+    for (const id of this.#heldDrafts) {
+      this.#host.discardDraft(id);
+    }
+    this.#heldDrafts.clear();
+  }
+
+  /**
+   * Keeps a drawn object as a draft until .NET's handler has finished, however long that takes. A handler that wants
+   * the object commits the draft before it finishes, by adding an object with its id or with commitDraft, so a draft
+   * still there afterward is discarded. So is one whose handler failed, or whose notification found the circuit gone.
+   * A circuit that closes while the handler is running leaves the notification unanswered, so that draft stays until
+   * the circuit reconnects and answers, or the page reloads.
+   */
+  #hold({ object }: ObjectDrawn): void {
+    this.#heldDrafts.add(object.id);
+    void this.#notify("NotifyObjectDrawn", { object }).then(() => {
+      if (this.#heldDrafts.delete(object.id)) {
+        this.#host.discardDraft(object.id);
+      }
+    });
   }
 
   /**
@@ -162,10 +195,11 @@ export class ViewerBridge {
     });
   }
 
-  #notify(method: string, ...args: unknown[]): void {
+  /** Resolves once .NET has finished handling the notification, whether or not that worked. */
+  #notify(method: string, ...args: unknown[]): Promise<void> {
     // Warn rather than rethrow: a lost circuit also ends up here and the element keeps working without it. Staying silent
     // would hide a failing handler.
-    this.#dotNet.invokeMethodAsync(method, ...args).catch((error: unknown) => {
+    return this.#dotNet.invokeMethodAsync(method, ...args).then(() => {}, (error: unknown) => {
       console.warn(`The viewer's ${method} notification failed.`, error);
     });
   }

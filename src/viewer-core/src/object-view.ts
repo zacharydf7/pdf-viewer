@@ -38,7 +38,10 @@ export class ObjectView {
   #handlesFor: string | undefined;
   /** An object a gesture is showing away from where the store has it. */
   #movedObject: { id: string; rect: Rect } | undefined;
+  /** The rectangle a draw gesture is showing. */
   #draft: HTMLElement | undefined;
+  /** The store's drafts on this page, which are drawn but not objects yet, so they're shown and take no input. */
+  readonly #draftElements = new Map<string, HTMLElement>();
 
   constructor(page: HTMLElement, pageNumber: number, geometry: PageGeometry, store: ObjectStore,
     presentation: ToolPresentation) {
@@ -113,6 +116,31 @@ export class ObjectView {
     this.#syncListboxRole(objects.length);
     this.#shownSelection = this.#store.selectedIds;
     this.#syncHandles();
+    this.syncDrafts();
+  }
+
+  /** Brings the draft elements in line with the store's drafts on this page. */
+  syncDrafts(): void {
+    const drafts = this.#store.draftsForPage(this.#pageNumber);
+    const ids = new Set(drafts.map(({ id }) => id));
+    for (const [id, element] of this.#draftElements) {
+      if (!ids.has(id)) {
+        element.remove();
+        this.#draftElements.delete(id);
+      }
+    }
+    for (const { id, rect } of drafts) {
+      let element = this.#draftElements.get(id);
+      if (element === undefined) {
+        element = document.createElement("div");
+        element.className = "pv-draft";
+        element.dataset.draftId = id;
+        this.#draftElements.set(id, element);
+        this.element.append(element);
+      }
+      this.#position(element, rect);
+      element.dataset.pageRect = formatRect(rect);
+    }
   }
 
   /** Brings these objects up to date after a change, without visiting the others. */
@@ -134,6 +162,10 @@ export class ObjectView {
     const primary = this.#store.primarySelectedId;
     if (primary !== null && ids.includes(primary)) {
       this.#syncHandles();
+    }
+    // A draft that has just become one of these objects stops showing as a draft at the same time.
+    if (this.#draftElements.size > 0) {
+      this.syncDrafts();
     }
   }
 
@@ -221,8 +253,7 @@ export class ObjectView {
       this.#objectsElement.append(element);
     }
     this.#position(element, object.rect);
-    const { x, y, width, height } = object.rect;
-    element.dataset.pageRect = [x, y, width, height].map(formatNumber).join(",");
+    element.dataset.pageRect = formatRect(object.rect);
     element.className = object.cssClass === undefined ? "pv-object" : `pv-object ${object.cssClass}`;
     element.dataset.objectShape = object.shape;
     if (object.kind === undefined) {
@@ -318,6 +349,7 @@ export class ObjectView {
   }
 }
 
-function formatNumber(value: number): string {
-  return String(Math.round(value * 1000) / 1000);
+/** A rectangle as data-page-rect shows it: x, y, width and height, to three decimal places at most. */
+function formatRect({ x, y, width, height }: Rect): string {
+  return [x, y, width, height].map((value) => String(Math.round(value * 1000) / 1000)).join(",");
 }

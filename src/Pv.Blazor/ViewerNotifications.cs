@@ -20,6 +20,11 @@ internal sealed class ViewerNotifications(PdfViewer viewer)
 
     [JSInvokable]
     public Task NotifyChanges(ChangesNotification notification) => viewer.HandleChangesAsync(notification);
+
+    /// <summary>The browser keeps the drawn object as a draft until this completes.</summary>
+    [JSInvokable]
+    public Task NotifyObjectDrawn(ObjectDrawnNotification notification) =>
+        viewer.HandleObjectDrawnAsync(notification);
 }
 
 /// <summary>
@@ -34,6 +39,9 @@ internal sealed record ObjectChanges(IReadOnlyList<ViewerObject> Added, IReadOnl
 
 internal sealed record SelectionState(ChangeOrigin Origin, string? PrimaryId, int Count);
 
+/// <summary>The user finished drawing <paramref name="Object"/>, which the browser holds as a draft.</summary>
+internal sealed record ObjectDrawnNotification(ViewerObject Object);
+
 /// <summary>
 /// Objects to add or replace and IDs to remove, applied as one change. <paramref name="BasedOn"/> is the sequence of
 /// the latest change .NET had heard of, so the browser can leave alone anything the user changed after that.
@@ -43,5 +51,8 @@ internal sealed record ObjectBatch(IReadOnlyList<ViewerObject> Upsert, IReadOnly
 /// <summary>The document opened. <paramref name="Page"/> is the page the viewer shows first.</summary>
 internal sealed record DocumentLoadedNotification(int PageCount, int Page);
 
-/// <summary>Which notifications .NET has handlers for. Each one sent costs a message over the circuit.</summary>
-internal readonly record struct ViewerSubscriptions(bool Objects, bool Selection);
+/// <summary>
+/// Which notifications .NET has handlers for. Each one sent costs a message over the circuit, and with
+/// <paramref name="Drawn"/> the browser also keeps each drawn object as a draft until its handler has finished.
+/// </summary>
+internal readonly record struct ViewerSubscriptions(bool Objects, bool Selection, bool Drawn);

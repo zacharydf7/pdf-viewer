@@ -8,7 +8,9 @@ import { finalRect } from "./tool.js";
 /** The smallest width and height a drawn rectangle can have, in page units, so a click doesn't make one. */
 const minimumDrawSize = 2;
 
-/** Draws a rectangle from where the pointer is pressed to where it's released, then selects it. */
+/**
+ * Draws a rectangle from where the pointer is pressed to where it's released, and leaves it with the store as a draft.
+ */
 export class DrawRectTool implements Tool {
   readonly presentation: ToolPresentation = { pointer: "page", focusable: true, handles: false };
   readonly #store: ObjectStore;
@@ -52,8 +54,7 @@ export class DrawRectTool implements Tool {
       return;
     }
     const final = finalRect(geometry, rect, this.#context.options.roundCoordinates);
-    const added = this.#store.add({ id: newObjectId(), page: draw.page, rect: final, ...this.#defaults }, "user");
-    this.#store.select([added.id], "user");
+    this.#store.addDraft({ id: newObjectId(), page: draw.page, rect: final, ...this.#defaults });
   }
 
   cancel(): boolean {

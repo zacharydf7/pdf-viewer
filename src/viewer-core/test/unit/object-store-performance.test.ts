@@ -6,7 +6,7 @@ import { ObjectStore } from "../../src/object-store.js";
 // in how the cost grows, such as visiting every object inside a per-object operation, still fails by a wide margin.
 const count = 50_000;
 const pageCount = 50;
-const listener = { onChanged() {}, onSelectionChanged() {} };
+const listener = { onChanged() {}, onSelectionChanged() {}, onDraftAdded() {}, onDraftResolved() {} };
 
 function manyObjects(): NewPageObject[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -73,6 +73,18 @@ test("apply_ShouldStayWithinBudget_WhenBatchChanges2000Of50000Objects", () => {
   const time = elapsed(() => store.apply({ upsert, remove, basedOn: 0 }, "api"));
 
   expect(time).toBeLessThan(15);
+});
+
+test("apply_ShouldStayWithinBudget_WhenBatchCommits10000DraftsAmong50000Objects", () => {
+  const store = filledStore();
+  const drawn = Array.from({ length: 10_000 }, (_, index) =>
+    ({ id: `draft-${index}`, page: (index % pageCount) + 1, rect: { x: 1, y: 2, width: 30, height: 40 } }));
+  drawn.forEach((draft) => store.addDraft(draft));
+
+  const time = elapsed(() => store.apply({ upsert: drawn, basedOn: 0 }, "api"));
+
+  expect(store.draftsForPage(1)).toEqual([]);
+  expect(time).toBeLessThan(40);
 });
 
 test("update_ShouldStayWithinBudget_WhenUpdatingEachOf50000Objects", () => {

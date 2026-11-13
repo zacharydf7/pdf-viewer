@@ -35,6 +35,13 @@ public partial class PdfViewer
     /// document before it, which has gone.
     /// </summary>
     private bool _awaitingDocument;
+    /// <summary>
+    /// Canceled when the document changes or the viewer is disposed, which is when the browser discards its drafts,
+    /// so a handler still deciding on one finds out.
+    /// </summary>
+    private CancellationTokenSource _draftsDiscarded = new();
+    /// <summary>The latest sending of changes, which may still be waiting on the browser.</summary>
+    private Task _sendingChanges = Task.CompletedTask;
     private bool _disposed;
 
     [Inject] private IJSRuntime JS { get; set; } = default!;
@@ -78,10 +85,23 @@ public partial class PdfViewer
 
     /// <summary>
     /// Raised when the user draws, moves, resizes or deletes objects, once the gesture has finished and never during a
-    /// drag. Changes your own code makes through <see cref="Objects"/> aren't reported. The user's changes cross the
-    /// circuit only while this has a handler or <see cref="Objects"/> is set.
+    /// drag. Changes your own code makes through <see cref="Objects"/> aren't reported, and neither is a drawn object
+    /// that <see cref="OnObjectDrawn"/> decides on, unless <see cref="PdfViewerController.CommitDraftAsync"/> keeps
+    /// it. The user's changes cross the circuit only while this has a handler or <see cref="Objects"/> is set.
     /// </summary>
     [Parameter] public EventCallback<ObjectsChangedArgs> OnObjectsChanged { get; set; }
+
+    /// <summary>
+    /// Raised when the user finishes drawing an object, so your handler can decide whether to keep it. While the
+    /// handler runs, the object is a draft: it stays visible, but it can't be selected and isn't in the viewer's
+    /// objects. To keep it, add an object with its ID to <see cref="Objects"/>, or call
+    /// <see cref="PdfViewerController.CommitDraftAsync"/>. A draft the handler hasn't kept by the time it finishes is
+    /// discarded, so rejecting one takes no code. The handler can wait as long as it needs, for example on a dialog,
+    /// and the viewer stays usable meanwhile. If the document closes or the viewer is disposed during that wait, the
+    /// draft is discarded and <see cref="ObjectDrawnArgs.CancellationToken"/> is canceled. Without a handler, a drawn
+    /// object is added at once and reported through <see cref="OnObjectsChanged"/>.
+    /// </summary>
+    [Parameter] public EventCallback<ObjectDrawnArgs> OnObjectDrawn { get; set; }
 
     /// <summary>
     /// Raised when the selection changes, whoever changed it. Changes cross the circuit only while it has a handler.
@@ -100,7 +120,8 @@ public partial class PdfViewer
     /// has.
     /// </summary>
     private ViewerSubscriptions CurrentSubscriptions =>
-        new(OnObjectsChanged.HasDelegate || Objects is not null, OnSelectionChanged.HasDelegate);
+        new(OnObjectsChanged.HasDelegate || Objects is not null, OnSelectionChanged.HasDelegate,
+            OnObjectDrawn.HasDelegate);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -165,8 +186,10 @@ public partial class PdfViewer
         }
     }
 
+    private Task SendChangesAsync(IJSObjectReference bridge) => _sendingChanges = SendChangesCoreAsync(bridge);
+
     /// <summary>Sends whatever changed since it was last sent, stopping if the viewer is disposed meanwhile.</summary>
-    private async Task SendChangesAsync(IJSObjectReference bridge)
+    private async Task SendChangesCoreAsync(IJSObjectReference bridge)
     {
         if (!_disposed && CurrentOptions != _sentOptions)
         {
@@ -186,6 +209,8 @@ public partial class PdfViewer
             ActiveController.SetState(0, 0);
             _knownObjects = [];
             _awaitingDocument = true;
+            _draftsDiscarded.Cancel();
+            _draftsDiscarded = new();
             if (Source is null)
             {
                 await bridge.InvokeVoidAsync("close");
@@ -258,6 +283,25 @@ public partial class PdfViewer
     private static async Task RaiseAsync<TArgs>(EventCallback<TArgs> callback, TArgs args) =>
         await callback.InvokeAsync(args);
 
+    /// <summary>
+    /// Completes once the handler has finished, which is when the browser discards the draft unless it was kept. A
+    /// draft drawn on the previous document was discarded when that document closed, so the handler isn't run for it.
+    /// Neither is it run for a draft reported after the viewer was disposed.
+    /// </summary>
+    internal async Task HandleObjectDrawnAsync(ObjectDrawnNotification notification)
+    {
+        if (_awaitingDocument || _disposed)
+        {
+            return;
+        }
+        await OnObjectDrawn.InvokeAsync(new ObjectDrawnArgs(notification.Object, _draftsDiscarded.Token));
+        // When a button click lets the handler finish, as a dialog's does, the handler completes before the render
+        // that sends its list. Yielding lets that render start, and waiting for what it sends means the kept object
+        // has reached the browser before this answer does. If sending failed, the render reports that itself.
+        await Task.Yield();
+        await _sendingChanges.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    }
+
     internal async Task HandleDocumentLoadedAsync(DocumentLoadedNotification notification)
     {
         _awaitingDocument = false;
@@ -290,6 +334,7 @@ public partial class PdfViewer
     public async ValueTask DisposeAsync()
     {
         _disposed = true;
+        _draftsDiscarded.Cancel();
         _attachedController?.Detach(this);
         await ReleaseAsync(_bridge, _module);
         _notifications?.Dispose();

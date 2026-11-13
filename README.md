@@ -24,6 +24,11 @@ user draws, moves, resizes or deletes so you can apply those changes to your lis
 the next render. The controller drives the viewer from code, including from other components, and holds commands issued
 before the viewer is ready. Options can change at any time.
 
+To confirm a new object before keeping it, handle `OnObjectDrawn`. The drawing stays on the page as a draft while your
+handler runs, for example while it waits on a dialog, and the viewer stays usable. Add the object to your list to keep
+it, or call `CommitDraftAsync` if you don't bind `Objects`. If the handler finishes without doing either, the draft is
+discarded.
+
 `Pv` is a placeholder name, and the project will be renamed.
 
 ## Status

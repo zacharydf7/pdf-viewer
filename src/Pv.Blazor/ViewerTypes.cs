@@ -33,7 +33,8 @@ public sealed record ViewerDrawDefaults
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Label { get; init; }
 
-    /// <summary>The application's own category for the new object, which comes back on its change event.</summary>
+    /// <summary>The application's own category for the new object, which comes back on it in
+    /// <see cref="PdfViewer.OnObjectDrawn"/> and <see cref="PdfViewer.OnObjectsChanged"/>.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Kind { get; init; }
 
@@ -179,6 +180,9 @@ public sealed record PdfViewerOptions
     /// <summary>Rounds rectangles the user creates or changes to whole page units.</summary>
     public bool RoundCoordinates { get; init; }
 
+    /// <summary>Whether an object the user draws is selected once it's one of the viewer's objects.</summary>
+    public bool SelectOnCreate { get; init; } = true;
+
     /// <summary>Whether Ctrl+wheel and pinch gestures zoom.</summary>
     public bool WheelZoom { get; init; } = true;
 
@@ -241,6 +245,14 @@ public sealed record ObjectUpdate(ViewerObject Object, ViewerObject Previous, Ed
 /// </summary>
 public sealed record ObjectsChangedArgs(long Sequence, IReadOnlyList<ViewerObject> Added,
     IReadOnlyList<ObjectUpdate> Updated, IReadOnlyList<ViewerObject> Removed);
+
+/// <summary>
+/// The user finished drawing <paramref name="Object"/>, which has the draw tool's defaults. It's a draft, not yet one
+/// of the viewer's objects. <paramref name="CancellationToken"/> is canceled if the draft is discarded while your
+/// handler is still running, because its document closed or the viewer was disposed. Don't keep the object after
+/// that, or it's added to whatever document is open by then.
+/// </summary>
+public sealed record ObjectDrawnArgs(ViewerObject Object, CancellationToken CancellationToken);
 
 /// <summary>
 /// The selection changed. <paramref name="PrimaryId"/> is the object selected last, or null when nothing is selected,

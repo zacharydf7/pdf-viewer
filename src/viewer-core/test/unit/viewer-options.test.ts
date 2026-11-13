@@ -10,9 +10,9 @@ describe("merging", () => {
   });
 
   it("mergeOptions_ShouldChangeOnlyOptionsGiven_WhenGivenSome", () => {
-    const merged = mergeOptions(defaultOptions, { roundCoordinates: true, objectHitArea: "border" });
+    const given = { roundCoordinates: true, selectOnCreate: false, objectHitArea: "border" } as const;
 
-    expect(merged).toEqual({ ...defaultOptions, roundCoordinates: true, objectHitArea: "border" });
+    expect(mergeOptions(defaultOptions, given)).toEqual({ ...defaultOptions, ...given });
   });
 
   it("mergeOptions_ShouldKeepInitialZoom_WhenGivenZoomThatIsNotFinite", () => {
