@@ -132,6 +132,45 @@ for (const [rotation, cornerX, cornerY] of [[0, 0, 0], [90, 1, 0], [180, 1, 1], 
   });
 }
 
+for (const [coordinates, mode] of [["page", "Page"], ["display", "Display"]] as const) {
+  for (const rotation of [0, 90, 180, 270]) {
+    test(`clientToPage_ShouldReversePageToClient_WhenRotatedBy${rotation}In${mode}Coordinates`, async ({ page }) => {
+      const viewer = await openViewer(page, { initialZoom: 1.37, coordinates }, "crop-offset-rotate-90");
+      await viewer.setRotation(rotation);
+      const point = { x: 123.5, y: 45.25 };
+
+      const roundTrip = await viewer.host.evaluate((element: PdfViewerElement, value) =>
+        element.clientToPage(1, element.pageToClient(1, value)!), point);
+
+      expect(roundTrip!.x).toBeCloseTo(point.x, 6);
+      expect(roundTrip!.y).toBeCloseTo(point.y, 6);
+    });
+  }
+}
+
+test("clientToPage_ShouldGiveObjectCorner_WhenGivenWhereItIsShown", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1.37 });
+  await viewer.setRotation(90);
+  const rect = manifest.letter![0]!;
+  await viewer.addObject({ id: "a", page: 1, rect });
+  const box = (await viewer.object("a").boundingBox())!;
+
+  // At 90 degrees, the page rectangle's top-left corner is shown at the box's top-right corner.
+  const point = await viewer.host.evaluate((element: PdfViewerElement, value) =>
+    element.clientToPage(1, value), { x: box.x + box.width, y: box.y });
+
+  expect(point!.x).toBeCloseTo(rect.x, 0);
+  expect(point!.y).toBeCloseTo(rect.y, 0);
+});
+
+test("clientToPage_ShouldReturnUndefined_WhenPageIsNotDisplayed", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 });
+
+  const point = await viewer.host.evaluate((element: PdfViewerElement) => element.clientToPage(2, { x: 0, y: 0 }));
+
+  expect(point).toBeUndefined();
+});
+
 test("pageToClient_ShouldReturnUndefined_WhenPageIsNotDisplayed", async ({ page }) => {
   const viewer = await openViewer(page, { initialZoom: 1 });
 

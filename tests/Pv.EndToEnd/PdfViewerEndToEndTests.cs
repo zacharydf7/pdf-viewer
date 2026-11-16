@@ -1,5 +1,7 @@
 using System.Text;
 using Microsoft.Playwright;
+using Pv.Blazor;
+using Pv.Testing.Playwright;
 using static Microsoft.Playwright.Assertions;
 
 namespace Pv.EndToEnd;
@@ -8,9 +10,12 @@ namespace Pv.EndToEnd;
 public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetime
 {
     private static readonly string DocumentsDirectory = Path.Combine(AppContext.BaseDirectory, "documents");
+    /// <summary>A rectangle inside the page of every fixture these tests open.</summary>
+    private static readonly PageRect Drawn = new(120, 160, 180, 160);
     private readonly List<string> _consoleProblems = [];
     private IBrowserContext _context = default!;
-    private ViewerPage _viewer = default!;
+    private IPage _page = default!;
+    private PdfViewerLocator _viewer = default!;
 
     public async Task InitializeAsync()
     {
@@ -25,19 +30,19 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
             }
         };
         page.PageError += (_, error) => _consoleProblems.Add(error);
-        _viewer = new ViewerPage(page);
+        _page = page;
+        _viewer = new PdfViewerLocator(page);
     }
 
     public async Task DisposeAsync() => await _context.DisposeAsync();
 
     private async Task OpenAsync(string document = "documents/letter.pdf", int page = 1)
     {
-        await _viewer.Page.GotoAsync($"/?doc={document}&page={page}");
-        await Expect(_viewer.Host).ToHaveAttributeAsync("data-document-state", "ready");
-        await _viewer.WaitForPageAsync(page);
+        await _page.GotoAsync($"/?doc={document}&page={page}");
+        await _viewer.WaitForReadyAsync(page);
     }
 
-    private ILocator TestId(string id) => _viewer.Page.GetByTestId(id);
+    private ILocator TestId(string id) => _page.GetByTestId(id);
 
     /// <summary>
     /// The click reaches the viewer through .NET, so wait for its contract to confirm the switch before dragging.
@@ -45,13 +50,13 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     private async Task ActivateDrawToolAsync()
     {
         await TestId("tool-draw").ClickAsync();
-        await Expect(_viewer.Host).ToHaveAttributeAsync("data-tool", "draw-rect");
+        await _viewer.WaitForToolAsync(ViewerTool.DrawRectangle, "heading");
     }
 
     private async Task ActivateSelectToolAsync()
     {
         await TestId("tool-select").ClickAsync();
-        await Expect(_viewer.Host).ToHaveAttributeAsync("data-tool", "select");
+        await _viewer.WaitForToolAsync(ViewerTool.Select);
     }
 
     [Fact]
@@ -59,9 +64,9 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     {
         await OpenAsync();
 
-        await Expect(_viewer.PageElement().Locator("canvas")).ToBeVisibleAsync();
-        await Expect(_viewer.PageElement().Locator(".textLayer")).ToContainTextAsync("Page 1 sample text");
-        await Expect(_viewer.Page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 1 of 3");
+        await Expect(_viewer.Page(1).Locator("canvas")).ToBeVisibleAsync();
+        await Expect(_viewer.Page(1).Locator(".textLayer")).ToContainTextAsync("Page 1 sample text");
+        await Expect(_page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 1 of 3");
         Assert.Empty(_consoleProblems);
     }
 
@@ -70,8 +75,8 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     {
         await OpenAsync(page: 2);
 
-        await Expect(_viewer.PageElement(2).Locator(".textLayer")).ToContainTextAsync("Page 2 sample text");
-        await Expect(_viewer.Page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 2 of 3");
+        await Expect(_viewer.Page(2).Locator(".textLayer")).ToContainTextAsync("Page 2 sample text");
+        await Expect(_page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 2 of 3");
     }
 
     [Fact]
@@ -79,10 +84,10 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     {
         await OpenAsync();
 
-        await _viewer.Page.GetByRole(AriaRole.Button, new() { Name = "Next page" }).ClickAsync();
+        await _page.GetByRole(AriaRole.Button, new() { Name = "Next page" }).ClickAsync();
 
-        await _viewer.WaitForPageAsync(2);
-        await Expect(_viewer.Page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 2 of 3");
+        await _viewer.WaitForReadyAsync(2);
+        await Expect(_page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 2 of 3");
     }
 
     [Fact]
@@ -91,19 +96,14 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await OpenAsync();
         await ActivateDrawToolAsync();
 
-        await _viewer.DragOnPageAsync(0.2f, 0.2f, 0.5f, 0.4f);
+        await _viewer.DrawAsync(Drawn);
 
-        await Expect(_viewer.Objects).ToHaveCountAsync(1);
-        var id = (await _viewer.Objects.GetAttributeAsync("data-object-id"))!;
+        await Expect(_viewer.Objects()).ToHaveCountAsync(1);
+        var id = (await _viewer.Objects().GetAttributeAsync("data-object-id"))!;
         await Expect(TestId("last-change")).ToHaveTextAsync($"Added User {id}");
-        await Expect(_viewer.Page.Locator($"[data-listed-object=\"{id}\"]")).ToBeVisibleAsync();
+        await Expect(_page.Locator($"[data-listed-object=\"{id}\"]")).ToBeVisibleAsync();
 
-        // The default page is 612 units wide and 792 high, so these are the same fractions of the page.
-        var rect = await _viewer.PageRectAsync(id);
-        Assert.InRange(rect.X, 612 * 0.2 - 1, 612 * 0.2 + 1);
-        Assert.InRange(rect.Width, 612 * 0.3 - 1, 612 * 0.3 + 1);
-        Assert.InRange(rect.Y, 792 * 0.2 - 1, 792 * 0.2 + 1);
-        Assert.InRange(rect.Height, 792 * 0.2 - 1, 792 * 0.2 + 1);
+        RectAssert.Near(Drawn, await _viewer.PageRectAsync(id));
     }
 
     [Fact]
@@ -113,12 +113,10 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await TestId("add-object").ClickAsync();
         await Expect(TestId("last-change")).ToHaveTextAsync("Added Api code-1");
 
-        await _viewer.DragObjectAsync("code-1", 40, 20);
+        await _viewer.DragObjectByAsync("code-1", 40, 20);
 
         await Expect(TestId("last-change")).ToHaveTextAsync("Updated User code-1");
-        var rect = await _viewer.PageRectAsync("code-1");
-        Assert.True(rect.X > 50 && rect.Y > 50, $"Expected a move from 50,50, but it is at {rect.X},{rect.Y}.");
-        Assert.Equal((150, 80), (rect.Width, rect.Height));
+        RectAssert.Near(new PageRect(90, 70, 150, 80), await _viewer.PageRectAsync("code-1"));
     }
 
     [Fact]
@@ -128,13 +126,13 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await TestId("add-object").ClickAsync();
         await Expect(TestId("last-change")).ToHaveTextAsync("Added Api code-1");
 
-        await _viewer.Object("code-1").ClickAsync();
+        await _viewer.ClickObjectAsync("code-1");
         await Expect(TestId("selected-object")).ToHaveTextAsync("code-1");
         await Expect(TestId("selected-ids")).ToHaveTextAsync("code-1");
 
         // The page's top-right corner is empty and on screen. In this fit-width layout, the bottom of the page isn't.
-        var box = (await _viewer.PageElement().BoundingBoxAsync())!;
-        await _viewer.Page.Mouse.ClickAsync(box.X + box.Width - 20, box.Y + 20);
+        var box = (await _viewer.Page(1).BoundingBoxAsync())!;
+        await _page.Mouse.ClickAsync(box.X + box.Width - 20, box.Y + 20);
         await Expect(TestId("selected-object")).ToHaveTextAsync("none");
         await Expect(TestId("selected-ids")).ToHaveTextAsync("");
     }
@@ -157,7 +155,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
 
         await TestId("add-object").ClickAsync();
 
-        await Expect(_viewer.Page.GetByRole(AriaRole.Option, new() { Name = "Region code-1" })).ToBeVisibleAsync();
+        await Expect(_page.GetByRole(AriaRole.Option, new() { Name = "Region code-1" })).ToBeVisibleAsync();
     }
 
     [Fact]
@@ -166,7 +164,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         var path = Path.Combine(DocumentsDirectory, "range-large.pdf");
         var circuitBytes = 0L;
         var sawPdfHeader = false;
-        _viewer.Page.WebSocket += (_, socket) =>
+        _page.WebSocket += (_, socket) =>
         {
             void Inspect(IWebSocketFrame frame)
             {
@@ -178,11 +176,11 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
             socket.FrameReceived += (_, frame) => Inspect(frame);
         };
 
-        await _viewer.Page.GotoAsync("/");
+        await _page.GotoAsync("/");
         await TestId("file-input").SetInputFilesAsync(path);
 
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-page-count", "40");
-        await _viewer.WaitForPageAsync();
+        await _viewer.WaitForReadyAsync();
         Assert.False(sawPdfHeader);
         var limit = new FileInfo(path).Length / 4;
         Assert.True(Interlocked.Read(ref circuitBytes) < limit, $"Circuit carried {circuitBytes} bytes.");
@@ -193,7 +191,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     {
         var statuses = new List<int>();
         var transferred = 0L;
-        _viewer.Page.Response += (_, response) =>
+        _page.Response += (_, response) =>
         {
             if (response.Url.EndsWith("range-large.pdf", StringComparison.Ordinal))
             {
@@ -216,7 +214,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     [Fact]
     public async Task SecureDocument_ShouldReportNetworkError_WhenUserIsNotSignedIn()
     {
-        await _viewer.Page.GotoAsync("/?doc=secure-documents/letter.pdf");
+        await _page.GotoAsync("/?doc=secure-documents/letter.pdf");
 
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-document-state", "error");
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-error-code", "network");
@@ -226,7 +224,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     [Fact]
     public async Task SecureDocument_ShouldOpen_WhenUserHasAuthenticationCookie()
     {
-        await _viewer.Page.GotoAsync("/demo-sign-in");
+        await _page.GotoAsync("/demo-sign-in");
 
         await OpenAsync("secure-documents/letter.pdf");
 
@@ -240,16 +238,16 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await TestId("add-object").ClickAsync();
         await Expect(TestId("last-change")).ToHaveTextAsync("Added Api code-1");
 
-        await _viewer.Page.EvaluateAsync("() => Blazor.disconnect()");
+        await _page.EvaluateAsync("() => Blazor.disconnect()");
 
-        await _viewer.DragObjectAsync("code-1", 30, 0);
+        await _viewer.DragObjectByAsync("code-1", 30, 0);
         var rect = await _viewer.PageRectAsync("code-1");
         Assert.True(rect.X > 50, $"Expected the object to move from x 50, but it is at {rect.X}.");
 
         // .NET never heard about the drag, which shows the circuit really was gone while the viewer kept working.
         await TestId("add-object").ClickAsync();
         await Expect(TestId("last-change")).ToHaveTextAsync("Added Api code-1");
-        await Expect(_viewer.Objects).ToHaveCountAsync(1);
+        await Expect(_viewer.Objects()).ToHaveCountAsync(1);
     }
 
     /// <summary>
@@ -257,10 +255,10 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     /// </summary>
     private async Task<string> DrawWithConfirmDialogAsync()
     {
-        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&confirmDraw=true");
-        await _viewer.WaitForPageAsync();
+        await _page.GotoAsync("/?doc=documents/letter.pdf&confirmDraw=true");
+        await _viewer.WaitForReadyAsync();
         await ActivateDrawToolAsync();
-        await _viewer.DragOnPageAsync(0.2f, 0.2f, 0.5f, 0.4f);
+        await _viewer.DrawAsync(Drawn);
         await Expect(TestId("confirm-dialog")).ToBeVisibleAsync();
         return (await _viewer.Drafts.GetAttributeAsync("data-draft-id"))!;
     }
@@ -271,7 +269,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await DrawWithConfirmDialogAsync();
 
         await Expect(_viewer.Drafts).ToBeVisibleAsync();
-        await Expect(_viewer.Objects).ToHaveCountAsync(0);
+        await Expect(_viewer.Objects()).ToHaveCountAsync(0);
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-selected-object", "");
         await Expect(TestId("object-list").Locator("li")).ToHaveCountAsync(0);
         await Expect(TestId("last-change")).ToHaveTextAsync("");
@@ -286,10 +284,10 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await TestId("add-object").ClickAsync();
         await Expect(TestId("last-change")).ToHaveTextAsync("Added Api code-1");
         await ActivateSelectToolAsync();
-        await _viewer.DragObjectAsync("code-1", 40, 20);
+        await _viewer.DragObjectByAsync("code-1", 40, 20);
         await Expect(TestId("last-change")).ToHaveTextAsync("Updated User code-1");
-        await _viewer.Page.GetByRole(AriaRole.Button, new() { Name = "Next page" }).ClickAsync();
-        await _viewer.WaitForPageAsync(2);
+        await _page.GetByRole(AriaRole.Button, new() { Name = "Next page" }).ClickAsync();
+        await _viewer.WaitForReadyAsync(2);
         await Expect(TestId("confirm-dialog")).ToBeVisibleAsync();
     }
 
@@ -302,7 +300,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
 
         await Expect(TestId("confirm-dialog")).ToBeHiddenAsync();
         await Expect(_viewer.Drafts).ToHaveCountAsync(0);
-        await Expect(_viewer.Objects).ToHaveCountAsync(0);
+        await Expect(_viewer.Objects()).ToHaveCountAsync(0);
         await Expect(TestId("object-list").Locator("li")).ToHaveCountAsync(0);
     }
 
@@ -315,10 +313,10 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
 
         await Expect(TestId("confirm-dialog")).ToBeHiddenAsync();
         await Expect(_viewer.Object(id)).ToBeVisibleAsync();
-        await Expect(_viewer.Objects).ToHaveCountAsync(1);
+        await Expect(_viewer.Objects()).ToHaveCountAsync(1);
         await Expect(_viewer.Drafts).ToHaveCountAsync(0);
         await Expect(TestId("object-list").Locator("li")).ToHaveCountAsync(1);
-        await Expect(_viewer.Page.Locator($"[data-listed-object=\"{id}\"]")).ToBeVisibleAsync();
+        await Expect(_page.Locator($"[data-listed-object=\"{id}\"]")).ToBeVisibleAsync();
         await Expect(TestId("last-kind")).ToHaveTextAsync("heading");
     }
 
@@ -327,7 +325,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     {
         var first = await DrawWithConfirmDialogAsync();
 
-        await _viewer.DragOnPageAsync(0.6f, 0.5f, 0.8f, 0.7f);
+        await _viewer.DrawAsync(new PageRect(370, 400, 120, 150));
 
         // The sample's handler returns at once for the second drawing, so only that draft is discarded.
         await Expect(_viewer.Drafts).ToHaveCountAsync(1);
@@ -343,25 +341,25 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await TestId("file-input").SetInputFilesAsync(Path.Combine(DocumentsDirectory, "a4.pdf"));
 
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-page-count", "1");
-        await _viewer.WaitForPageAsync();
+        await _viewer.WaitForReadyAsync();
         await Expect(TestId("confirm-dialog")).ToBeHiddenAsync();
         await Expect(_viewer.Drafts).ToHaveCountAsync(0);
-        await Expect(_viewer.Objects).ToHaveCountAsync(0);
+        await Expect(_viewer.Objects()).ToHaveCountAsync(0);
         await Expect(TestId("object-list").Locator("li")).ToHaveCountAsync(0);
     }
 
     [Fact]
     public async Task DrawTool_ShouldDiscardDrawnObject_WhenCircuitIsLostAndHandlerCannotBeAsked()
     {
-        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&confirmDraw=true");
-        await _viewer.WaitForPageAsync();
+        await _page.GotoAsync("/?doc=documents/letter.pdf&confirmDraw=true");
+        await _viewer.WaitForReadyAsync();
         await ActivateDrawToolAsync();
-        await _viewer.Page.EvaluateAsync("() => Blazor.disconnect()");
+        await _page.EvaluateAsync("() => Blazor.disconnect()");
 
-        await _viewer.DragOnPageAsync(0.2f, 0.2f, 0.5f, 0.4f);
+        await _viewer.DrawAsync(Drawn);
 
         await Expect(_viewer.Drafts).ToHaveCountAsync(0);
-        await Expect(_viewer.Objects).ToHaveCountAsync(0);
+        await Expect(_viewer.Objects()).ToHaveCountAsync(0);
     }
 
     [Fact]
@@ -373,32 +371,38 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
 
         await TestId("toggle-read-only").ClickAsync();
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-readonly", "true");
-        await _viewer.DragObjectAsync("code-1", 40, 20);
+        // The kit's drag waits until the object catches the pointer, which it doesn't while read-only, so this drags
+        // the mouse across it directly.
+        var box = (await _viewer.Object("code-1").BoundingBoxAsync())!;
+        await _page.Mouse.MoveAsync(box.X + box.Width / 2, box.Y + box.Height / 2);
+        await _page.Mouse.DownAsync();
+        await _page.Mouse.MoveAsync(box.X + box.Width / 2 + 40, box.Y + box.Height / 2 + 20, new() { Steps = 5 });
+        await _page.Mouse.UpAsync();
         var whileReadOnly = await _viewer.PageRectAsync("code-1");
         await TestId("toggle-read-only").ClickAsync();
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-readonly", "false");
-        await _viewer.DragObjectAsync("code-1", 40, 20);
+        await _viewer.DragObjectByAsync("code-1", 40, 20);
 
-        Assert.Equal((50, 50, 150, 80), whileReadOnly);
+        Assert.Equal(new PageRect(50, 50, 150, 80), whileReadOnly);
         await Expect(TestId("last-change")).ToHaveTextAsync("Updated User code-1");
-        Assert.True((await _viewer.PageRectAsync("code-1")).X > 50);
+        RectAssert.Near(new PageRect(90, 70, 150, 80), await _viewer.PageRectAsync("code-1"));
     }
 
     [Fact]
     public async Task DeleteKey_ShouldRemoveObjectOnlyOnceApplicationRemovesIt_WhenDeleteRequestsAreHandled()
     {
-        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&confirmDelete=true");
-        await _viewer.WaitForPageAsync();
+        await _page.GotoAsync("/?doc=documents/letter.pdf&confirmDelete=true");
+        await _viewer.WaitForReadyAsync();
         await TestId("add-object").ClickAsync();
         await _viewer.Object("code-1").ClickAsync();
 
-        await _viewer.Page.Keyboard.PressAsync("Delete");
+        await _page.Keyboard.PressAsync("Delete");
         await Expect(TestId("confirm-delete")).ToHaveTextAsync("Delete code-1");
-        var afterKey = await _viewer.Objects.CountAsync();
+        var afterKey = await _viewer.Objects().CountAsync();
         await TestId("confirm-delete").ClickAsync();
 
         Assert.Equal(1, afterKey);
-        await Expect(_viewer.Objects).ToHaveCountAsync(0);
+        await Expect(_viewer.Objects()).ToHaveCountAsync(0);
     }
 
     [Fact]
@@ -421,46 +425,46 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await OpenAsync();
         await ActivateDrawToolAsync();
 
-        await _viewer.DragOnPageAsync(0.2f, 0.2f, 0.5f, 0.4f);
+        await _viewer.DrawAsync(Drawn);
 
         await Expect(TestId("last-kind")).ToHaveTextAsync("heading");
-        await Expect(_viewer.Page.Locator("[data-object-kind=\"heading\"]")).ToHaveCountAsync(1);
-        await Expect(_viewer.Page.GetByRole(AriaRole.Option, new() { Name = "Heading region" })).ToBeVisibleAsync();
+        await Expect(_page.Locator("[data-object-kind=\"heading\"]")).ToHaveCountAsync(1);
+        await Expect(_page.GetByRole(AriaRole.Option, new() { Name = "Heading region" })).ToBeVisibleAsync();
     }
 
     [Fact]
     public async Task HeadlessOptions_ShouldApply_WhenSetOnComponent()
     {
-        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&headless=true");
-        await _viewer.WaitForPageAsync();
+        await _page.GotoAsync("/?doc=documents/letter.pdf&headless=true");
+        await _viewer.WaitForReadyAsync();
 
-        await Expect(_viewer.Page.GetByRole(AriaRole.Toolbar)).ToHaveCountAsync(0);
+        await Expect(_page.GetByRole(AriaRole.Toolbar)).ToHaveCountAsync(0);
         var host = (await _viewer.Host.BoundingBoxAsync())!;
-        var page = (await _viewer.PageElement().BoundingBoxAsync())!;
+        var page = (await _viewer.Page(1).BoundingBoxAsync())!;
         Assert.True(page.Height <= host.Height, "Expected the whole page to fit.");
 
         await ActivateDrawToolAsync();
-        await _viewer.DragOnPageAsync(0.21f, 0.23f, 0.47f, 0.41f);
-        await Expect(_viewer.Objects).ToHaveCountAsync(1);
-        var id = (await _viewer.Objects.GetAttributeAsync("data-object-id"))!;
+        await _viewer.DrawAsync(new PageRect(128.3, 182.7, 159.4, 142.6));
+        await Expect(_viewer.Objects()).ToHaveCountAsync(1);
+        var id = (await _viewer.Objects().GetAttributeAsync("data-object-id"))!;
         var rect = await _viewer.PageRectAsync(id);
         Assert.All([rect.X, rect.Y, rect.Width, rect.Height], value => Assert.Equal(Math.Round(value), value));
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-object-hit-area", "border");
 
         await ActivateSelectToolAsync();
         await _viewer.Object(id).FocusAsync();
-        await _viewer.Page.Keyboard.PressAsync("Delete");
-        await Expect(_viewer.Objects).ToHaveCountAsync(1);
+        await _page.Keyboard.PressAsync("Delete");
+        await Expect(_viewer.Objects()).ToHaveCountAsync(1);
     }
 
     [Fact]
     public async Task HeadlessOptions_ShouldMeasureAsDisplayed_WhenPageHasItsOwnRotation()
     {
-        await _viewer.Page.GotoAsync("/?doc=documents/rotate-90.pdf&headless=true");
-        await _viewer.WaitForPageAsync();
+        await _page.GotoAsync("/?doc=documents/rotate-90.pdf&headless=true");
+        await _viewer.WaitForReadyAsync();
 
-        await Expect(_viewer.PageElement()).ToHaveAttributeAsync("data-page-width", "792");
-        await Expect(_viewer.PageElement()).ToHaveAttributeAsync("data-page-height", "612");
+        await Expect(_viewer.Page(1)).ToHaveAttributeAsync("data-page-width", "792");
+        await Expect(_viewer.Page(1)).ToHaveAttributeAsync("data-page-height", "612");
     }
 
     [Fact]
@@ -470,17 +474,17 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
 
         await TestId("rotate-page").ClickAsync();
 
-        await Expect(_viewer.PageElement()).ToHaveAttributeAsync("data-rotation", "180");
-        await _viewer.WaitForPageAsync();
+        await Expect(_viewer.Page(1)).ToHaveAttributeAsync("data-rotation", "180");
+        await _viewer.WaitForReadyAsync();
     }
 
     [Fact]
     public async Task CopyDocumentTo_ShouldDeliverAllBytes_WhenDocumentExceedsHubMessageLimit()
     {
         var path = Path.Combine(DocumentsDirectory, "range-large.pdf");
-        await _viewer.Page.GotoAsync("/");
+        await _page.GotoAsync("/");
         await TestId("file-input").SetInputFilesAsync(path);
-        await _viewer.WaitForPageAsync();
+        await _viewer.WaitForReadyAsync();
 
         await TestId("read-bytes").ClickAsync();
 
@@ -492,36 +496,37 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     public async Task FileInput_ShouldReopenDocument_WhenSameFileIsChosenAgain()
     {
         var path = Path.Combine(DocumentsDirectory, "letter.pdf");
-        await _viewer.Page.GotoAsync("/");
+        await _page.GotoAsync("/");
         await TestId("file-input").SetInputFilesAsync(path);
         await Expect(TestId("load-count")).ToHaveTextAsync("1");
 
         await TestId("file-input").SetInputFilesAsync(path);
 
         await Expect(TestId("load-count")).ToHaveTextAsync("2");
-        await _viewer.WaitForPageAsync();
+        await _viewer.WaitForReadyAsync();
     }
 
     [Fact]
     public async Task FileInput_ShouldShowFirstPage_WhenShorterFileReplacesDocumentOnHighPage()
     {
-        await _viewer.Page.GotoAsync("/");
+        await _page.GotoAsync("/");
         await TestId("file-input").SetInputFilesAsync(Path.Combine(DocumentsDirectory, "letter.pdf"));
-        await _viewer.WaitForPageAsync();
-        await _viewer.Page.GetByRole(AriaRole.Button, new() { Name = "Next page" }).ClickAsync();
-        await _viewer.Page.GetByRole(AriaRole.Button, new() { Name = "Next page" }).ClickAsync();
-        await _viewer.WaitForPageAsync(3);
+        await _viewer.WaitForReadyAsync();
+        await _page.GetByRole(AriaRole.Button, new() { Name = "Next page" }).ClickAsync();
+        await _page.GetByRole(AriaRole.Button, new() { Name = "Next page" }).ClickAsync();
+        await _viewer.WaitForReadyAsync(3);
 
         await TestId("file-input").SetInputFilesAsync(Path.Combine(DocumentsDirectory, "a4.pdf"));
 
-        await _viewer.WaitForPageAsync();
-        await Expect(_viewer.Page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 1 of 1");
+        // Until the new file starts loading, the old document still counts as ready on page 3, so name page 1.
+        await _viewer.WaitForReadyAsync(1);
+        await Expect(_page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 1 of 1");
     }
 
     [Fact]
     public async Task FileInput_ShouldReportInvalidPdf_WhenFileIsCorrupt()
     {
-        await _viewer.Page.GotoAsync("/");
+        await _page.GotoAsync("/");
 
         await TestId("file-input").SetInputFilesAsync(new FilePayload
         {
@@ -543,17 +548,17 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await Expect(TestId("shown-page")).ToHaveTextAsync("3");
 
         // Read once, without retrying: the sample shows the page only after the await, so it has rendered by then.
-        Assert.Equal("rendered", await _viewer.PageElement(3).GetAttributeAsync("data-page-state"));
+        Assert.Equal("rendered", await _viewer.Page(3).GetAttributeAsync("data-page-state"));
     }
 
     [Fact]
     public async Task Controller_ShouldRunCommandsOnOpeningDocument_WhenIssuedBeforeViewerAttached()
     {
-        await _viewer.Page.GotoAsync("/?doc=documents/letter.pdf&earlyCommands=true");
+        await _page.GotoAsync("/?doc=documents/letter.pdf&earlyCommands=true");
 
-        await Expect(_viewer.Host).ToHaveAttributeAsync("data-tool", "draw-rect");
-        await _viewer.WaitForPageAsync(3);
-        await Expect(_viewer.Page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 3 of 3");
+        await _viewer.WaitForToolAsync(ViewerTool.DrawRectangle, "heading");
+        await _viewer.WaitForReadyAsync(3);
+        await Expect(_page.GetByRole(AriaRole.Status)).ToHaveTextAsync("Page 3 of 3");
     }
 
     [Fact]
@@ -565,7 +570,7 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
         await TestId("border-hit-area").ClickAsync();
 
         await Expect(_viewer.Host).ToHaveAttributeAsync("data-object-hit-area", "border");
-        await Expect(_viewer.PageElement()).ToHaveAttributeAsync("data-page-state", "rendered");
+        await Expect(_viewer.Page(1)).ToHaveAttributeAsync("data-page-state", "rendered");
     }
 
     [Fact]
@@ -573,10 +578,9 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     {
         await OpenAsync();
 
-        await _viewer.Page.ReloadAsync();
+        await _page.ReloadAsync();
 
-        await Expect(_viewer.Host).ToHaveAttributeAsync("data-document-state", "ready");
-        await _viewer.WaitForPageAsync();
+        await _viewer.WaitForReadyAsync();
         Assert.Empty(_consoleProblems);
     }
 }

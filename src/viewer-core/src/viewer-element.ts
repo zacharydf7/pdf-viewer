@@ -3,8 +3,8 @@ import type { DocumentSource, EngineDocument, EnginePage } from "./engine.js";
 import { DocumentError, openDocument } from "./engine.js";
 import type { PageInfo, PvEventMap } from "./events.js";
 import { errorMessage } from "./events.js";
-import type { PageGeometry, Point, Rotation } from "./geometry.js";
-import { displaySize, fitScale, moveRect, normalizeRotation, pageToDisplay } from "./geometry.js";
+import type { PageGeometry, Point, Rotation, Size } from "./geometry.js";
+import { displaySize, displayToPage, fitScale, moveRect, normalizeRotation, pageToDisplay } from "./geometry.js";
 import { InteractionController } from "./interaction-controller.js";
 import type { NewPageObject, ObjectBatch, ObjectPatch, ObjectsChanged, PageObject, SelectionChanged }
   from "./object-store.js";
@@ -288,6 +288,11 @@ export class PdfViewerElement extends HTMLElement {
     this.#tool = tool;
     this.#drawDefaults = defaults;
     this.dataset.tool = tool;
+    if (tool === "draw-rect" && defaults.kind !== undefined) {
+      this.dataset.toolKind = defaults.kind;
+    } else {
+      delete this.dataset.toolKind;
+    }
     this.#applyTool();
   }
 
@@ -400,18 +405,42 @@ export class PdfViewerElement extends HTMLElement {
    * undefined unless that page is the one displayed.
    */
   pageToClient(pageNumber: number, point: Point): Point | undefined {
+    const shown = this.#shownPage(pageNumber);
+    if (shown === undefined) {
+      return undefined;
+    }
+    const { geometry, size, bounds } = shown;
+    const displayed = pageToDisplay(geometry, point);
+    return {
+      x: bounds.left + (displayed.x / size.width) * bounds.width,
+      y: bounds.top + (displayed.y / size.height) * bounds.height,
+    };
+  }
+
+  /**
+   * Where a point in the browser viewport is on the displayed page, in the coordinates objects use. This reverses
+   * `pageToClient`. Returns undefined unless that page is the one displayed.
+   */
+  clientToPage(pageNumber: number, point: Point): Point | undefined {
+    const shown = this.#shownPage(pageNumber);
+    if (shown === undefined) {
+      return undefined;
+    }
+    const { geometry, size, bounds } = shown;
+    return displayToPage(geometry, {
+      x: ((point.x - bounds.left) / bounds.width) * size.width,
+      y: ((point.y - bounds.top) / bounds.height) * size.height,
+    });
+  }
+
+  /** The displayed page's geometry and where it is on screen, or undefined unless the page is the one displayed. */
+  #shownPage(pageNumber: number): { geometry: PageGeometry; size: Size; bounds: DOMRect } | undefined {
     const view = this.#view;
     if (view === undefined || this.#session === undefined || pageNumber !== view.pageNumber) {
       return undefined;
     }
     const geometry = this.#viewGeometry(this.#session, view);
-    const size = displaySize(geometry);
-    const displayed = pageToDisplay(geometry, point);
-    const bounds = view.element.getBoundingClientRect();
-    return {
-      x: bounds.left + (displayed.x / size.width) * bounds.width,
-      y: bounds.top + (displayed.y / size.height) * bounds.height,
-    };
+    return { geometry, size: displaySize(geometry), bounds: view.element.getBoundingClientRect() };
   }
 
   async #showPage(session: DocumentSession, pageNumber: number, previousPage = this.#pageNumber): Promise<void> {

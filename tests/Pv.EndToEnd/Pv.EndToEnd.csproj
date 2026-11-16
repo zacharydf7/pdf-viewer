@@ -8,6 +8,7 @@
     <Using Include="Xunit" />
     <!-- Built so the tests can run it as a real server, but not referenced as a library. -->
     <ProjectReference Include="..\..\samples\Pv.Sample\Pv.Sample.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\Pv.Testing.Playwright\Pv.Testing.Playwright.csproj" />
     <None Include="..\fixtures\*.pdf" Link="documents\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

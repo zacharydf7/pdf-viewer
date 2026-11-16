@@ -15,6 +15,7 @@ Everything sits inside `<pdf-viewer>`, in the light DOM, so ordinary selectors r
 | `data-current-page` | The displayed page, starting at 1 |
 | `data-zoom` | The zoom being displayed or rendered, with 1 meaning 100%. Absent until a page has been sized. The element's `zoom` property gives the same number |
 | `data-tool` | `select`, `draw-rect`, `none` |
+| `data-tool-kind` | The kind the draw tool gives its objects. Present only while the draw tool is chosen with a kind |
 | `data-readonly` | `true` while the user is kept from selecting, drawing and editing objects, otherwise `false`. `data-tool` keeps showing the chosen tool meanwhile |
 | `data-object-hit-area` | `fill`, or `border` when only an unselected object's edges catch the pointer |
 | `data-selected-object` | ID of the selected object, or empty. With several selected, the one selected last |
@@ -121,11 +122,12 @@ PDF user space, where y grows upward, use `pdfX = cropLeft + x` and `pdfY = crop
 With the `display` coordinates option, rectangles are measured from the top-left corner of the page as presented after
 rotation, and are scaled by its UserUnit. A rectangle keeps its numbers when the page rotates, so it moves relative to the content.
 
-Two methods on the element give geometry without reading attributes. `getPageInfo(page)` resolves to
+Three methods on the element give geometry without reading attributes. `getPageInfo(page)` resolves to
 `{ page, label, width, height, rotation }` for any page, displayed or not. The size is in the coordinates objects use,
 and `label` is the page's label, or `null` if the document defines none. `pageToClient(page, { x, y })` returns where a
 point on the displayed page is in the browser viewport, as `clientX` and `clientY` would report it, or `undefined` for a
-page that isn't displayed. Use it to aim the real mouse at page coordinates.
+page that isn't displayed. Use it to aim the real mouse at page coordinates. `clientToPage(page, { x, y })` does the
+reverse: it turns a viewport position, such as a corner of an element's bounding box, into the coordinates objects use.
 
 ## Events
 
@@ -150,13 +152,13 @@ so it tells which of two events is newer.
 - **Don't retry.** This project's own suites run without test-level retries, and yours can too if they wait on the
   attributes above.
 - **Wait for the tool.** On Blazor Server, a button that switches tools goes through the circuit, so a drag that starts at
-  once can begin with the old tool. Wait for `data-tool` to show the new value first. The same goes for `ReadOnly` and
-  `data-readonly`.
+  once can begin with the old tool. Wait for `data-tool` to show the new value first, and `data-tool-kind` when draw
+  tools differ only in kind. The same goes for `ReadOnly` and `data-readonly`.
 - **Use the real mouse.** Don't use Playwright's `force: true`. A click that can't reach an object is a real defect.
 - **Press an edge when objects use the border hit area.** The center of an unselected object doesn't catch the pointer, so
   Playwright's `click()` on its locator reports it as covered. Press near its edge, or select it first.
 - **Read positions from the page.** Don't hard-code pixel coordinates, because they break at the first change of page size,
-  zoom or viewport. See `tests/Pv.EndToEnd/ViewerPage.cs` for an example.
+  zoom or viewport. For .NET, `Pv.Testing.Playwright` does this for you; see the [testing guide](testing.md).
 - **Assert page units for geometry.** `data-page-rect` is exact at any zoom. On-screen measurements need a tolerance of
   about 1 CSS pixel.
 - **Wait for the draft when a handler decides on drawn objects.** With `OnObjectDrawn` handled, a finished draw leaves

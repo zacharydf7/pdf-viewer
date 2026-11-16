@@ -342,6 +342,27 @@ test.describe("kinds and styles", () => {
     expect(width).toBeGreaterThan(4);
     expect(width).toBeLessThanOrEqual(5);
   });
+
+  test("setTool_ShouldShowDrawToolKind_WhenDrawToolHasKind", async ({ page }) => {
+    const viewer = await openViewer(page, {});
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.setTool("draw-rect", { kind: "heading" }));
+
+    await expect(viewer.host).toHaveAttribute("data-tool-kind", "heading");
+  });
+
+  test("setTool_ShouldRemoveToolKind_WhenToolChangesToOneWithoutKind", async ({ page }) => {
+    const viewer = await openViewer(page, {});
+    await viewer.host.evaluate((element: PdfViewerElement) => element.setTool("draw-rect", { kind: "heading" }));
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.setTool("draw-rect"));
+    const afterKindless = await viewer.host.getAttribute("data-tool-kind");
+    await viewer.host.evaluate((element: PdfViewerElement) => element.setTool("draw-rect", { kind: "figure" }));
+    await viewer.host.evaluate((element: PdfViewerElement) => element.setTool("select", { kind: "figure" }));
+
+    expect(afterKindless).toBeNull();
+    await expect(viewer.host).not.toHaveAttribute("data-tool-kind");
+  });
 });
 
 test.describe("document bytes", () => {
