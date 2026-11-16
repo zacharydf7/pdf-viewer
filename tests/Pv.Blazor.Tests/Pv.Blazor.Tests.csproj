@@ -7,6 +7,9 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <ProjectReference Include="..\..\src\Pv.Blazor\Pv.Blazor.csproj" />
+    <ProjectReference Include="..\..\src\Pv.Testing.Bunit\Pv.Testing.Bunit.csproj" />
+    <ProjectReference Include="..\..\samples\Pv.Sample\Pv.Sample.csproj" />
+    <Compile Include="..\Contract\*.cs" Link="Contract\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
 namespace Pv.Blazor;
@@ -10,16 +11,15 @@ namespace Pv.Blazor;
 /// </summary>
 public partial class PdfViewer
 {
-    private const string ModulePath = "./_content/Pv.Blazor/pv.js";
     private const double ZoomStep = 1.25;
     private static readonly PdfViewerOptions DefaultOptions = new();
 
     /// <summary>The controller used when the application doesn't pass one, which only the toolbar reaches.</summary>
     private readonly PdfViewerController _ownController = new();
+    /// <summary>Canceled when the viewer is disposed, which stops an attach still in progress.</summary>
+    private readonly CancellationTokenSource _disposing = new();
     private ElementReference _host;
-    private IJSObjectReference? _module;
-    private IJSObjectReference? _bridge;
-    private DotNetObjectReference<ViewerNotifications>? _notifications;
+    private IViewerBackend? _backend;
     private PdfViewerController? _attachedController;
     private PdfSource? _openedSource;
     private PdfViewerOptions? _sentOptions;
@@ -65,6 +65,8 @@ public partial class PdfViewer
     private bool _disposed;
 
     [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    [Inject] private IServiceProvider Services { get; set; } = default!;
 
     /// <summary>The document to display. Setting an equivalent source doesn't reopen it.</summary>
     [Parameter] public PdfSource? Source { get; set; }
@@ -179,14 +181,14 @@ public partial class PdfViewer
     protected override async Task OnParametersSetAsync()
     {
         // Until the first render has attached, there's nothing to update, and attaching sends the latest parameters.
-        if (_bridge is null)
+        if (_backend is null)
         {
             return;
         }
         var previous = _attachedController;
         if (previous is null || previous == ActiveController)
         {
-            await SendChangesAsync(_bridge);
+            await SendChangesAsync(_backend);
             return;
         }
         // The new controller takes the state at once, because detaching resets the old one's. As on the first render,
@@ -194,7 +196,7 @@ public partial class PdfViewer
         var next = _attachedController = ActiveController;
         next.SetState(previous.PageCount, previous.CurrentPage);
         previous.Detach(this);
-        await SendChangesAsync(_bridge);
+        await SendChangesAsync(_backend);
         // If the viewer was disposed or swapped controllers again during the wait, this controller never takes over
         // and gives up the state it was handed.
         if (_disposed || _attachedController != next)
@@ -202,7 +204,7 @@ public partial class PdfViewer
             next.SetState(0, 0);
             return;
         }
-        next.Attach(this, _bridge);
+        next.Attach(this, _backend);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -211,54 +213,50 @@ public partial class PdfViewer
         {
             return;
         }
-        _notifications = DotNetObjectReference.Create(new ViewerNotifications(this));
-        _module = await JS.InvokeAsync<IJSObjectReference>("import", ModulePath);
-        // Disposing during an await here finds nothing to release yet, so whatever arrived afterward is released here.
-        if (_disposed)
-        {
-            await ReleaseAsync(null, _module);
-            return;
-        }
+        var factory = Services.GetService<IViewerBackendFactory>() ?? new JsViewerBackendFactory(JS);
         _sentOptions = CurrentOptions;
         _sentSubscriptions = CurrentSubscriptions;
-        var bridge = await _module.InvokeAsync<IJSObjectReference>("attach", _host, _notifications, _sentOptions,
-            _sentSubscriptions);
-        if (_disposed)
+        // Attaching releases what it set up itself if the viewer is disposed meanwhile, and then returns null.
+        var backend = await factory.AttachAsync(_host, new ViewerNotifications(this), _sentOptions,
+            _sentSubscriptions, _disposing.Token);
+        if (backend is null)
         {
-            await ReleaseAsync(bridge, null);
             return;
         }
-        _bridge = bridge;
+        _backend = backend;
         // Parameters can change while attaching, so anything that changed since goes now. The source opens before the
         // controller's waiting commands run, so they apply to the document being opened.
-        await SendChangesAsync(bridge);
+        await SendChangesAsync(backend);
         if (!_disposed)
         {
             _attachedController = ActiveController;
-            _attachedController.Attach(this, bridge);
+            _attachedController.Attach(this, backend);
         }
     }
 
-    private Task SendChangesAsync(IJSObjectReference bridge) => _sendingChanges = SendChangesCoreAsync(bridge);
+    /// <summary>Runs work on this viewer's renderer, as a notification from the browser does.</summary>
+    internal Task DispatchAsync(Func<Task> work) => InvokeAsync(work);
+
+    private Task SendChangesAsync(IViewerBackend backend) => _sendingChanges = SendChangesCoreAsync(backend);
 
     /// <summary>Sends whatever changed since it was last sent, stopping if the viewer is disposed meanwhile.</summary>
-    private async Task SendChangesCoreAsync(IJSObjectReference bridge)
+    private async Task SendChangesCoreAsync(IViewerBackend backend)
     {
         NoteSelectionRequest();
         if (!_disposed && CurrentOptions != _sentOptions)
         {
             _sentOptions = CurrentOptions;
-            await bridge.InvokeVoidAsync("configure", _sentOptions);
+            await backend.ConfigureAsync(_sentOptions);
         }
         if (!_disposed && CurrentSubscriptions != _sentSubscriptions)
         {
             _sentSubscriptions = CurrentSubscriptions;
-            await bridge.InvokeVoidAsync("subscribe", _sentSubscriptions);
+            await backend.SubscribeAsync(_sentSubscriptions);
         }
         if (!_disposed && ReadOnly != _sentReadOnly)
         {
             _sentReadOnly = ReadOnly;
-            await bridge.InvokeVoidAsync("setReadOnly", _sentReadOnly);
+            await backend.SetReadOnlyAsync(_sentReadOnly);
         }
         if (!_disposed && (Source is null ? _openedSource is not null : !Source.Equals(_openedSource)))
         {
@@ -276,22 +274,22 @@ public partial class PdfViewer
             _draftsDiscarded = new();
             if (Source is null)
             {
-                await bridge.InvokeVoidAsync("close");
+                await backend.CloseAsync();
             }
             else
             {
-                await bridge.InvokeVoidAsync("open", Source.ToInterop(), InitialPage);
+                await backend.OpenAsync(Source, InitialPage);
             }
         }
         if (!_disposed && Objects is not null && TakeObjectChanges(Objects) is { } batch)
         {
-            await bridge.InvokeVoidAsync("applyObjects", batch);
+            await backend.ApplyObjectsAsync(batch);
         }
         if (!_disposed && _selectionWaiting)
         {
             _selectionWaiting = false;
             var id = _knownSelectedId = _selectionToSend;
-            var present = await bridge.InvokeAsync<bool>("selectObjectIfPresent", id);
+            var present = await backend.SelectObjectIfPresentAsync(id);
             // Nothing got selected, and the browser reports that only if something was selected before, so it's
             // raised here unless the browser has reported a newer selection meanwhile.
             if (!present && !_disposed && _knownSelectedId == id)
@@ -437,37 +435,16 @@ public partial class PdfViewer
         StateHasChanged();
     }
 
-    /// <summary>
-    /// The custom element destroys the document itself when it leaves the page, which also works if the circuit is
-    /// already gone. This only disconnects the .NET side.
-    /// </summary>
     public async ValueTask DisposeAsync()
     {
         _disposed = true;
+        _disposing.Cancel();
         _draftsDiscarded.Cancel();
         _attachedController?.Detach(this);
-        await ReleaseAsync(_bridge, _module);
-        _notifications?.Dispose();
+        if (_backend is not null)
+        {
+            await _backend.DisposeAsync();
+        }
         GC.SuppressFinalize(this);
-    }
-
-    private static async Task ReleaseAsync(IJSObjectReference? bridge, IJSObjectReference? module)
-    {
-        try
-        {
-            if (bridge is not null)
-            {
-                await bridge.InvokeVoidAsync("dispose");
-                await bridge.DisposeAsync();
-            }
-            if (module is not null)
-            {
-                await module.DisposeAsync();
-            }
-        }
-        catch (JSDisconnectedException)
-        {
-            // The circuit is gone, and the browser side cleans up after itself.
-        }
     }
 }

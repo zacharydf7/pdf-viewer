@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Pv.Blazor/Pv.Blazor.csproj" />
+    <Project Path="src/Pv.Testing.Bunit/Pv.Testing.Bunit.csproj" />
     <Project Path="src/Pv.Testing.Playwright/Pv.Testing.Playwright.csproj" />
   </Folder>
   <Folder Name="/samples/">

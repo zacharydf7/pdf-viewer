@@ -58,6 +58,7 @@ Early. The foundation works, but this is not yet a complete viewer.
 src/viewer-core            TypeScript core: the <pdf-viewer> custom element. Owns rendering, scrolling, zoom and objects.
 src/Pv.Blazor              Razor component over the core. Renders one empty host element, then sends commands and receives events.
 src/Pv.Testing.Playwright  Playwright helpers for testing an application that uses the viewer. See docs/testing.md.
+src/Pv.Testing.Bunit       A fake viewer for bUnit tests of an application's components. See docs/testing.md.
 samples/Pv.Sample          Blazor Server app used for manual testing and by the end-to-end tests.
 tests/fixtures             Generated PDFs with ink at known positions, for checking coordinates against real rendering.
 ```

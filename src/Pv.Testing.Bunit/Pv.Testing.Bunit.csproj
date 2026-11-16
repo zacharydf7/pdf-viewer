@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pv.Blazor\Pv.Blazor.csproj" />
+  </ItemGroup>
+
+</Project>

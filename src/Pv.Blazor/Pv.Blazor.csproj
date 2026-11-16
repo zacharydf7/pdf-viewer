@@ -8,6 +8,7 @@
     <SupportedPlatform Include="browser" />
     <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.0" />
     <InternalsVisibleTo Include="Pv.Blazor.Tests" />
+    <InternalsVisibleTo Include="Pv.Testing.Bunit" />
     <ViewerCoreInput Include="$(ViewerCoreDirectory)src\**\*;$(ViewerCoreDirectory)scripts\**\*;$(ViewerCoreDirectory)package-lock.json" />
   </ItemGroup>
 

@@ -28,6 +28,12 @@ internal sealed class ViewerNotifications(PdfViewer viewer)
 
     [JSInvokable]
     public Task NotifyDeleteRequested(DeleteRequestedArgs args) => viewer.HandleDeleteRequestedAsync(args);
+
+    /// <summary>
+    /// Runs work on the viewer's renderer, where notifications from the browser arrive. A backend in .NET, such as a
+    /// test's fake, sends its notifications through this instead of interop.
+    /// </summary>
+    internal Task DispatchAsync(Func<ViewerNotifications, Task> work) => viewer.DispatchAsync(() => work(this));
 }
 
 /// <summary>

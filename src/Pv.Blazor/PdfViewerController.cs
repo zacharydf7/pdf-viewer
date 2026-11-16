@@ -1,6 +1,3 @@
-using System.Text.Json;
-using Microsoft.JSInterop;
-
 namespace Pv.Blazor;
 
 /// <summary>
@@ -11,10 +8,9 @@ namespace Pv.Blazor;
 public sealed class PdfViewerController
 {
     private const long DefaultMaximumDocumentSize = 1024L * 1024 * 1024;
-    private const long MaximumSelectionSize = 64L * 1024 * 1024;
 
-    private readonly List<Func<IJSObjectReference, Task>> _waiting = [];
-    private IJSObjectReference? _bridge;
+    private readonly List<Func<IViewerBackend, Task>> _waiting = [];
+    private IViewerBackend? _backend;
     private object? _viewer;
 
     /// <summary>Whether a document has opened and not closed since.</summary>
@@ -37,17 +33,17 @@ public sealed class PdfViewerController
     /// <see cref="PdfViewer.OnError"/>. Canceling stops the wait, not the page turn.
     /// </summary>
     public Task GoToPageAsync(int page, CancellationToken cancellationToken = default) =>
-        RunAsync(bridge => bridge.InvokeVoidAsync("goToPage", cancellationToken, page).AsTask(), cancellationToken);
+        RunAsync(backend => backend.GoToPageAsync(page, cancellationToken), cancellationToken);
 
-    public Task SetZoomAsync(double scale) => SendAsync("setZoom", scale);
+    public Task SetZoomAsync(double scale) => SendAsync(backend => backend.SetZoomAsync(scale));
 
-    public Task SetZoomAsync(ViewerZoomMode mode) => SendAsync("setZoom", mode);
+    public Task SetZoomAsync(ViewerZoomMode mode) => SendAsync(backend => backend.SetZoomAsync(mode));
 
     /// <summary>Sets the viewing rotation, which is added to any rotation the page already has.</summary>
     public Task SetRotationAsync(PageRotation rotation)
     {
         ThrowIfUndefined(rotation);
-        return SendAsync("setRotation", (int)rotation);
+        return SendAsync(backend => backend.SetRotationAsync((int)rotation));
     }
 
     /// <summary>
@@ -61,7 +57,7 @@ public sealed class PdfViewerController
         {
             ThrowIfUndefined(value);
         }
-        return SendAsync("setPageRotation", page, (int?)rotation);
+        return SendAsync(backend => backend.SetPageRotationAsync(page, (int?)rotation));
     }
 
     /// <summary>
@@ -69,18 +65,16 @@ public sealed class PdfViewerController
     /// Completes once it's in view. Canceling stops the wait, not the scrolling.
     /// </summary>
     public Task ScrollObjectIntoViewAsync(string id, CancellationToken cancellationToken = default) =>
-        RunAsync(bridge => bridge.InvokeVoidAsync("scrollObjectIntoView", cancellationToken, id).AsTask(),
-            cancellationToken);
+        RunAsync(backend => backend.ScrollObjectIntoViewAsync(id, cancellationToken), cancellationToken);
 
     /// <summary>
     /// A page's label, and its size and rotation in the coordinates objects use, whether or not it's displayed.
     /// </summary>
     public Task<PageInfo> GetPageInfoAsync(int page, CancellationToken cancellationToken = default) =>
-        RunAsync(bridge => bridge.InvokeAsync<PageInfo>("getPageInfo", cancellationToken, page).AsTask(),
-            cancellationToken);
+        RunAsync(backend => backend.GetPageInfoAsync(page, cancellationToken), cancellationToken);
 
     public Task SetToolAsync(ViewerTool tool, ViewerDrawDefaults? drawDefaults = null) =>
-        SendAsync("setTool", tool, drawDefaults);
+        SendAsync(backend => backend.SetToolAsync(tool, drawDefaults));
 
     /// <summary>
     /// Copies the original document to a stream, such as an upload to your own storage. The bytes cross the circuit in
@@ -89,13 +83,7 @@ public sealed class PdfViewerController
     /// </summary>
     public Task CopyDocumentToAsync(Stream destination, long maximumSize = DefaultMaximumDocumentSize,
         CancellationToken cancellationToken = default) =>
-        RunAsync(async bridge =>
-        {
-            await using var data =
-                await bridge.InvokeAsync<IJSStreamReference>("getDocumentData", cancellationToken, []);
-            await using var source = await data.OpenReadStreamAsync(maximumSize, cancellationToken);
-            await source.CopyToAsync(destination, cancellationToken);
-        }, cancellationToken);
+        RunAsync(backend => backend.CopyDocumentToAsync(destination, maximumSize, cancellationToken), cancellationToken);
 
     /// <summary>
     /// Moves an object as an arrow key does: by a distance in page units as displayed, so positive
@@ -105,26 +93,26 @@ public sealed class PdfViewerController
     /// rectangle it ended up with. Completes once the move has been applied, and fails if the object doesn't exist.
     /// </summary>
     public Task MoveObjectByAsync(string id, double deltaX, double deltaY) =>
-        SendAsync("moveObjectBy", id, deltaX, deltaY);
+        SendAsync(backend => backend.MoveObjectByAsync(id, deltaX, deltaY));
 
     /// <summary>
     /// Keeps a draft from <see cref="PdfViewer.OnObjectDrawn"/> as it was drawn. It becomes an object the user added,
     /// so it's reported through <see cref="PdfViewer.OnObjectsChanged"/>, and with <see cref="PdfViewer.Objects"/> set
     /// it has to go into your list like any other. Does nothing if the draft is gone.
     /// </summary>
-    public Task CommitDraftAsync(string id) => SendAsync("commitDraft", id);
+    public Task CommitDraftAsync(string id) => SendAsync(backend => backend.CommitDraftAsync(id));
 
     /// <summary>
     /// Discards a draft from <see cref="PdfViewer.OnObjectDrawn"/> without waiting for its handler to finish. Does
     /// nothing if the draft is gone.
     /// </summary>
-    public Task DiscardDraftAsync(string id) => SendAsync("discardDraft", id);
+    public Task DiscardDraftAsync(string id) => SendAsync(backend => backend.DiscardDraftAsync(id));
 
     /// <summary>Selects one object, or none when given null.</summary>
     public Task SelectObjectAsync(string? id) => SelectObjectsAsync(id is null ? [] : [id]);
 
     /// <summary>Selects exactly these objects. Handles appear only when one object is selected.</summary>
-    public Task SelectObjectsAsync(IEnumerable<string> ids) => SendAsync("selectObjects", ids);
+    public Task SelectObjectsAsync(IEnumerable<string> ids) => SendAsync(backend => backend.SelectObjectsAsync(ids));
 
     /// <summary>
     /// Every selected object's ID, in the order selected. This is the selection when the browser answers, which can be
@@ -132,33 +120,27 @@ public sealed class PdfViewerController
     /// as a stream, so a large selection needs no change to the hub's message size limit.
     /// </summary>
     public Task<IReadOnlyList<string>> GetSelectedObjectIdsAsync(CancellationToken cancellationToken = default) =>
-        RunAsync<IReadOnlyList<string>>(async bridge =>
-        {
-            await using var data =
-                await bridge.InvokeAsync<IJSStreamReference>("getSelectedObjectIds", cancellationToken, []);
-            await using var source = await data.OpenReadStreamAsync(MaximumSelectionSize, cancellationToken);
-            return await JsonSerializer.DeserializeAsync<string[]>(source, cancellationToken: cancellationToken) ?? [];
-        }, cancellationToken);
+        RunAsync(backend => backend.GetSelectedObjectIdsAsync(cancellationToken), cancellationToken);
 
-    internal Task ZoomByAsync(double factor) => SendAsync("zoomBy", factor);
+    internal Task ZoomByAsync(double factor) => SendAsync(backend => backend.ZoomByAsync(factor));
 
-    internal Task RotateByAsync(int degrees) => SendAsync("rotateBy", degrees);
+    internal Task RotateByAsync(int degrees) => SendAsync(backend => backend.RotateByAsync(degrees));
 
     /// <summary>Starts sending commands to a viewer, beginning with those that have been waiting.</summary>
-    internal void Attach(object viewer, IJSObjectReference bridge)
+    internal void Attach(object viewer, IViewerBackend backend)
     {
         if (_viewer is not null && _viewer != viewer)
         {
             throw new InvalidOperationException("This controller already drives another viewer. Give each its own.");
         }
         _viewer = viewer;
-        _bridge = bridge;
+        _backend = backend;
         // Each call reaches the browser before the next starts, because sending happens before a command first waits.
         var waiting = _waiting.ToArray();
         _waiting.Clear();
         foreach (var command in waiting)
         {
-            _ = command(bridge);
+            _ = command(backend);
         }
     }
 
@@ -170,7 +152,7 @@ public sealed class PdfViewerController
         if (_viewer == viewer)
         {
             _viewer = null;
-            _bridge = null;
+            _backend = null;
             SetState(0, 0);
         }
     }
@@ -187,32 +169,31 @@ public sealed class PdfViewerController
         StateChanged?.Invoke();
     }
 
-    private Task SendAsync(string method, params object?[] arguments) =>
-        RunAsync(bridge => bridge.InvokeVoidAsync(method, arguments).AsTask(), CancellationToken.None);
+    private Task SendAsync(Func<IViewerBackend, Task> command) => RunAsync(command, CancellationToken.None);
 
-    private Task RunAsync(Func<IJSObjectReference, Task> command, CancellationToken cancellationToken) =>
-        RunAsync(async bridge =>
+    private Task RunAsync(Func<IViewerBackend, Task> command, CancellationToken cancellationToken) =>
+        RunAsync(async backend =>
         {
-            await command(bridge);
+            await command(backend);
             return true;
         }, cancellationToken);
 
     /// <summary>Runs a command now if a viewer has this controller, and otherwise once one does.</summary>
-    private Task<T> RunAsync<T>(Func<IJSObjectReference, Task<T>> command, CancellationToken cancellationToken)
+    private Task<T> RunAsync<T>(Func<IViewerBackend, Task<T>> command, CancellationToken cancellationToken)
     {
-        if (_bridge is not null)
+        if (_backend is not null)
         {
-            return command(_bridge);
+            return command(_backend);
         }
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         var registration = cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken));
-        _waiting.Add(async bridge =>
+        _waiting.Add(async backend =>
         {
             try
             {
                 if (!completion.Task.IsCompleted)
                 {
-                    completion.TrySetResult(await command(bridge));
+                    completion.TrySetResult(await command(backend));
                 }
             }
             catch (OperationCanceledException exception)

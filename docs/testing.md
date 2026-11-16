@@ -2,7 +2,8 @@
 
 The viewer's pages and objects are real DOM elements, described in the [test contract](test-contract.md). For .NET tests
 that use Playwright, `Pv.Testing.Playwright` wraps that contract, so your tests don't have to work out screen
-positions, parse attributes or know which ones to wait on.
+positions, parse attributes or know which ones to wait on. For component tests, `Pv.Testing.Bunit` puts a fake viewer
+in the browser's place; see [component tests with bUnit](#component-tests-with-bunit).
 
 ```csharp
 using Pv.Blazor;
@@ -67,6 +68,41 @@ await Expect(page.GetByText("Invoice total").OutsideViewers()).ToBeVisibleAsync(
   such as its `data-page-count`.
 - **Assertions on .NET state.** The DOM is right as soon as a gesture ends, and the change reaches .NET over the circuit
   slightly later. Use Playwright's retrying `Expect` on anything Razor renders from a viewer event.
+
+## Component tests with bUnit
+
+In a bUnit test there's no browser, so there's no viewer for your component to talk to. `Pv.Testing.Bunit` gives it a
+fake one. The fake keeps the objects, drafts, selection, tool and read-only state in memory and follows the same rules
+as the real viewer, so your component gets the same events, in the same order and with the same sequence numbers. You
+can test how it reacts to the user without a browser or JavaScript mocks.
+
+```csharp
+var viewers = Services.AddFakePdfViewers();      // before rendering
+var page = Render<RegionEditor>();
+await viewers.Viewer.LoadDocumentAsync(pageCount: 3);
+
+await viewers.Viewer.SimulateDrawAsync(new PageRect(100, 150, 200, 40));
+
+Assert.Single(page.Instance.Regions);
+```
+
+- **Opening.** A document doesn't open by itself. After your component sets a source, call `LoadDocumentAsync`, or
+  `FailDocumentAsync` to test how it handles a document that can't open.
+- **The user.** `SimulateDrawAsync`, `SimulateClickAsync`, `SimulateEditAsync` (a move, resize or nudge) and
+  `SimulateDeleteKeyAsync` act as the user does. Each completes once your component has handled what it caused,
+  including an `OnObjectDrawn` handler that waits on a dialog. When the test has to close that dialog, start the draw
+  without awaiting it.
+- **What can't happen.** The `Simulate` methods throw when the user couldn't do what they ask, such as moving a locked
+  object, drawing while the viewer is read-only, or resizing an object that isn't the one selected.
+- **Commands.** As in the browser, a command that names an object the viewer doesn't have, or that the viewer refuses,
+  fails with a `JSException`, and a command that needs a document waits for one that is opening.
+- **State.** `Objects`, `Drafts`, `SelectedObjectIds`, `Tool`, `ReadOnly` and `CurrentPage` show what the viewer has,
+  and `Commands` lists what your code sent through the controller, such as zoom changes.
+- **Your own changes.** When your code changes the objects, the viewer may answer later, for example with a selection
+  that ended because its object was removed. `SettleAsync` waits until your component has heard all of it.
+
+The library runs the same scenarios against the fake and in a browser, to check that the fake behaves like the viewer it
+stands in for.
 
 ## What can change
 

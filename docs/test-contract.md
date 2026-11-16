@@ -165,4 +165,5 @@ so it tells which of two events is newer.
   `[data-draft-id]` and no object. The object appears, under the same ID, only once the handler keeps it.
 - **After a drag, the DOM is right immediately, but .NET hears about it slightly later.** Use retrying assertions on anything
   Razor renders from a change event.
-- **`bUnit` can't see objects.** They belong to JavaScript, so test your handlers in bUnit and the objects in a browser.
+- **In bUnit, use the fake viewer.** Objects belong to JavaScript, so bUnit can't find them in the markup.
+  `Pv.Testing.Bunit` keeps them in memory instead; see the [testing guide](testing.md#component-tests-with-bunit).
