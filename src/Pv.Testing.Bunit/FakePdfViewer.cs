@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using Pv.Blazor;
 
@@ -110,6 +111,9 @@ public sealed partial class FakePdfViewer : IViewerBackend
     public ViewerDrawDefaults? DrawDefaults { get; private set; }
 
     public bool ReadOnly { get; private set; }
+
+    /// <summary>The element the component sent as <see cref="PdfViewer.KeyboardScope"/>, or null for none.</summary>
+    public ElementReference? KeyboardScope { get; private set; }
 
     /// <summary>
     /// The commands the application sent through the controller, in the order the viewer received them.
@@ -227,9 +231,10 @@ public sealed partial class FakePdfViewer : IViewerBackend
     /// <summary>
     /// Changes an object's rectangle as the user does with a gesture. <see cref="EditGesture.Move"/> drags the object,
     /// which selects it first. <see cref="EditGesture.Resize"/> drags a handle, which an object has only while it's
-    /// the one object selected. <see cref="EditGesture.Nudge"/> focuses the object, which selects it, then presses an
-    /// arrow key, and needs keyboard editing on. The rectangle is the one the gesture ends with: on the page, at least
-    /// one unit each way, and for a move or nudge the same size as before.
+    /// the one object selected. <see cref="EditGesture.Nudge"/> presses the move modifier with an arrow key, on the
+    /// focused object or in <see cref="KeyboardScope"/>. That selects the object unless it's selected already, and
+    /// needs keyboard editing on. The rectangle is the one the gesture ends with: on the page, at least one unit each
+    /// way, and for a move or nudge the same size as before.
     /// </summary>
     public Task SimulateEditAsync(string id, PageRect rect, EditGesture gesture) => ActAsync(async notifications =>
     {
@@ -260,7 +265,8 @@ public sealed partial class FakePdfViewer : IViewerBackend
                     $"Object \"{id}\" has resize handles only while it's the one object selected.");
             case EditGesture.Nudge when !Options.KeyboardEditing:
                 throw new InvalidOperationException("Keyboard editing is off, so arrow keys don't move objects.");
-            case EditGesture.Move or EditGesture.Nudge:
+            case EditGesture.Move:
+            case EditGesture.Nudge when !_selected.Contains(id):
                 Select([id], ChangeOrigin.User);
                 await SendPendingAsync(notifications);
                 break;
@@ -274,7 +280,8 @@ public sealed partial class FakePdfViewer : IViewerBackend
     });
 
     /// <summary>
-    /// Focuses an object and presses Delete, which needs keyboard editing on. A locked object is only selected. With a
+    /// Focuses an object and presses Delete, which needs keyboard editing on. Focusing selects the object only with
+    /// <see cref="PdfViewerOptions.SelectOnFocus"/> on, and a locked object isn't deleted. With a
     /// <see cref="PdfViewer.OnDeleteRequested"/> handler, the handler decides, and this completes once it has finished.
     /// </summary>
     public Task SimulateDeleteKeyAsync(string id) => ActAsync(async notifications =>
@@ -286,8 +293,11 @@ public sealed partial class FakePdfViewer : IViewerBackend
         {
             throw new InvalidOperationException("Keyboard editing is off, so the Delete key doesn't delete objects.");
         }
-        Select([id], ChangeOrigin.User);
-        await SendPendingAsync(notifications);
+        if (Options.SelectOnFocus)
+        {
+            Select([id], ChangeOrigin.User);
+            await SendPendingAsync(notifications);
+        }
         if (target.Locked)
         {
             return;
@@ -323,6 +333,8 @@ public sealed partial class FakePdfViewer : IViewerBackend
         Change(() => _subscriptions = subscriptions);
 
     Task IViewerBackend.SetReadOnlyAsync(bool readOnly) => Change(() => ReadOnly = readOnly);
+
+    Task IViewerBackend.SetKeyboardScopeAsync(ElementReference? scope) => Change(() => KeyboardScope = scope);
 
     Task IViewerBackend.OpenAsync(PdfSource source, int initialPage) => Change(() =>
     {

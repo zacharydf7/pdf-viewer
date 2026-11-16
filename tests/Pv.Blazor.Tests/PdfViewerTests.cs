@@ -187,6 +187,54 @@ public class PdfViewerTests : BunitContext
     }
 
     [Fact]
+    public void PdfViewer_ShouldThrow_WhenMoveAndLargeStepModifiersAreTheSame()
+    {
+        var options = new PdfViewerOptions
+        {
+            KeyboardMoveModifier = ViewerKeyModifier.Control, KeyboardLargeStepModifier = ViewerKeyModifier.Control,
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            Render<PdfViewer>(parameters => parameters.Add(component => component.Options, options)));
+
+        Assert.Contains(nameof(PdfViewerOptions.KeyboardMoveModifier), exception.Message);
+    }
+
+    [Fact]
+    public void KeyboardScope_ShouldBeSentOnce_WhenSetToCapturedElement()
+    {
+        var scope = new ElementReference("panel");
+        var viewer = Render<PdfViewer>(parameters => parameters.Add(component => component.KeyboardScope, scope));
+
+        viewer.Render(parameters => parameters.Add(component => component.KeyboardScope, scope));
+
+        var call = Assert.Single(_bridge.Invocations, call => call.Identifier == "setKeyboardScope");
+        Assert.Equal("panel", Assert.IsType<ElementReference>(call.Arguments[0]).Id);
+    }
+
+    [Fact]
+    public void KeyboardScope_ShouldNotBeSent_WhenElementIsNotCapturedYet()
+    {
+        Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.KeyboardScope, default(ElementReference)));
+
+        Assert.DoesNotContain("setKeyboardScope", BridgeCalls);
+    }
+
+    [Fact]
+    public void KeyboardScope_ShouldBeClearedInBrowser_WhenSetBackToNull()
+    {
+        var viewer = Render<PdfViewer>(parameters =>
+            parameters.Add(component => component.KeyboardScope, new ElementReference("panel")));
+
+        viewer.Render(parameters => parameters.Add(component => component.KeyboardScope, (ElementReference?)null));
+
+        var calls = _bridge.Invocations.Where(call => call.Identifier == "setKeyboardScope").ToList();
+        Assert.Equal(2, calls.Count);
+        Assert.Null(calls[1].Arguments[0]);
+    }
+
+    [Fact]
     public void PdfViewer_ShouldRenderEmptyHostElement_WhenRendered()
     {
         var viewer = Render<PdfViewer>();
@@ -605,8 +653,9 @@ public class PdfViewerTests : BunitContext
         var options = new PdfViewerOptions
         {
             InitialZoom = ViewerZoomMode.FitPage, HideFormFields = true, KeyboardEditing = false,
-            KeyboardStep = 0.5, KeyboardLargeStep = 25, KeyboardLargeStepModifier = ViewerStepModifier.Alt,
-            RoundCoordinates = true, SelectOnCreate = true, WheelZoom = false,
+            KeyboardStep = 0.5, KeyboardLargeStep = 25, KeyboardMoveModifier = ViewerKeyModifier.Meta,
+            KeyboardLargeStepModifier = ViewerKeyModifier.Alt, SelectOnFocus = true, RoundCoordinates = true,
+            SelectOnCreate = true, WheelZoom = false,
             Coordinates = ViewerCoordinates.Display, ObjectHitArea = ViewerObjectHitArea.Border,
         };
 
@@ -614,7 +663,8 @@ public class PdfViewerTests : BunitContext
 
         const string expected = """
             {"initialZoom":"fit-page","hideFormFields":true,"keyboardEditing":false,"keyboardStep":0.5,
-            "keyboardLargeStep":25,"keyboardLargeStepModifier":"alt","roundCoordinates":true,
+            "keyboardLargeStep":25,"keyboardMoveModifier":"meta","keyboardLargeStepModifier":"alt",
+            "selectOnFocus":true,"roundCoordinates":true,
             "selectOnCreate":true,"wheelZoom":false,"coordinates":"display","objectHitArea":"border"}
             """;
         Assert.Equal(expected.Replace("\n", "").Replace("\r", ""), json);

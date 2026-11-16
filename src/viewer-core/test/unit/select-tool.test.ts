@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ResizeHandle, Rotation } from "../../src/geometry.js";
 import type { NewPageObject } from "../../src/object-store.js";
 import { SelectTool } from "../../src/select-tool.js";
-import type { PointerPress, ToolOptions } from "../../src/tool.js";
+import type { ObjectKeyPress, PointerPress, ToolOptions } from "../../src/tool.js";
 import { at, geometry, recordingContext } from "./tool-support.js";
 
 const rect = { x: 100, y: 150, width: 200, height: 100 };
@@ -28,9 +28,14 @@ function onHandle(handle: ResizeHandle, x: number, y: number): PointerPress {
   return { ...at(x, y), target: { kind: "handle", id: "a", handle } };
 }
 
-function key(key: string, modifiers: { shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean } = {}) {
-  return { id: "a", geometry: geometry(), key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false,
-    ...modifiers };
+/** A key's action on object "a", as the controller hands it to the tool. */
+function key(action: ObjectKeyPress["action"]): ObjectKeyPress {
+  return { id: "a", geometry: geometry(), action };
+}
+
+/** An edit key: one step right unless told otherwise, and a resize with resize set. */
+function editKey(deltaX = 1, deltaY = 0, resize = false): ObjectKeyPress {
+  return key({ kind: "edit", resize, deltaX, deltaY });
 }
 
 describe("pressing", () => {
@@ -305,29 +310,51 @@ describe("resizing", () => {
 });
 
 describe("keyboard", () => {
-  it("keyDown_ShouldReportNudge_WhenGivenArrowKey", () => {
+  it("keyDown_ShouldSelectThenReportNudge_WhenGivenEditOfUnselectedObject", () => {
     const { tool, record } = setup();
 
-    const handled = tool.keyDown(key("ArrowRight"));
+    const handled = tool.keyDown(editKey());
 
     expect(handled).toBe(true);
+    expect(record.log.slice(1)).toEqual(["select", "update"]);
+    expect(record.selections[0]).toMatchObject({ origin: "user", ids: ["a"] });
     expect(record.updated[0]).toMatchObject({ origin: "user", gesture: "nudge" });
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 101 });
   });
 
-  it("keyDown_ShouldReportResize_WhenGivenShiftWithArrowKey", () => {
+  it("keyDown_ShouldKeepSelection_WhenEditedObjectIsOneOfSeveralSelected", () => {
+    const { tool, store } = setup();
+    store.add({ id: "b", page: 1, rect }, "api");
+    store.select(["a", "b"], "api");
+
+    tool.keyDown(editKey());
+
+    expect(store.selectedIds).toEqual(["a", "b"]);
+  });
+
+  it("keyDown_ShouldReportResize_WhenGivenResizeEdit", () => {
     const { tool, record } = setup();
 
-    tool.keyDown(key("ArrowRight", { shiftKey: true }));
+    tool.keyDown(editKey(1, 0, true));
 
     expect(record.updated[0]!.gesture).toBe("resize");
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, width: 201 });
   });
 
-  it("keyDown_ShouldHandleKeyAndReportNothing_WhenArrowKeyMeetsPageEdge", () => {
-    const { tool, record } = setup({}, { rect: { ...rect, x: 0 } });
+  it("keyDown_ShouldAnnounceEachEdit_WhenObjectIsMovedThenResized", () => {
+    const { tool, record } = setup();
 
-    const handled = tool.keyDown(key("ArrowLeft"));
+    tool.keyDown(editKey());
+    tool.keyDown(editKey(1, 0, true));
+
+    expect(record.announcements).toEqual(["a moved", "a resized"]);
+  });
+
+  it("keyDown_ShouldHandleKeyAndReportNothing_WhenEditMeetsPageEdge", () => {
+    const { tool, store, record } = setup({}, { rect: { ...rect, x: 0 } });
+    store.select(["a"], "api");
+
+    const handled = tool.keyDown(editKey(-1));
 
     expect(handled).toBe(true);
     expect(record.updated).toEqual([]);
@@ -336,101 +363,86 @@ describe("keyboard", () => {
   it("keyDown_ShouldStayOnWholeUnits_WhenRoundingIsOn", () => {
     const { tool, record } = setup({ roundCoordinates: true }, { rect: { ...rect, x: 100.4 } });
 
-    tool.keyDown(key("ArrowRight"));
+    tool.keyDown(editKey());
 
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 101 });
-  });
-
-  it("keyDown_ShouldGoByConfiguredSteps_WhenArrowKeyIsGivenWithAndWithoutConfiguredModifier", () => {
-    const { tool, record } = setup({ keyboardStep: 5, keyboardLargeStep: 25, keyboardLargeStepModifier: "alt" });
-
-    tool.keyDown(key("ArrowRight"));
-    tool.keyDown(key("ArrowDown", { altKey: true }));
-
-    expect(record.updated.map(({ gesture, object }) => [gesture, object.rect])).toEqual([
-      ["nudge", { ...rect, x: 105 }], ["nudge", { ...rect, x: 105, y: 175 }],
-    ]);
-  });
-
-  it("keyDown_ShouldLeaveKeyToHost_WhenArrowKeyIsGivenWithModifierThatIsNotConfigured", () => {
-    const { tool, record } = setup({ keyboardLargeStepModifier: "alt" });
-
-    expect(tool.keyDown(key("ArrowRight", { ctrlKey: true }))).toBe(false);
-    expect(record.updated).toEqual([]);
   });
 
   it("keyDown_ShouldRequestDeleteAndRemoveNothing_WhenGivenDelete", () => {
     const { tool, store, record } = setup();
 
-    const handled = tool.keyDown(key("Delete"));
+    const handled = tool.keyDown(key({ kind: "delete" }));
 
     expect(handled).toBe(true);
     expect(record.deleteRequests).toEqual(["a"]);
     expect(store.get("a")).toBeDefined();
   });
 
-  it("keyDown_ShouldClearSelection_WhenGivenEscapeOnLockedObject", () => {
+  it("keyDown_ShouldSelectObject_WhenGivenSelect", () => {
+    const { tool, store, record } = setup();
+
+    expect(tool.keyDown(key({ kind: "select" }))).toBe(true);
+    expect(store.selectedIds).toEqual(["a"]);
+    expect(record.selections[0]!.origin).toBe("user");
+  });
+
+  it("keyDown_ShouldSelectLockedObject_WhenGivenSelect", () => {
+    const { tool, store } = setup({}, { locked: true });
+
+    expect(tool.keyDown(key({ kind: "select" }))).toBe(true);
+    expect(store.selectedIds).toEqual(["a"]);
+  });
+
+  it("keyDown_ShouldClearSelection_WhenGivenClearOnLockedObject", () => {
     const { tool, store } = setup({}, { locked: true });
     store.select(["a"], "api");
 
-    const handled = tool.keyDown(key("Escape"));
+    const handled = tool.keyDown(key({ kind: "clear" }));
 
     expect(handled).toBe(true);
     expect(store.selectedIds).toEqual([]);
   });
 
-  it.each(["Delete", "ArrowRight"])("keyDown_ShouldLeaveKeyToHost_WhenObjectIsLockedAndGiven%s", (name) => {
-    const { tool, store, record } = setup({}, { locked: true });
+  it.each([["Delete", key({ kind: "delete" })], ["Edit", editKey()]] as const)(
+    "keyDown_ShouldLeaveKeyToHost_WhenObjectIsLockedAndGiven%s", (_, press) => {
+      const { tool, store, record } = setup({}, { locked: true });
 
-    expect(tool.keyDown(key(name))).toBe(false);
-    expect(store.get("a")!.rect).toEqual(rect);
-    expect(record.updated).toEqual([]);
-  });
-
-  it.each(["Escape", "Delete", "ArrowRight"])("keyDown_ShouldLeaveKeyToHost_WhenKeyboardEditingIsOffAndGiven%s",
-    (name) => {
-      const { tool, store } = setup({ keyboardEditing: false });
-      store.select(["a"], "api");
-
-      expect(tool.keyDown(key(name))).toBe(false);
+      expect(tool.keyDown(press)).toBe(false);
       expect(store.get("a")!.rect).toEqual(rect);
-      expect(store.selectedIds).toEqual(["a"]);
+      expect([record.updated, record.selections, record.deleteRequests]).toEqual([[], [], []]);
     });
 
-  it("keyDown_ShouldLeaveKeyToHost_WhenKeyboardEditingIsTurnedOffAfterToolStarted", () => {
-    const { tool, store, context } = setup();
+  it.each([["NotSelectable", { selectable: false }], ["Hidden", { hidden: true }]] as const)(
+    "keyDown_ShouldLeaveKeyToHost_WhenObjectIs%s", (_, object) => {
+      const { tool, store, record } = setup({}, object);
 
-    context.options = { ...context.options, keyboardEditing: false };
-
-    expect(tool.keyDown(key("Delete"))).toBe(false);
-    expect(store.get("a")).toBeDefined();
-  });
-
-  it("keyDown_ShouldLeaveKeyToHost_WhenObjectIsNotSelectable", () => {
-    const { tool, store } = setup({}, { selectable: false });
-
-    expect(tool.keyDown(key("Delete"))).toBe(false);
-    expect(store.get("a")).toBeDefined();
-  });
-
-  it("keyDown_ShouldLeaveKeyToHost_WhenGivenKeyItDoesNotUse", () => {
-    const { tool } = setup();
-
-    expect(tool.keyDown(key("a"))).toBe(false);
-  });
+      expect(tool.keyDown(editKey())).toBe(false);
+      expect(tool.keyDown(key({ kind: "delete" }))).toBe(false);
+      expect(store.get("a")!.rect).toEqual(rect);
+      expect(record.deleteRequests).toEqual([]);
+    });
 
   it("keyDown_ShouldLeaveKeyToHost_WhenDragIsUnderWay", () => {
     const { tool, store } = setup();
     tool.pointerDown(onObject(150, 200));
 
-    expect(tool.keyDown(key("Delete"))).toBe(false);
+    expect(tool.keyDown(key({ kind: "delete" }))).toBe(false);
     expect(store.get("a")).toBeDefined();
   });
 });
 
 describe("focus", () => {
-  it("focus_ShouldSelectObject_WhenObjectIsSelectable", () => {
+  it("focus_ShouldNotSelect_WhenSelectOnFocusIsOff", () => {
     const { tool, store, record } = setup();
+
+    tool.focus("a");
+
+    expect(store.selectedIds).toEqual([]);
+    expect(record.selections).toEqual([]);
+  });
+
+  it("focus_ShouldSelectObject_WhenSelectOnFocusIsOn", () => {
+    const { tool, store, record } = setup({ selectOnFocus: true });
 
     tool.focus("a");
 
@@ -439,7 +451,7 @@ describe("focus", () => {
   });
 
   it("focus_ShouldNotSelect_WhenObjectIsNotSelectable", () => {
-    const { tool, store } = setup({}, { selectable: false });
+    const { tool, store } = setup({ selectOnFocus: true }, { selectable: false });
 
     tool.focus("a");
 
@@ -495,8 +507,8 @@ describe("read-only viewer", () => {
     expect(store.selectedIds).toEqual(["a"]);
   });
 
-  it("focus_ShouldSelectOnlyObjectMarkedEditable_WhenObjectsTakeFocus", () => {
-    const { tool, store } = setupReadOnly();
+  it("focus_ShouldSelectOnlyObjectMarkedEditable_WhenObjectsTakeFocusWithSelectOnFocusOn", () => {
+    const { tool, store } = setup({ selectOnFocus: true }, {}, true);
     store.add({ id: "b", page: 1, rect, editableWhenReadOnly: true }, "api");
 
     tool.focus("a");
@@ -506,19 +518,21 @@ describe("read-only viewer", () => {
     expect([afterPlainObject, store.selectedIds]).toEqual([[], ["b"]]);
   });
 
-  it.each(["Escape", "Delete", "ArrowRight"])("keyDown_ShouldLeaveKeyToHost_WhenObjectIsNotMarkedEditableAndGiven%s",
-    (name) => {
+  it.each([
+    ["Clear", key({ kind: "clear" })], ["Delete", key({ kind: "delete" })], ["Edit", editKey()],
+  ] as const)("keyDown_ShouldLeaveKeyToHost_WhenObjectIsNotMarkedEditableAndGiven%s",
+    (_, press) => {
       const { tool, store, record } = setupReadOnly();
       store.select(["a"], "api");
 
-      expect(tool.keyDown(key(name))).toBe(false);
+      expect(tool.keyDown(press)).toBe(false);
       expect([store.selectedIds, record.updated, record.deleteRequests]).toEqual([["a"], [], []]);
     });
 
   it("keyDown_ShouldNudgeObject_WhenItIsMarkedEditable", () => {
     const { tool, record } = setupReadOnly({ editableWhenReadOnly: true });
 
-    expect(tool.keyDown(key("ArrowRight"))).toBe(true);
+    expect(tool.keyDown(editKey())).toBe(true);
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 101 });
   });
 });

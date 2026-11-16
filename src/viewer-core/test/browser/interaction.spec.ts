@@ -193,10 +193,10 @@ test.describe("read-only mode", () => {
   test("readOnly_ShouldIgnoreKeys_WhenObjectHadFocusBeforeItWasTurnedOn", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
     await viewer.addObject({ id: "a", page: 1, rect });
-    await viewer.object("a").focus();
+    await viewer.object("a").click();
     await setReadOnly(viewer, true);
 
-    for (const key of ["ArrowRight", "Shift+ArrowRight", "Delete", "Escape"]) {
+    for (const key of ["Alt+ArrowRight", "Alt+Shift+ArrowRight", "Delete", "Escape"]) {
       await page.keyboard.press(key);
     }
 
@@ -318,7 +318,7 @@ test.describe("read-only mode", () => {
     await setReadOnly(viewer, true);
 
     await viewer.object("editable").click();
-    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Alt+ArrowRight");
 
     await expect(page.locator("[data-handle]")).toHaveCount(8);
     await expect(viewer.object("editable")).toHaveAttribute("data-page-rect", "101,100,200,100");

@@ -228,6 +228,21 @@ test("readOnly_ShouldTurnOnAndOffWithinBudget_WhenPageHas5000ObjectsAndEveryTent
   expectWithinBudget(median(samples), 100);
 });
 
+test("arrowKey_ShouldMoveFocusWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
+  const viewer = await openWithObjects(page, 5_000);
+  await viewer.object("object-0").focus();
+
+  const samples = await viewer.host.evaluate(() => Array.from({ length: 50 }, () => {
+    const start = performance.now();
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    window.perf!.layout();
+    return performance.now() - start;
+  }));
+
+  await expect(viewer.object("object-50")).toBeFocused();
+  expectWithinBudget(median(samples), 2);
+});
+
 test("updateObject_ShouldStayWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
 

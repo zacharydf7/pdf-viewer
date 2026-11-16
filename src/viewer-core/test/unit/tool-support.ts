@@ -5,7 +5,8 @@ import type { PointerInput, Preview, ToolContext, ToolOptions } from "../../src/
 
 /**
  * What a tool did, in order: "show:draft", "show:object" or "show:none" for previews, "draft" for a drawn object left
- * as a draft, "request-delete" for an object it asked to have deleted, and the store changes.
+ * as a draft, "request-delete" for an object it asked to have deleted, and the store changes. Announcements are
+ * recorded separately, as "<id> moved" or "<id> resized".
  */
 export interface ToolRecord {
   log: string[];
@@ -15,10 +16,11 @@ export interface ToolRecord {
   added: { origin: ChangeOrigin; object: PageObject }[];
   updated: (ObjectUpdate & { origin: ChangeOrigin })[];
   selections: SelectionChanged[];
+  announcements: string[];
 }
 
 const defaultToolOptions: ToolOptions = { keyboardEditing: true, keyboardStep: 1, keyboardLargeStep: 10,
-  keyboardLargeStepModifier: "ctrl", roundCoordinates: false };
+  keyboardMoveModifier: "alt", keyboardLargeStepModifier: "ctrl", selectOnFocus: false, roundCoordinates: false };
 
 /** A tool context whose options a test can change, as the viewer does, while a tool is active. */
 export type TestContext = ToolContext & { options: ToolOptions };
@@ -26,7 +28,7 @@ export type TestContext = ToolContext & { options: ToolOptions };
 export function recordingContext(options: Partial<ToolOptions> = {}):
   { context: TestContext; store: ObjectStore; record: ToolRecord } {
   const record: ToolRecord =
-    { log: [], shown: [], drafts: [], deleteRequests: [], added: [], updated: [], selections: [] };
+    { log: [], shown: [], drafts: [], deleteRequests: [], added: [], updated: [], selections: [], announcements: [] };
   const store = new ObjectStore({
     onChanged: ({ origin, added, updated, removed }) => {
       for (const object of added) {
@@ -48,7 +50,9 @@ export function recordingContext(options: Partial<ToolOptions> = {}):
     record.shown.push(preview);
   };
   const requestDelete = (id: string) => { record.log.push("request-delete"); record.deleteRequests.push(id); };
-  const context = { store, show, requestDelete, options: { ...defaultToolOptions, ...options } };
+  const announceEdit = (id: string, resized: boolean) =>
+    record.announcements.push(`${id} ${resized ? "resized" : "moved"}`);
+  const context = { store, show, requestDelete, announceEdit, options: { ...defaultToolOptions, ...options } };
   return { context, store, record };
 }
 

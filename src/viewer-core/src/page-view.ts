@@ -45,6 +45,8 @@ export class PageView {
     this.element = document.createElement("div");
     this.element.className = "pv-page";
     this.element.dataset.pageNumber = String(pageNumber);
+    this.element.setAttribute("role", "group");
+    this.element.setAttribute("aria-label", `Page ${pageNumber}`);
     this.objects = new ObjectView(this.element, pageNumber, geometry, store, presentation);
   }
 

@@ -16,6 +16,9 @@ internal interface IViewerBackend : IAsyncDisposable
 
     Task SetReadOnlyAsync(bool readOnly);
 
+    /// <summary>An element outside the viewer where the keys that move objects also work, or null for none.</summary>
+    Task SetKeyboardScopeAsync(ElementReference? scope);
+
     Task OpenAsync(PdfSource source, int initialPage);
 
     Task CloseAsync();
@@ -127,6 +130,8 @@ internal sealed class JsViewerBackend(IJSObjectReference module, IJSObjectRefere
     public Task SubscribeAsync(ViewerSubscriptions subscriptions) => SendAsync("subscribe", subscriptions);
 
     public Task SetReadOnlyAsync(bool readOnly) => SendAsync("setReadOnly", readOnly);
+
+    public Task SetKeyboardScopeAsync(ElementReference? scope) => SendAsync("setKeyboardScope", scope);
 
     public Task OpenAsync(PdfSource source, int initialPage) => SendAsync("open", source.ToInterop(), initialPage);
 

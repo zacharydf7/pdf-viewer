@@ -420,6 +420,23 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     }
 
     [Fact]
+    public async Task KeyboardScope_ShouldMoveSelectedObject_WhenAltArrowIsPressedInApplicationPanel()
+    {
+        await _page.GotoAsync("/?doc=documents/letter.pdf&keyboardScope=true");
+        await _viewer.WaitForReadyAsync(1);
+        await TestId("add-object").ClickAsync();
+        await _viewer.ClickObjectAsync("code-1");
+        await Expect(TestId("selected-object")).ToHaveTextAsync("code-1");
+
+        await TestId("tool-select").FocusAsync();
+        await _page.Keyboard.PressAsync("Alt+ArrowRight");
+
+        await Expect(_viewer.Object("code-1")).ToHaveAttributeAsync("data-page-rect", "51,50,150,80");
+        await Expect(TestId("last-change")).ToHaveTextAsync("Updated User code-1");
+        await Expect(TestId("tool-select")).ToBeFocusedAsync();
+    }
+
+    [Fact]
     public async Task DrawTool_ShouldReturnKindToDotNet_WhenToolHasKind()
     {
         await OpenAsync();

@@ -1,4 +1,4 @@
-import type { StepModifier } from "./keyboard-editing.js";
+import type { KeyModifier } from "./keyboard-editing.js";
 
 export type ZoomSetting = number | "fit-width" | "fit-page";
 
@@ -11,19 +11,31 @@ export interface ViewerOptions {
   /** Leaves form fields unpainted, while other annotations still appear. Defaults to false. */
   hideFormFields?: boolean;
   /**
-   * Whether arrow keys and Delete edit the focused object and Escape clears the selection. Turn off if the application
-   * handles them. Defaults to true.
+   * Whether keys edit objects: the move modifier with an arrow key moves the focused object and with Shift resizes
+   * it, Delete asks to delete it, and Escape clears the selection. Arrow keys, Home and End move focus between
+   * objects, and Space and Enter select, either way. Turn off if the application handles the editing keys. Defaults
+   * to true.
    */
   keyboardEditing?: boolean;
-  /** How far an arrow key moves or resizes the focused object, in page units. Defaults to 1. */
+  /** How far the move modifier with an arrow key moves or resizes the focused object, in page units. Defaults to 1. */
   keyboardStep?: number;
-  /** How far an arrow key goes while the large-step modifier is held, in page units. Defaults to 10. */
+  /** How far an arrow key goes while the large-step modifier is held as well, in page units. Defaults to 10. */
   keyboardLargeStep?: number;
   /**
-   * The key that, held with an arrow key, takes the large step. Shift can't be it, because it resizes. Defaults to
-   * "ctrl".
+   * The key that, held with an arrow key, moves the object rather than focus. It has to differ from the large-step
+   * modifier. Defaults to "alt".
    */
-  keyboardLargeStepModifier?: StepModifier;
+  keyboardMoveModifier?: KeyModifier;
+  /**
+   * The key that, held with the move modifier and an arrow key, takes the large step. Shift can't be it, because it
+   * resizes. Defaults to "ctrl".
+   */
+  keyboardLargeStepModifier?: KeyModifier;
+  /**
+   * Whether an object is selected when it takes focus, by Tab or an arrow key. When off, Space or Enter selects the
+   * focused object, and so does moving it with a key. Clicking selects either way. Defaults to false.
+   */
+  selectOnFocus?: boolean;
   /** Rounds rectangles the user creates or changes to whole page units. Defaults to false. */
   roundCoordinates?: boolean;
   /** Whether an object the user draws is selected once it's one of the viewer's objects. Defaults to false. */
@@ -53,7 +65,9 @@ export const defaultOptions: ResolvedOptions = Object.freeze({
   keyboardEditing: true,
   keyboardStep: 1,
   keyboardLargeStep: 10,
+  keyboardMoveModifier: "alt",
   keyboardLargeStepModifier: "ctrl",
+  selectOnFocus: false,
   roundCoordinates: false,
   selectOnCreate: false,
   wheelZoom: true,
@@ -66,23 +80,30 @@ const maximumZoom = 10;
 
 /**
  * Applies options over the current ones. Any option left out keeps its value. So does a zoom that isn't finite, and a
- * keyboard step that isn't a positive number.
+ * keyboard step that isn't a positive number. Throws if the move and large-step modifiers would be the same key.
  */
 export function mergeOptions(current: ResolvedOptions, options: ViewerOptions): ResolvedOptions {
   const zoom = options.initialZoom === undefined ? undefined : normalizeZoom(options.initialZoom);
-  return {
+  const merged: ResolvedOptions = {
     initialZoom: zoom ?? current.initialZoom,
     hideFormFields: options.hideFormFields ?? current.hideFormFields,
     keyboardEditing: options.keyboardEditing ?? current.keyboardEditing,
     keyboardStep: positive(options.keyboardStep) ?? current.keyboardStep,
     keyboardLargeStep: positive(options.keyboardLargeStep) ?? current.keyboardLargeStep,
+    keyboardMoveModifier: options.keyboardMoveModifier ?? current.keyboardMoveModifier,
     keyboardLargeStepModifier: options.keyboardLargeStepModifier ?? current.keyboardLargeStepModifier,
+    selectOnFocus: options.selectOnFocus ?? current.selectOnFocus,
     roundCoordinates: options.roundCoordinates ?? current.roundCoordinates,
     selectOnCreate: options.selectOnCreate ?? current.selectOnCreate,
     wheelZoom: options.wheelZoom ?? current.wheelZoom,
     coordinates: options.coordinates ?? current.coordinates,
     objectHitArea: options.objectHitArea ?? current.objectHitArea,
   };
+  if (merged.keyboardMoveModifier === merged.keyboardLargeStepModifier) {
+    throw new RangeError(
+      `The move and large-step modifiers must differ, but both are "${merged.keyboardMoveModifier}".`);
+  }
+  return merged;
 }
 
 /** The value, if it's a number an arrow key can step by. */

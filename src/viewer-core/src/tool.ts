@@ -1,6 +1,6 @@
 import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
 import { roundRect } from "./geometry.js";
-import type { ArrowKeyPress, ArrowKeySteps } from "./keyboard-editing.js";
+import type { KeyAction, KeyOptions } from "./keyboard-editing.js";
 import type { EditGesture, ObjectStore, ObjectStyle, PageObject } from "./object-store.js";
 
 export type ViewerTool = "select" | "draw-rect" | "none";
@@ -31,11 +31,15 @@ export interface PointerPress extends PointerInput {
   target: PointerTarget | undefined;
 }
 
-/** A key pressed while an object has focus. */
-export interface ObjectKeyPress extends ArrowKeyPress {
+/**
+ * What a key does to an object: the focused one, or for a key pressed in the keyboard scope outside the viewer, the
+ * selected one. Moving focus between objects isn't a tool's job, so it never arrives here.
+ */
+export interface ObjectKeyPress {
   id: string;
   /** The geometry of the object's page. */
   geometry: PageGeometry;
+  action: Exclude<KeyAction, { kind: "focus" }>;
 }
 
 /**
@@ -57,7 +61,9 @@ export interface PressResult {
 export interface ToolPresentation {
   /** What catches the pointer: objects and their handles, the whole page, or nothing. */
   pointer: "objects" | "page" | "none";
-  /** Whether selectable objects are tab stops. */
+  /**
+   * Whether selectable objects can take focus. Tab reaches one of them at a time, the object list's single tab stop.
+   */
   focusable: boolean;
   /** Whether the selected object shows resize handles. */
   handles: boolean;
@@ -74,9 +80,9 @@ export function respondsToUser(object: PageObject, readOnly: boolean): boolean {
 }
 
 /** The viewer options that tools use. */
-export interface ToolOptions extends ArrowKeySteps {
-  /** Whether arrow keys and Delete edit the focused object and Escape clears the selection. */
-  keyboardEditing: boolean;
+export interface ToolOptions extends KeyOptions {
+  /** Whether an object that takes focus is selected too. */
+  selectOnFocus: boolean;
   roundCoordinates: boolean;
 }
 
@@ -89,6 +95,8 @@ export interface ToolContext {
   show(preview: Preview | undefined): void;
   /** Asks for an object to be deleted, which the application may decide on itself. */
   requestDelete(id: string): void;
+  /** Tells screen reader users that a key moved or resized an object, which they otherwise can't perceive. */
+  announceEdit(id: string, resized: boolean): void;
 }
 
 /**

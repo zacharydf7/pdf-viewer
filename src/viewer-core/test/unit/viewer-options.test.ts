@@ -28,8 +28,9 @@ describe("merging", () => {
 });
 
 describe("keyboard steps", () => {
-  it("mergeOptions_ShouldTakeStepsAndModifier_WhenGivenThem", () => {
-    const given = { keyboardStep: 0.5, keyboardLargeStep: 25, keyboardLargeStepModifier: "alt" } as const;
+  it("mergeOptions_ShouldTakeStepsAndModifiers_WhenGivenThem", () => {
+    const given = { keyboardStep: 0.5, keyboardLargeStep: 25, keyboardMoveModifier: "meta",
+      keyboardLargeStepModifier: "alt", selectOnFocus: true } as const;
 
     expect(mergeOptions(defaultOptions, given)).toEqual({ ...defaultOptions, ...given });
   });
@@ -38,6 +39,18 @@ describe("keyboard steps", () => {
     const current: ResolvedOptions = { ...defaultOptions, keyboardStep: 2, keyboardLargeStep: 20 };
 
     expect(mergeOptions(current, { keyboardStep: step, keyboardLargeStep: step })).toEqual(current);
+  });
+});
+
+describe("keyboard modifiers", () => {
+  it("mergeOptions_ShouldThrow_WhenMoveAndLargeStepModifiersWouldBeTheSame", () => {
+    expect(() => mergeOptions(defaultOptions, { keyboardMoveModifier: "ctrl" })).toThrow(RangeError);
+  });
+
+  it("mergeOptions_ShouldTakeSwappedModifiers_WhenBothChangeTogether", () => {
+    const given = { keyboardMoveModifier: "ctrl", keyboardLargeStepModifier: "alt" } as const;
+
+    expect(mergeOptions(defaultOptions, given)).toEqual({ ...defaultOptions, ...given });
   });
 });
 

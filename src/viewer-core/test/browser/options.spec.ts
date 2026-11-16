@@ -245,14 +245,17 @@ test.describe("keyboard editing off", () => {
       (window as unknown as { keys: string[] }).keys = [];
       document.addEventListener("keydown", (event) => {
         (window as unknown as { keys: string[] }).keys.push(event.key);
+        // Alt with an arrow key can be a browser shortcut, such as going back or forward.
+        event.preventDefault();
       });
     });
 
     await viewer.object("a").focus();
-    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Alt+ArrowRight");
     await page.keyboard.press("Delete");
 
-    expect(await page.evaluate(() => (window as unknown as { keys: string[] }).keys)).toEqual(["ArrowRight", "Delete"]);
+    expect(await page.evaluate(() => (window as unknown as { keys: string[] }).keys))
+      .toEqual(["Alt", "ArrowRight", "Delete"]);
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
   });
 });
@@ -302,7 +305,7 @@ test.describe("rounding", () => {
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
     await viewer.object("a").focus();
-    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Alt+ArrowRight");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
   });
@@ -399,7 +402,7 @@ test.describe("options changed after opening", () => {
     await viewer.object("a").focus();
 
     await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ keyboardEditing: false }));
-    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Alt+ArrowRight");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
   });

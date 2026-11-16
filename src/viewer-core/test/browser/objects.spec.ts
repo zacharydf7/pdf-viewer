@@ -454,41 +454,152 @@ test.describe("moving and resizing", () => {
 });
 
 test.describe("keyboard", () => {
-  test("arrowKey_ShouldMoveFocusedObject_WhenPressed", async ({ page }) => {
+  /** Three objects on page 1, given out of reading order: "c" is below, and "b" is to the right of "a". */
+  async function addThree(viewer: Viewer): Promise<void> {
+    await viewer.addObject({ id: "c", page: 1, rect: { ...start, y: 400 } });
+    await viewer.addObject({ id: "b", page: 1, rect: { ...start, x: 350 } });
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+  }
+
+  async function focusedId(viewer: Viewer): Promise<string | undefined> {
+    return viewer.page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.objectId);
+  }
+
+  test("objectList_ShouldBeOneTabStopAtFirstObjectInReadingOrder_WhenNothingIsSelected", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addThree(viewer);
+
+    await expect(page.locator('[data-object-id][tabindex="0"]')).toHaveCount(1);
+    await expect(viewer.object("a")).toHaveAttribute("tabindex", "0");
+  });
+
+  test("objectList_ShouldPutTabStopOnSelectedObject_WhenFocusIsOutsideIt", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addThree(viewer);
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.selectObject("c"));
+
+    await expect(viewer.object("c")).toHaveAttribute("tabindex", "0");
+    await expect(page.locator('[data-object-id][tabindex="0"]')).toHaveCount(1);
+  });
+
+  test("arrowKeys_ShouldMoveFocusInReadingOrderWithoutSelecting_WhenPressed", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addThree(viewer);
+    await viewer.object("a").focus();
+
+    const visited: (string | undefined)[] = [];
+    for (const key of ["ArrowRight", "ArrowDown", "ArrowDown", "ArrowUp", "Home", "End"]) {
+      await page.keyboard.press(key);
+      visited.push(await focusedId(viewer));
+    }
+
+    expect(visited).toEqual(["b", "c", "c", "b", "a", "c"]);
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "");
+    await expect(viewer.object("c")).toHaveAttribute("tabindex", "0");
+  });
+
+  test("tabStop_ShouldStayOnObjectFocusedLast_WhenFocusLeavesAndAnotherObjectChanges", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addThree(viewer);
+    await viewer.object("a").focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      (document.activeElement as HTMLElement).blur();
+      element.updateObject("b", { rect: { x: 360, y: 100, width: 200, height: 100 } });
+    });
+
+    await expect(viewer.object("c")).toHaveAttribute("tabindex", "0");
+    await expect(page.locator('[data-object-id][tabindex="0"]')).toHaveCount(1);
+  });
+
+  // In browsers that have the shortcut, Alt with the left arrow key goes back in history. Playwright's keys don't
+  // trigger browser shortcuts, so the test checks that the viewer canceled the key's default action.
+  test("altArrowKey_ShouldCancelBrowserAction_WhenFocusedObjectIsLocked", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start, locked: true });
+    await page.evaluate(() => document.addEventListener("keydown", (event) => {
+      (window as unknown as { canceled: boolean }).canceled = event.defaultPrevented;
+    }));
+    await viewer.object("a").focus();
+
+    await page.keyboard.press("Alt+ArrowLeft");
+
+    expect(await page.evaluate(() => (window as unknown as { canceled: boolean }).canceled)).toBe(true);
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  test("arrowKeys_ShouldSkipObjectsUserCannotReach_WhenMovingFocus", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addThree(viewer);
+    await viewer.host.evaluate((element: PdfViewerElement) => element.updateObject("b", { selectable: false }));
+    await viewer.object("a").focus();
+
+    await page.keyboard.press("ArrowRight");
+
+    expect(await focusedId(viewer)).toBe("c");
+  });
+
+  for (const key of ["Space", "Enter"]) {
+    test(`${key.toLowerCase()}Key_ShouldSelectFocusedObject_WhenPressed`, async ({ page }) => {
+      const viewer = await openViewer(page);
+      await addThree(viewer);
+      await viewer.object("b").focus();
+
+      await page.keyboard.press(key);
+
+      await expect(viewer.host).toHaveAttribute("data-selected-object", "b");
+    });
+  }
+
+  test("focus_ShouldSelectObject_WhenSelectOnFocusIsOn", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ selectOnFocus: true }));
+    await addThree(viewer);
+    await viewer.object("a").focus();
+
+    await page.keyboard.press("ArrowRight");
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "b");
+  });
+
+  test("altArrowKey_ShouldSelectAndMoveFocusedObject_WhenPressed", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
     const events = await viewer.recordUpdated();
 
     await viewer.object("a").focus();
-    await page.keyboard.press("ArrowRight");
-    await page.keyboard.press("Control+ArrowDown");
+    await page.keyboard.press("Alt+ArrowRight");
+    await page.keyboard.press("Alt+Control+ArrowDown");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,110,200,100");
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
     expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge", "nudge"]);
   });
 
-  test("shiftArrowKey_ShouldResizeFocusedObject_WhenPressed", async ({ page }) => {
+  test("altShiftArrowKey_ShouldResizeFocusedObject_WhenPressed", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
     const events = await viewer.recordUpdated();
 
     await viewer.object("a").focus();
-    await page.keyboard.press("Shift+ArrowRight");
+    await page.keyboard.press("Alt+Shift+ArrowRight");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,201,100");
     expect((await events()).map(({ gesture }) => gesture)).toEqual(["resize"]);
   });
 
-  test("arrowKey_ShouldMoveObjectAsDisplayed_WhenPageIsRotated", async ({ page }) => {
+  test("altArrowKey_ShouldMoveObjectAsDisplayed_WhenPageIsRotated", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.setRotation(90);
     await viewer.addObject({ id: "a", page: 1, rect: start });
     const before = (await viewer.object("a").boundingBox())!;
 
     await viewer.object("a").focus();
-    await page.keyboard.press("Control+ArrowRight");
+    await page.keyboard.press("Alt+Control+ArrowRight");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,90,200,100");
     const after = (await viewer.object("a").boundingBox())!;
@@ -496,11 +607,25 @@ test.describe("keyboard", () => {
     expect(after.y - before.y).toBeCloseTo(0, 0);
   });
 
+  test("altArrowKey_ShouldAnnounceNewPosition_WhenObjectIsMovedOrResized", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start, label: "Heading" });
+    const announcer = page.locator(".pv-announcer");
+    await viewer.object("a").focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+    await expect(announcer).toHaveText("Heading moved to 101, 100");
+    await page.keyboard.press("Alt+Shift+ArrowDown");
+
+    await expect(announcer).toHaveText("Heading resized to 200 by 101");
+    await expect(announcer).toHaveAttribute("aria-live", "polite");
+  });
+
   test("escapeKey_ShouldClearSelection_WhenObjectIsFocused", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
-    await viewer.object("a").focus();
+    await viewer.object("a").click();
     await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
     await page.keyboard.press("Escape");
 
@@ -517,6 +642,37 @@ test.describe("keyboard", () => {
     await expect(viewer.object("a")).toHaveCount(0);
   });
 
+  test("deleteKey_ShouldMoveFocusToNextObject_WhenFocusedObjectIsRemoved", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addThree(viewer);
+    await viewer.object("b").focus();
+
+    await page.keyboard.press("Delete");
+
+    await expect(viewer.object("b")).toHaveCount(0);
+    expect(await focusedId(viewer)).toBe("c");
+  });
+
+  test("deleteKey_ShouldMoveFocusToPreviousObject_WhenLastObjectIsRemoved", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addThree(viewer);
+    await viewer.object("c").focus();
+
+    await page.keyboard.press("Delete");
+
+    expect(await focusedId(viewer)).toBe("b");
+  });
+
+  test("deleteKey_ShouldLeaveFocusOnObjectList_WhenOnlyObjectIsRemoved", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    await viewer.object("a").focus();
+
+    await page.keyboard.press("Delete");
+
+    await expect(page.locator(".pv-objects")).toBeFocused();
+  });
+
   test("deleteKey_ShouldDoNothing_WhenLocked", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start, locked: true });
@@ -527,49 +683,47 @@ test.describe("keyboard", () => {
     await expect(viewer.object("a")).toHaveCount(1);
   });
 
-  test("arrowKey_ShouldMoveByConfiguredSteps_WhenStepAndModifierAreSet", async ({ page }) => {
+  test("altArrowKey_ShouldMoveByConfiguredSteps_WhenStepsAndModifiersAreSet", async ({ page }) => {
     const viewer = await openViewer(page);
-    await viewer.host.evaluate((element: PdfViewerElement) =>
-      element.configure({ keyboardStep: 5, keyboardLargeStep: 50, keyboardLargeStepModifier: "alt" }));
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ keyboardStep: 5,
+      keyboardLargeStep: 50, keyboardMoveModifier: "ctrl", keyboardLargeStepModifier: "alt" }));
     await viewer.addObject({ id: "a", page: 1, rect: start });
     const events = await viewer.recordUpdated();
 
     await viewer.object("a").focus();
-    await page.keyboard.press("ArrowRight");
-    await page.keyboard.press("Alt+ArrowDown");
+    await page.keyboard.press("Control+ArrowRight");
+    await page.keyboard.press("Control+Alt+ArrowDown");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "105,150,200,100");
     expect((await events()).map(({ origin, gesture }) => [origin, gesture]))
       .toEqual([["user", "nudge"], ["user", "nudge"]]);
   });
 
-  test("arrowKey_ShouldStopAtPageEdge_WhenConfiguredStepWouldPassIt", async ({ page }) => {
+  test("altArrowKey_ShouldStopAtPageEdge_WhenLargeStepWouldPassIt", async ({ page }) => {
     const viewer = await openViewer(page);
-    await viewer.host.evaluate((element: PdfViewerElement) =>
-      element.configure({ keyboardLargeStep: 300, keyboardLargeStepModifier: "alt" }));
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ keyboardLargeStep: 300 }));
     await viewer.addObject({ id: "a", page: 1, rect: start });
 
     await viewer.object("a").focus();
-    await page.keyboard.press("Alt+ArrowRight");
-    await page.keyboard.press("Alt+ArrowRight");
+    await page.keyboard.press("Alt+Control+ArrowRight");
+    await page.keyboard.press("Alt+Control+ArrowRight");
 
     // The page is 612 units wide, so an object 200 wide can go no further than 412.
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "412,100,200,100");
   });
 
-  test("arrowKey_ShouldReachHostAndMoveNothing_WhenHeldWithModifierThatIsNotConfigured", async ({ page }) => {
+  test("arrowKey_ShouldReachHostAndMoveNothing_WhenHeldWithModifierOtherThanMoveModifier", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
     await page.evaluate(() => {
       document.addEventListener("keydown", (event) => {
         (window as unknown as { lastKey: string }).lastKey = event.key;
-        // Alt with an arrow key can be a browser shortcut, such as going back or forward.
         event.preventDefault();
       });
     });
 
     await viewer.object("a").focus();
-    await page.keyboard.press("Alt+ArrowUp");
+    await page.keyboard.press("Control+ArrowUp");
 
     expect(await page.evaluate(() => (window as unknown as { lastKey: string }).lastKey)).toBe("ArrowUp");
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
@@ -605,7 +759,7 @@ test.describe("keyboard", () => {
 
     expect((await requests()).map(({ object }) => object.id)).toEqual(["a"]);
     await expect(viewer.object("a")).toHaveCount(1);
-    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+    await expect(viewer.object("a")).toBeFocused();
   });
 
   test("deleteKey_ShouldAskNothing_WhenObjectIsLocked", async ({ page }) => {
@@ -632,6 +786,134 @@ test.describe("keyboard", () => {
     await page.keyboard.press("q");
 
     expect(await page.evaluate(() => (window as unknown as { lastKey: string }).lastKey)).toBe("q");
+  });
+});
+
+test.describe("keyboard scope", () => {
+  /** Puts a button and a text field in a panel beside the viewer, and makes the panel the viewer's keyboard scope. */
+  async function addPanel(viewer: Viewer): Promise<void> {
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      const panel = document.createElement("div");
+      panel.id = "panel";
+      panel.innerHTML = '<button id="in-panel">Item</button><input id="field"><input type="checkbox" id="check">';
+      const outside = document.createElement("button");
+      outside.id = "outside";
+      document.body.append(panel, outside);
+      element.keyboardScope = panel;
+      // Alt with an arrow key can be a browser shortcut, such as going back or forward.
+      document.addEventListener("keydown", (event) => event.preventDefault());
+    });
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    await viewer.host.evaluate((element: PdfViewerElement) => element.selectObject("a"));
+  }
+
+  test("altArrowKey_ShouldMoveSelectedObject_WhenPressedWithFocusInScope", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    const events = await viewer.recordUpdated();
+    await page.locator("#in-panel").focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+    await page.keyboard.press("Alt+Shift+ArrowDown");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,101");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge", "resize"]);
+    await expect(page.locator("#in-panel")).toBeFocused();
+  });
+
+  test("altArrowKey_ShouldMoveNothing_WhenFocusIsInTextFieldInScope", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    await page.locator("#field").focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  test("altArrowKey_ShouldMoveSelectedObject_WhenFocusIsOnCheckboxInScope", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    await page.locator("#check").focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
+  });
+
+  test("altArrowKey_ShouldCancelBrowserAction_WhenSelectedObjectIsLockedAndFocusIsInScope", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.updateObject("a", { locked: true });
+      // On the panel, after the viewer's own listener there, so the document's catch-all hasn't run yet.
+      document.querySelector("#panel")!.addEventListener("keydown", (event) => {
+        (window as unknown as { canceled: boolean }).canceled = event.defaultPrevented;
+      });
+    });
+    await page.locator("#in-panel").focus();
+
+    await page.keyboard.press("Alt+ArrowLeft");
+
+    expect(await page.evaluate(() => (window as unknown as { canceled: boolean }).canceled)).toBe(true);
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  test("altArrowKey_ShouldMoveNothing_WhenFocusIsOutsideScope", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    await page.locator("#outside").focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  test("keys_ShouldLeaveScopeAlone_WhenTheyDoNotEditObjects", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    await page.locator("#in-panel").focus();
+
+    for (const key of ["ArrowRight", "Delete", "Escape", "Space"]) {
+      await page.keyboard.press(key);
+    }
+
+    await expect(viewer.object("a")).toHaveCount(1);
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+  });
+
+  test("keyboardScope_ShouldStopApplying_WhenSetToNull", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.keyboardScope = null;
+    });
+    await page.locator("#in-panel").focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+});
+
+test.describe("accessible names", () => {
+  test("viewer_ShouldBeNamedRegionWithNamedPages_WhenDocumentIsOpen", async ({ page }) => {
+    await openViewer(page);
+
+    await expect(page.getByRole("region", { name: "PDF viewer" })).toHaveCount(1);
+    await expect(page.getByRole("group", { name: "Page 1" })).toHaveCount(1);
+  });
+
+  test("viewer_ShouldKeepApplicationsName_WhenOneIsGivenBeforeItConnects", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+    await page.evaluate(() => {
+      const element = document.createElement("pdf-viewer");
+      element.setAttribute("aria-label", "Contract");
+      document.body.append(element);
+    });
+
+    await expect(page.getByRole("region", { name: "Contract" })).toHaveCount(1);
   });
 });
 

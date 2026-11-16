@@ -3,7 +3,9 @@
 The viewer's DOM is part of its public API. These attributes aren't stripped from production builds, so what you test is
 what ships. Wait on them instead of using timers, and use them from any test framework.
 
-Everything sits inside `<pdf-viewer>`, in the light DOM, so ordinary selectors reach it.
+Everything sits inside `<pdf-viewer>`, in the light DOM, so ordinary selectors reach it. The viewer is a region named
+"PDF viewer" unless the application gives it `aria-label` or `aria-labelledby`, and each page is a group named "Page 2"
+or similar, so `getByRole("region", { name: "PDF viewer" })` and `getByRole("group", { name: "Page 2" })` find them.
 
 ## Viewer: `pdf-viewer`
 
@@ -54,6 +56,7 @@ depends on sharp pixels.
 | `data-locked`, `data-selectable` | `true` or `false` |
 | `data-editable-when-read-only` | `true` if the user can still select and edit the object while the viewer is read-only, otherwise `false` |
 | `aria-selected` | `true` or `false` |
+| `tabindex` | `0` on the one object Tab reaches on the page, and `-1` on the others |
 
 Objects also have `role="option"` and an accessible name, so `getByRole("option", { name: "..." })` works. An object
 without a label is named "Object 3 on page 2" or similar, with a number no other object on its page has. Which object
@@ -75,14 +78,21 @@ real elements, so a test can drag them with the real mouse. They appear only whe
 `selectObjects(ids)` selects several objects, each with `aria-selected="true"`. `selectedObjectIds` on the element lists
 them in the order selected.
 
-`moveObjectBy(id, deltaX, deltaY)` moves an object as an arrow key does. The distance is in page units as displayed, so
-positive x is right and positive y is down on screen at any rotation. The object stays on its page, a locked or hidden
-object doesn't move, and the move is reported as the user's `nudge`. It resolves to the object as it is afterward.
+`moveObjectBy(id, deltaX, deltaY)` moves an object as an arrow key with the move modifier does. The distance is in
+page units as displayed, so positive x is right and positive y is down on screen at any rotation. The object stays on
+its page, a locked or hidden object doesn't move, and the move is reported as the user's `nudge`. It resolves to the
+object as it is afterward.
 
 Setting `readOnly` on the element to `true` keeps the user from selecting, drawing and editing. Objects, the selection
 and the chosen tool stay as they are, and methods such as `updateObject` and `selectObject` still work. An object with
 `editableWhenReadOnly` set is the exception: the user can still select, move, resize and delete it, whichever tool is
 chosen.
+
+Set `keyboardScope` on the element to another element, such as one of the application's panels, and the keys that move
+and resize objects also work while focus is there, acting on the selected object. Keys pressed in a field that uses
+arrow keys itself, such as a text box, are left alone. When a key moves or resizes an object, `.pv-announcer`, a polite
+live region, gives its new position or size, for example "Heading moved to 101, 100" or "Heading resized to 200 by
+101".
 
 ## Draft: `[data-draft-id]`
 
@@ -140,7 +150,7 @@ These are bubbling `CustomEvent`s on `<pdf-viewer>`.
 | `pv-page-change` | `{ page }` |
 | `pv-object-drawn` | `{ object }`, the object the user finished drawing, with the draw tool's defaults applied. It's raised before the object is added, and it can be canceled. Unless a listener calls `preventDefault()`, the object is added at once and `pv-objects-changed` follows. A listener that cancels it keeps the object as a draft, and commits or discards it later |
 | `pv-delete-requested` | `{ object }`, the object the user pressed Delete on. It can be canceled. Unless a listener calls `preventDefault()`, the object is removed at once and `pv-objects-changed` follows. A listener that cancels it decides for itself, and removes the object if it agrees. The Blazor component cancels it whenever `OnDeleteRequested` has a handler. A locked object raises nothing |
-| `pv-objects-changed` | `{ sequence, origin, added, updated, removed }`, where `origin` is `user` or `api`. One event reports one change, however many objects it touched. `added` and `removed` list objects, the removed ones as they were. `updated` lists `{ object, previous, gesture }`, where `previous` is the object before the change. `gesture` is set when the user changed the rectangle: `move` for dragging the object, `resize` for dragging a handle or pressing Shift with an arrow key, `nudge` for an arrow key without Shift or a call to `moveObjectBy` |
+| `pv-objects-changed` | `{ sequence, origin, added, updated, removed }`, where `origin` is `user` or `api`. One event reports one change, however many objects it touched. `added` and `removed` list objects, the removed ones as they were. `updated` lists `{ object, previous, gesture }`, where `previous` is the object before the change. `gesture` is set when the user changed the rectangle: `move` for dragging the object, `resize` for dragging a handle or pressing the move modifier and Shift with an arrow key, `nudge` for the move modifier with an arrow key or a call to `moveObjectBy` |
 | `pv-selection-change` | `{ sequence, origin, ids, primaryId }`. `ids` has every selected object in the order selected, and `primaryId` is the last of them, or `null` |
 | `pv-error` | `{ code, message, documentFailed }`, where `code` is one of the `data-error-code` values when `documentFailed` is true. Otherwise it's `page` or `render` for a page that failed, or `command` for a rejected command from .NET. For a URL source, `network` also covers any other error from pdf.js, because it reports a refused connection as a generic error |
 

@@ -9,6 +9,16 @@
   background: var(--pv-viewer-background, #525659);
 }
 
+/* Read by screen readers, but not shown. */
+.pv-announcer {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* The stable gutter stops a scrollbar from changing the available width, which would refit the page in a loop. */
 .pv-viewport {
   position: absolute;

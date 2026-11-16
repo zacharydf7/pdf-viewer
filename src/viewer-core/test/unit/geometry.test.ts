@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { PageGeometry, Rect, Rotation } from "../../src/geometry.js";
 import { displayRectToPage, displaySize, displayToPage, fitScale, fractionToPage, moveRect, normalizeRotation,
-  pageRectToDisplay, pageRectToPercent, pageToDisplay, rectFromCorners, resizeRect, resizeRectBy, roundRect }
-  from "../../src/geometry.js";
+  pageRectToDisplay, pageRectToPercent, pageToDisplay, readingOrder, rectFromCorners, resizeRect, resizeRectBy,
+  roundRect } from "../../src/geometry.js";
 
 const rotations: readonly Rotation[] = [0, 90, 180, 270];
 const page = (rotation: Rotation): PageGeometry => ({ width: 600, height: 800, rotation });
@@ -148,5 +148,29 @@ describe("fitScale", () => {
 
   it("fitScale_ShouldUseTighterDimension_WhenFittingPage", () => {
     expect(fitScale("fit-page", { width: 500, height: 1000 }, { width: 1000, height: 100 })).toBe(0.1);
+  });
+});
+
+describe("readingOrder", () => {
+  const topLeft: Rect = { x: 10, y: 10, width: 50, height: 20 };
+  const topRight: Rect = { x: 400, y: 10, width: 50, height: 20 };
+  const bottomLeft: Rect = { x: 10, y: 600, width: 50, height: 20 };
+  const rects = [bottomLeft, topRight, topLeft];
+
+  it("readingOrder_ShouldGoTopToBottomThenLeftToRight_WhenPageIsUpright", () => {
+    expect(readingOrder(rects, page(0), (rect) => rect)).toEqual([topLeft, topRight, bottomLeft]);
+  });
+
+  // At 90 degrees the page's left edge is shown at the top, so its left-most objects come first, bottom to top.
+  it("readingOrder_ShouldFollowPageAsShown_WhenPageIsRotatedBy90", () => {
+    expect(readingOrder(rects, page(90), (rect) => rect)).toEqual([bottomLeft, topLeft, topRight]);
+  });
+
+  it("readingOrder_ShouldLeaveItsInputAlone_WhenSorting", () => {
+    const input = [...rects];
+
+    readingOrder(input, page(0), (rect) => rect);
+
+    expect(input).toEqual(rects);
   });
 });

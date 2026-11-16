@@ -1,6 +1,6 @@
 import type { Point, Rect, ResizeHandle } from "./geometry.js";
 import { moveRect, pageToDisplay, resizeRectBy } from "./geometry.js";
-import { rectAfterArrowKey } from "./keyboard-editing.js";
+import { rectAfterEdit } from "./keyboard-editing.js";
 import type { ObjectStore } from "./object-store.js";
 import type { ObjectKeyPress, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext, ToolPresentation }
   from "./tool.js";
@@ -101,10 +101,13 @@ export class SelectTool implements Tool {
     return drag !== undefined;
   }
 
-  /** Focusing an object, whether by Tab or by a press, selects it. */
+  /**
+   * Focusing an object selects it only when the options ask for that, so moving focus through the objects changes
+   * nothing. A press selects through pointerDown instead.
+   */
   focus(id: string): void {
     const object = this.#store.get(id);
-    if (object !== undefined && respondsToUser(object, this.#readOnly)) {
+    if (this.#context.options.selectOnFocus && object !== undefined && respondsToUser(object, this.#readOnly)) {
       this.#store.select([id], "user");
     }
   }
@@ -120,29 +123,34 @@ export class SelectTool implements Tool {
     }
   }
 
-  keyDown(input: ObjectKeyPress): boolean {
-    const object = this.#store.get(input.id);
-    if (!this.#context.options.keyboardEditing || this.#drag !== undefined || object === undefined
-      || !respondsToUser(object, this.#readOnly)) {
+  /**
+   * Selects, clears, deletes or edits. A key that moves or resizes an object selects it first, unless it's selected
+   * already, so the change is made to what the user is working on. A locked object can be selected, but not deleted
+   * or edited.
+   */
+  keyDown({ id, geometry, action }: ObjectKeyPress): boolean {
+    const object = this.#store.get(id);
+    if (this.#drag !== undefined || object === undefined || object.hidden || !respondsToUser(object, this.#readOnly)) {
       return false;
     }
-    if (input.key === "Escape") {
-      this.#store.select([], "user");
-    } else if (object.locked) {
-      return false;
-    } else if (input.key === "Delete") {
-      this.#context.requestDelete(object.id);
-    } else if (input.key.startsWith("Arrow")) {
-      const { options } = this.#context;
-      const rect = rectAfterArrowKey(input.geometry, object.rect, input, options, minimumResizeSize);
-      if (rect === undefined) {
-        return false;
-      }
-      commitRect(this.#store, object.id, rect, input.shiftKey ? "resize" : "nudge", input.geometry,
-        options.roundCoordinates);
-    } else {
+    if (action.kind === "select" || action.kind === "clear") {
+      this.#store.select(action.kind === "select" ? [id] : [], "user");
+      return true;
+    }
+    if (object.locked) {
       return false;
     }
+    if (action.kind === "delete") {
+      this.#context.requestDelete(id);
+      return true;
+    }
+    if (!this.#store.isSelected(id)) {
+      this.#store.select([id], "user");
+    }
+    const { options } = this.#context;
+    const rect = rectAfterEdit(geometry, object.rect, action, minimumResizeSize);
+    commitRect(this.#store, id, rect, action.resize ? "resize" : "nudge", geometry, options.roundCoordinates);
+    this.#context.announceEdit(id, action.resize);
     return true;
   }
 

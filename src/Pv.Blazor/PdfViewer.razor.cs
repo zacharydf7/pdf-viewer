@@ -25,6 +25,8 @@ public partial class PdfViewer
     private PdfViewerOptions? _sentOptions;
     private ViewerSubscriptions _sentSubscriptions;
     private bool _sentReadOnly;
+    /// <summary>The ID of the keyboard scope element last sent, or null when none was.</summary>
+    private string? _sentKeyboardScopeId;
     /// <summary>
     /// The objects the browser has, as far as .NET knows: those last sent, with the user's changes since.
     /// </summary>
@@ -91,6 +93,16 @@ public partial class PdfViewer
     /// Your own changes through <see cref="Objects"/> and the controller still apply.
     /// </summary>
     [Parameter] public bool ReadOnly { get; set; }
+
+    /// <summary>
+    /// An element of your page, such as a panel beside the viewer, where the keys that move and resize objects also
+    /// work while focus is there: <see cref="PdfViewerOptions.KeyboardMoveModifier"/> with an arrow key, with or
+    /// without Shift. They act on the selected object. Keys pressed in a field that uses arrow keys itself, such as a
+    /// text box, are left alone. Without it, those keys work only on a focused object in the viewer. Capture the
+    /// element with <c>@ref</c>, which is set after your component first renders, so render again once it is, for
+    /// example from <c>OnAfterRender</c>.
+    /// </summary>
+    [Parameter] public ElementReference? KeyboardScope { get; set; }
 
     /// <summary>
     /// Drives the viewer from code. Without one, the viewer uses its own, which only its toolbar reaches. Give each
@@ -180,6 +192,13 @@ public partial class PdfViewer
 
     protected override async Task OnParametersSetAsync()
     {
+        if (CurrentOptions.KeyboardMoveModifier == CurrentOptions.KeyboardLargeStepModifier)
+        {
+            throw new ArgumentException(
+                $"{nameof(PdfViewerOptions.KeyboardMoveModifier)} and " +
+                $"{nameof(PdfViewerOptions.KeyboardLargeStepModifier)} must be different keys, but both are " +
+                $"{CurrentOptions.KeyboardMoveModifier}.", nameof(Options));
+        }
         // Until the first render has attached, there's nothing to update, and attaching sends the latest parameters.
         if (_backend is null)
         {
@@ -257,6 +276,13 @@ public partial class PdfViewer
         {
             _sentReadOnly = ReadOnly;
             await backend.SetReadOnlyAsync(_sentReadOnly);
+        }
+        // An element reference that hasn't been captured yet has no ID, and stands for no element.
+        var scope = string.IsNullOrEmpty(KeyboardScope?.Id) ? null : KeyboardScope;
+        if (!_disposed && scope?.Id != _sentKeyboardScopeId)
+        {
+            _sentKeyboardScopeId = scope?.Id;
+            await backend.SetKeyboardScopeAsync(scope);
         }
         if (!_disposed && (Source is null ? _openedSource is not null : !Source.Equals(_openedSource)))
         {

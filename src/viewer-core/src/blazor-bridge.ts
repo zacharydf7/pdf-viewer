@@ -146,6 +146,9 @@ export class ViewerBridge {
   setReadOnly = (readOnly: boolean): void => {
     this.#host.readOnly = readOnly;
   };
+  setKeyboardScope = (element: Element | null): void => {
+    this.#host.keyboardScope = element;
+  };
   /** Resolves once the move has been applied, which waits for its page if that isn't displayed. */
   moveObjectBy = async (id: string, deltaX: number, deltaY: number): Promise<void> => {
     await this.#host.moveObjectBy(id, deltaX, deltaY);

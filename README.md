@@ -33,9 +33,12 @@ Set `ReadOnly` to keep the user from selecting, drawing or editing, for example 
 nothing about the objects, and the tool works again when you turn it off. An object with `EditableWhenReadOnly` set
 stays editable anyway, which suits a rectangle the dialog itself asks the user to adjust.
 
-Arrow keys move the focused object by steps you can set in the options, and `MoveObjectByAsync` does the same from
-code. To confirm a deletion, handle `OnDeleteRequested`: the Delete key then removes nothing until you take the object
-out of your list.
+The objects on a page are one tab stop. Arrow keys move focus between them without selecting, and Space or Enter
+selects. Alt with an arrow key moves the focused object, and adding Shift resizes it. You can change the modifier and
+the step sizes in the options. `MoveObjectByAsync` moves an object from code. To make Alt with an arrow key work from
+elsewhere in your page too, such as your own list of objects, pass that element as `KeyboardScope`; the keys then act
+on the selected object. To confirm a deletion, handle `OnDeleteRequested`: the Delete key then removes nothing
+until you take the object out of your list.
 
 `Pv` is a placeholder name, and the project will be renamed.
 

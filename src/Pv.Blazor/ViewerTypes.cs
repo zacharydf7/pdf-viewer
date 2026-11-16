@@ -163,9 +163,11 @@ public enum ViewerObjectHitArea
     [JsonStringEnumMemberName("border")] Border,
 }
 
-/// <summary>A key that, held with an arrow key, takes the large step. Shift isn't one, because it resizes.</summary>
-[JsonConverter(typeof(JsonStringEnumConverter<ViewerStepModifier>))]
-public enum ViewerStepModifier
+/// <summary>
+/// A key held with an arrow key to move an object or take the large step. Shift isn't one, because it resizes.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ViewerKeyModifier>))]
+public enum ViewerKeyModifier
 {
     [JsonStringEnumMemberName("ctrl")] Control,
     [JsonStringEnumMemberName("alt")] Alt,
@@ -190,25 +192,43 @@ public sealed record PdfViewerOptions
     public bool HideFormFields { get; init; }
 
     /// <summary>
-    /// Whether arrow keys and Delete edit the focused object and Escape clears the selection. Turn this off if your
-    /// application handles those keys, for example to record undo history.
+    /// Whether keys edit objects: <see cref="KeyboardMoveModifier"/> with an arrow key moves the focused object and
+    /// with Shift resizes it, Delete asks to delete it, and Escape clears the selection. Arrow keys, Home and End
+    /// move focus between objects, and Space and Enter select, either way. Turn this off if your application handles
+    /// the editing keys itself.
     /// </summary>
     public bool KeyboardEditing { get; init; } = true;
 
     /// <summary>
-    /// How far an arrow key moves or resizes the focused object, in page units. A value that isn't a positive number
-    /// is ignored.
+    /// How far <see cref="KeyboardMoveModifier"/> with an arrow key moves or resizes the focused object, in page units.
+    /// A value that isn't a positive number is ignored.
     /// </summary>
     public double KeyboardStep { get; init; } = 1;
 
     /// <summary>
-    /// How far an arrow key goes while <see cref="KeyboardLargeStepModifier"/> is held, in page units. A value that
-    /// isn't a positive number is ignored.
+    /// How far an arrow key goes while <see cref="KeyboardLargeStepModifier"/> is held as well, in page units. A value
+    /// that isn't a positive number is ignored.
     /// </summary>
     public double KeyboardLargeStep { get; init; } = 10;
 
-    /// <summary>The key that, held with an arrow key, takes the large step.</summary>
-    public ViewerStepModifier KeyboardLargeStepModifier { get; init; } = ViewerStepModifier.Control;
+    /// <summary>
+    /// The key that, held with an arrow key, moves or resizes the object rather than moving focus. It has to differ
+    /// from <see cref="KeyboardLargeStepModifier"/>; <see cref="PdfViewer"/> throws an
+    /// <see cref="ArgumentException"/> if they're the same.
+    /// </summary>
+    public ViewerKeyModifier KeyboardMoveModifier { get; init; } = ViewerKeyModifier.Alt;
+
+    /// <summary>
+    /// The key that, held with <see cref="KeyboardMoveModifier"/> and an arrow key, takes the large step.
+    /// </summary>
+    public ViewerKeyModifier KeyboardLargeStepModifier { get; init; } = ViewerKeyModifier.Control;
+
+    /// <summary>
+    /// Whether an object is selected when it takes focus, by Tab or an arrow key. When off, moving focus through the
+    /// objects changes nothing in your application: Space or Enter selects the focused object, and so does moving it
+    /// with a key. Clicking selects either way.
+    /// </summary>
+    public bool SelectOnFocus { get; init; }
 
     /// <summary>Rounds rectangles the user creates or changes to whole page units.</summary>
     public bool RoundCoordinates { get; init; }

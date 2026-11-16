@@ -58,7 +58,8 @@ await Expect(page.GetByText("Invoice total").OutsideViewers()).ToBeVisibleAsync(
 - **Selection.** `ClickObjectAsync(id)`, then assert on `viewer.Selected` or on what your application shows. Clicking
   an empty part of the page clears the selection.
 - **Keyboard.** Focus the object, then press keys: `await viewer.Object(id).FocusAsync();` and
-  `await page.Keyboard.PressAsync("ArrowRight");`. `data-page-rect` changes at once, and .NET hears of it shortly after.
+  `await page.Keyboard.PressAsync("Alt+ArrowRight");` to move it. Arrow keys alone move focus between objects, and
+  Space selects. `data-page-rect` changes at once, and .NET hears of it shortly after.
 - **Rotation.** Nothing changes: `DrawAsync` and `DragObjectByAsync` take the same values at every rotation. With page
   coordinates, a rectangle stays on the same content when the page turns.
 - **Drawn objects your application confirms.** With an `OnObjectDrawn` handler, a finished draw adds a draft to

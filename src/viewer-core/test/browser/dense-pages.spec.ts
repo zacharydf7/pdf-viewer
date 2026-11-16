@@ -91,7 +91,7 @@ test.describe("focus after a press", () => {
 
     const center = await viewer.center(viewer.object("a"));
     await page.mouse.click(center.x, center.y);
-    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Alt+ArrowRight");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,300,300");
   });
@@ -104,7 +104,7 @@ test.describe("focus after a press", () => {
     const from = await viewer.center(viewer.handle("se"));
     await viewer.drag(from, { x: from.x + 10, y: from.y });
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,310,300");
-    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Alt+ArrowRight");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,310,300");
   });

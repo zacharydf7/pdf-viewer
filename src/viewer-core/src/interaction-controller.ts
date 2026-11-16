@@ -1,5 +1,6 @@
 import { DrawRectTool } from "./draw-rect-tool.js";
 import { fractionToPage } from "./geometry.js";
+import { keyAction } from "./keyboard-editing.js";
 import type { ObjectStore } from "./object-store.js";
 import type { ObjectView } from "./object-view.js";
 import { SelectTool } from "./select-tool.js";
@@ -22,15 +23,23 @@ export interface InteractivePage {
  * way.
  */
 export class InteractionController {
+  readonly #root: HTMLElement;
   readonly #pages = new Set<InteractivePage>();
   readonly #context: ToolContext & { options: ToolOptions };
   #tool: Tool | undefined;
   /** The page a gesture's positions are measured against, and what removes the gesture's window listener. */
   #gesture: { page: InteractivePage; listener: AbortController } | undefined;
+  /** What removes the listener on the keyboard scope. */
+  #scopeListener: AbortController | undefined;
 
-  /** A tool that wants an object deleted calls requestDelete with its id. */
-  constructor(root: HTMLElement, store: ObjectStore, options: ToolOptions, requestDelete: (id: string) => void) {
-    this.#context = { store, show: (preview) => this.#show(preview), options, requestDelete };
+  /**
+   * A tool that wants an object deleted calls requestDelete with its id, and one that moved or resized an object with a
+   * key calls announceEdit.
+   */
+  constructor(root: HTMLElement, store: ObjectStore, options: ToolOptions,
+    { requestDelete, announceEdit }: Pick<ToolContext, "requestDelete" | "announceEdit">) {
+    this.#root = root;
+    this.#context = { store, show: (preview) => this.#show(preview), options, requestDelete, announceEdit };
     root.addEventListener("pointerdown", (event) => this.#onPointerDown(event));
     root.addEventListener("pointermove", (event) => this.#onPointerMove(event));
     root.addEventListener("pointerup", (event) => this.#onPointerUp(event));
@@ -51,6 +60,21 @@ export class InteractionController {
   /** Takes effect at once, even during a gesture, which carries on under the new options. */
   set options(options: ToolOptions) {
     this.#context.options = options;
+  }
+
+  /**
+   * An element outside the viewer, such as the part of the application around it, where keys that move or resize an
+   * object also work. They act on the selected object, unless focus is in a field that uses arrow keys itself, such as
+   * a text box. Null for none.
+   */
+  set keyboardScope(element: Element | null) {
+    this.#scopeListener?.abort();
+    this.#scopeListener = undefined;
+    if (element !== null) {
+      this.#scopeListener = new AbortController();
+      element.addEventListener("keydown", (event) => this.#onScopeKeyDown(event as KeyboardEvent),
+        { signal: this.#scopeListener.signal });
+    }
   }
 
   /**
@@ -169,25 +193,62 @@ export class InteractionController {
   }
 
   #onFocusIn(event: FocusEvent): void {
-    const target = this.#pageOf(event.target)?.objects.targetOf(event.target);
+    const page = this.#pageOf(event.target);
+    const target = page?.objects.targetOf(event.target);
     if (target?.kind === "object") {
+      page!.objects.noteFocus(target.id);
       this.#tool?.focus?.(target.id);
     }
   }
 
-  /** Only handled keys stop propagating, so a host application's own shortcuts keep working. */
+  /**
+   * Keys on a focused object. Moving focus between objects belongs to the list, and everything else to the tool. Only
+   * handled keys stop propagating, so a host application's own shortcuts keep working.
+   */
   #onKeyDown(event: KeyboardEvent): void {
     const page = this.#pageOf(event.target);
     const target = page?.objects.targetOf(event.target);
-    if (target?.kind !== "object") {
+    const action = target?.kind === "object" ? keyAction(event, this.#context.options) : undefined;
+    if (action === undefined) {
       return;
     }
-    const { key, shiftKey, ctrlKey, altKey, metaKey } = event;
-    const press = { id: target.id, geometry: page!.objects.geometry, key, shiftKey, ctrlKey, altKey, metaKey };
-    if (this.#tool?.keyDown?.(press)) {
-      event.preventDefault();
+    if (action.kind === "focus") {
+      page!.objects.moveFocus(target!.id, action.to);
+    } else if (!this.#tool?.keyDown?.({ id: target!.id, geometry: page!.objects.geometry, action })) {
+      // A move key the tool turns down, as on a locked object, still mustn't reach the browser, where Alt with an
+      // arrow key goes back or forward in the browser's history.
+      if (action.kind === "edit") {
+        event.preventDefault();
+      }
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  /**
+   * Keys in the keyboard scope outside the viewer, which only move or resize the selected object. Like a key on a
+   * focused object, one the tool turns down doesn't reach the browser either.
+   */
+  #onScopeKeyDown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || this.#root.contains(event.target as Node) || takesArrowKeys(event.target)) {
+      return;
+    }
+    const action = keyAction(event, this.#context.options);
+    const id = this.#context.store.primarySelectedId;
+    const page = id === null ? undefined : [...this.#pages].find(({ objects }) => objects.shows(id));
+    if (action?.kind !== "edit" || page === undefined) {
+      return;
+    }
+    event.preventDefault();
+    if (this.#tool?.keyDown?.({ id: id!, geometry: page.objects.geometry, action })) {
       event.stopPropagation();
     }
+  }
+
+  /** Detaches from the keyboard scope, which can outlive the viewer. */
+  dispose(): void {
+    this.keyboardScope = null;
   }
 
   #pageOf(target: EventTarget | null): InteractivePage | undefined {
@@ -206,4 +267,21 @@ export class InteractionController {
     const { geometry } = page.objects;
     return { page: page.pageNumber, geometry, point: fractionToPage(geometry, x, y) };
   }
+}
+
+/** Input types that don't use arrow keys, so the viewer's keys still work while one has focus. */
+const inputsWithoutArrowKeys = new Set(["button", "checkbox", "color", "file", "image", "reset", "submit"]);
+
+/**
+ * Whether an element uses arrow keys itself, as a text box, list or slider does, so keys pressed in it belong to it
+ * rather than to the viewer.
+ */
+function takesArrowKeys(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target instanceof HTMLInputElement) {
+    return !inputsWithoutArrowKeys.has(target.type);
+  }
+  return target.isContentEditable || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
 }

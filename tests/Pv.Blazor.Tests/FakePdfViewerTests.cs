@@ -357,14 +357,47 @@ public class FakePdfViewerTests : BunitContext
     }
 
     [Fact]
-    public async Task SimulateDeleteKeyAsync_ShouldOnlySelect_WhenObjectIsLocked()
+    public async Task SimulateDeleteKeyAsync_ShouldNeitherSelectNorDelete_WhenObjectIsLocked()
     {
         await OpenAsync(objects: Region with { Locked = true });
 
         await Viewer.SimulateDeleteKeyAsync("region");
 
-        Assert.Equal(["region"], Viewer.SelectedObjectIds);
+        Assert.Empty(Viewer.SelectedObjectIds);
         Assert.Single(Viewer.Objects);
+    }
+
+    [Fact]
+    public async Task SimulateDeleteKeyAsync_ShouldSelectFocusedObject_WhenSelectOnFocusIsOn()
+    {
+        await OpenAsync(parameters => parameters.Add(p => p.Options, new() { SelectOnFocus = true }),
+            Region with { Locked = true });
+
+        await Viewer.SimulateDeleteKeyAsync("region");
+
+        Assert.Equal(["region"], Viewer.SelectedObjectIds);
+    }
+
+    [Fact]
+    public async Task SimulateEditAsync_ShouldKeepSelection_WhenNudgingOneOfSeveralSelectedObjects()
+    {
+        var other = Region with { Id = "other", Rect = new PageRect(300, 300, 50, 50) };
+        var page = await OpenAsync(objects: [Region, other]);
+        await page.Instance.Controller.SelectObjectsAsync(["region", "other"]);
+
+        await Viewer.SimulateEditAsync("region", new PageRect(51, 50, 150, 80), EditGesture.Nudge);
+
+        Assert.Equal(["region", "other"], Viewer.SelectedObjectIds);
+    }
+
+    [Fact]
+    public void KeyboardScope_ShouldReachFake_WhenComponentSendsIt()
+    {
+        var scope = new ElementReference("panel");
+
+        Render<PdfViewer>(parameters => parameters.Add(viewer => viewer.KeyboardScope, scope));
+
+        Assert.Equal("panel", Viewer.KeyboardScope?.Id);
     }
 
     [Fact]

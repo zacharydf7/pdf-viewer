@@ -1,5 +1,5 @@
 import type { PageGeometry, Rect, ResizeHandle } from "./geometry.js";
-import { pageRectToPercent } from "./geometry.js";
+import { compareReadingOrder, pageRectToDisplay, pageRectToPercent, readingOrder } from "./geometry.js";
 import type { ObjectStore, PageObject } from "./object-store.js";
 import { isOnPage } from "./object-store.js";
 import type { DrawDefaults, PointerTarget, Preview, ToolPresentation } from "./tool.js";
@@ -43,6 +43,15 @@ export class ObjectView {
   #draft: HTMLElement | undefined;
   /** The store's drafts on this page, which are drawn but not objects yet, so they're shown and take no input. */
   readonly #draftElements = new Map<string, HTMLElement>();
+  /**
+   * The one object Tab reaches, as in a listbox: the selected object, or else the object focused last, or else the
+   * first in reading order.
+   */
+  #tabStop: string | undefined;
+  /** Which of those the tab stop is, which decides what a change to other objects can do to it. */
+  #tabStopIs: "selected" | "focused" | "first" = "first";
+  /** Where the focused object was when a change removed it, so focus can go to its neighbor. */
+  #lostFocusAt: Rect | undefined;
 
   constructor(page: HTMLElement, pageNumber: number, geometry: PageGeometry, store: ObjectStore,
     presentation: ToolPresentation) {
@@ -95,6 +104,39 @@ export class ObjectView {
     this.#objectElements.get(id)?.focus({ preventScroll: true });
   }
 
+  /** Whether an object is shown on this page. */
+  shows(id: string): boolean {
+    return this.#objectElements.has(id);
+  }
+
+  /** An object's accessible name, as screen readers announce it. */
+  nameOf(id: string): string | undefined {
+    return this.#objectElements.get(id)?.getAttribute("aria-label") ?? undefined;
+  }
+
+  /** Makes a focused object the one Tab reaches, so leaving the list and coming back returns to it. */
+  noteFocus(id: string): void {
+    this.#setTabStop(id, "focused");
+  }
+
+  /**
+   * Moves focus from an object to another in reading order, without wrapping at either end, and scrolls only as far
+   * as it takes to show it.
+   */
+  moveFocus(from: string, to: "previous" | "next" | "first" | "last"): void {
+    const order = this.#focusableInReadingOrder();
+    const index = order.findIndex(({ id }) => id === from);
+    const target = to === "first" ? order[0]
+      : to === "last" ? order.at(-1)
+        : order[Math.min(Math.max(index + (to === "next" ? 1 : -1), 0), order.length - 1)];
+    if (target !== undefined && target.id !== from) {
+      this.#setTabStop(target.id, "focused");
+      const element = this.#objectElements.get(target.id)!;
+      element.focus({ preventScroll: true });
+      element.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }
+
   /** Scrolls the viewport only as far as it takes to show the object. */
   scrollIntoView(id: string): void {
     this.#objectElements.get(id)?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -118,6 +160,7 @@ export class ObjectView {
     this.#shownSelection = this.#store.selectedIds;
     this.#syncHandles();
     this.syncDrafts();
+    this.#syncFocus();
   }
 
   /** Brings the draft elements in line with the store's drafts on this page. */
@@ -169,6 +212,7 @@ export class ObjectView {
     if (this.#draftElements.size > 0) {
       this.syncDrafts();
     }
+    this.#syncFocus(ids);
   }
 
   /** Updates only the objects whose selected state changed, which matters on pages with hundreds of objects. */
@@ -188,6 +232,7 @@ export class ObjectView {
     }
     this.#shownSelection = this.#store.selectedIds;
     this.#syncHandles();
+    this.#syncFocus();
   }
 
   /** Shows the part of a gesture's preview on this page. Undefined puts every object back where the store has it. */
@@ -219,6 +264,9 @@ export class ObjectView {
   }
 
   #removeElement(id: string, element: HTMLElement): void {
+    if (element.contains(document.activeElement)) {
+      this.#lostFocusAt = parseRect(element.dataset.pageRect);
+    }
     element.remove();
     this.#objectElements.delete(id);
     this.#appliedStates.delete(id);
@@ -271,7 +319,7 @@ export class ObjectView {
     const label = object.label ?? `Object ${this.#numbers.get(object.id)} on page ${this.#pageNumber}`;
     element.setAttribute("aria-label", label);
     element.setAttribute("aria-selected", String(selected));
-    element.tabIndex = focusable ? 0 : -1;
+    element.tabIndex = focusable && object.id === this.#tabStop ? 0 : -1;
     element.style.setProperty("--pv-object-color", object.style?.color ?? "");
     element.style.setProperty("--pv-object-fill", object.style?.fill ?? "");
     element.style.setProperty("--pv-object-border-width", object.style?.borderWidth ?? "");
@@ -301,6 +349,92 @@ export class ObjectView {
     element.style.top = `${percent.y}%`;
     element.style.width = `${percent.width}%`;
     element.style.height = `${percent.height}%`;
+  }
+
+  /**
+   * Gives focus a new home when a change removed the focused object: its next neighbor in reading order, the one before
+   * it if it was last, or the list itself once it's empty. Then keeps the tab stop on an object Tab can reach. While
+   * the tab stop is the first object, only the objects a change touched are compared with it, so adding objects one at
+   * a time doesn't visit every object each time.
+   */
+  #syncFocus(changed?: readonly string[]): void {
+    const lostAt = this.#lostFocusAt;
+    this.#lostFocusAt = undefined;
+    if (lostAt !== undefined) {
+      const lost = pageRectToDisplay(this.#geometry, lostAt);
+      const order = this.#focusableInReadingOrder();
+      const after = order.find(({ rect }) => compareReadingOrder(pageRectToDisplay(this.#geometry, rect), lost) >= 0);
+      const target = after ?? order.at(-1);
+      if (target === undefined) {
+        this.#objectsElement.tabIndex = -1;
+        this.#objectsElement.focus({ preventScroll: true });
+      } else {
+        this.#setTabStop(target.id, "focused");
+        this.#objectElements.get(target.id)!.focus({ preventScroll: true });
+      }
+    }
+    // Once focus is in the list, the tab stop follows it.
+    const tabStop = this.#tabStop;
+    const valid = tabStop !== undefined && this.#canFocus(tabStop);
+    if (this.#objectsElement.contains(document.activeElement)) {
+      if (!valid) {
+        this.#setTabStop(this.#firstFocusable(this.#objectElements.keys()), "first");
+      }
+      return;
+    }
+    const primary = this.#store.primarySelectedId;
+    if (primary !== null && this.#canFocus(primary)) {
+      this.#setTabStop(primary, "selected");
+    } else if (valid && this.#tabStopIs === "focused") {
+      // Leaving the list and coming back returns to the object focused last.
+    } else if (valid && this.#tabStopIs === "first" && changed !== undefined && !changed.includes(tabStop)) {
+      this.#setTabStop(this.#firstFocusable([tabStop, ...changed]), "first");
+    } else {
+      this.#setTabStop(this.#firstFocusable(this.#objectElements.keys()), "first");
+    }
+  }
+
+  /** The first object in reading order that the user can focus, among these, found without sorting them. */
+  #firstFocusable(ids: Iterable<string>): string | undefined {
+    let first: { id: string; position: Rect } | undefined;
+    for (const id of ids) {
+      if (this.#canFocus(id)) {
+        const position = pageRectToDisplay(this.#geometry, this.#store.get(id)!.rect);
+        if (first === undefined || compareReadingOrder(position, first.position) < 0) {
+          first = { id, position };
+        }
+      }
+    }
+    return first?.id;
+  }
+
+  #setTabStop(id: string | undefined, is: "selected" | "focused" | "first"): void {
+    this.#tabStopIs = is;
+    if (id === this.#tabStop) {
+      return;
+    }
+    const previous = this.#tabStop === undefined ? undefined : this.#objectElements.get(this.#tabStop);
+    if (previous !== undefined) {
+      previous.tabIndex = -1;
+    }
+    this.#tabStop = id;
+    const next = id === undefined ? undefined : this.#objectElements.get(id);
+    if (next !== undefined && this.#canFocus(id!)) {
+      next.tabIndex = 0;
+    }
+  }
+
+  /** Whether the user can focus an object here: it's shown, not hidden, and responds to the active tool. */
+  #canFocus(id: string): boolean {
+    const object = this.#store.get(id);
+    return object !== undefined && this.#objectElements.has(id) && !object.hidden && this.#presentation.focusable
+      && respondsToUser(object, this.#presentation.readOnly);
+  }
+
+  #focusableInReadingOrder(): PageObject[] {
+    const focusable = [...this.#objectElements.keys()].filter((id) => this.#canFocus(id))
+      .map((id) => this.#store.get(id)!);
+    return readingOrder(focusable, this.#geometry, ({ rect }) => rect);
   }
 
   /** Handles appear only when one object is selected, because they resize that object alone. */
@@ -360,6 +494,12 @@ function styleDraft(element: HTMLElement, { kind, cssClass, style }: DrawDefault
   }
   element.style.setProperty("--pv-object-color", style?.color ?? "");
   element.style.setProperty("--pv-object-border-width", style?.borderWidth ?? "");
+}
+
+/** Reads back what formatRect wrote. */
+function parseRect(value: string | undefined): Rect {
+  const [x = 0, y = 0, width = 0, height = 0] = (value ?? "").split(",").map(Number);
+  return { x, y, width, height };
 }
 
 /** A rectangle as data-page-rect shows it: x, y, width and height, to three decimal places at most. */

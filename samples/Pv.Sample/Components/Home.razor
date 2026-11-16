@@ -1,7 +1,7 @@
 @page "/"
 
 <div class="sample">
-    <aside class="sample-panel">
+    <aside class="sample-panel" @ref="_panel">
         <h1>PDF viewer sample</h1>
 
         <label>
@@ -89,6 +89,7 @@
                    OnDocumentLoaded="() => _loadCount++" OnObjectsChanged="HandleObjectsChanged"
                    OnSelectionChanged="ShowSelectedIds" OnObjectDrawn="DrawnObjectHandler"
                    OnDeleteRequested="DeleteRequestHandler" ReadOnly="_readOnly"
+                   KeyboardScope="@(KeyboardScope ? _panel : null)"
                    OnError="error => _lastError = error.Code.ToString()" />
     </main>
 </div>
@@ -97,6 +98,7 @@
     private readonly PdfViewerController _controller = new();
     private PdfViewerOptions _options = new();
     private ElementReference _fileInput;
+    private ElementReference _panel;
     private PdfSource? _source;
     private TaskCompletionSource<bool>? _pendingDialog;
     /// <summary>
@@ -155,12 +157,29 @@
     /// </summary>
     [SupplyParameterFromQuery] public bool EarlyCommands { get; set; }
 
+    /// <summary>
+    /// Lets Alt with an arrow key move the selected object while focus is in this panel, as it might in an
+    /// application's own list of objects.
+    /// </summary>
+    [SupplyParameterFromQuery] public bool KeyboardScope { get; set; }
+
     protected override void OnInitialized()
     {
         if (EarlyCommands)
         {
             _ = DrawHeading();
             _ = _controller.GoToPageAsync(3);
+        }
+    }
+
+    /// <summary>
+    /// The panel's element reference is set only once this has rendered, so render again to pass it on.
+    /// </summary>
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender && KeyboardScope)
+        {
+            StateHasChanged();
         }
     }
 

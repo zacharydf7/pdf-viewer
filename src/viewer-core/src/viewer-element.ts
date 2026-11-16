@@ -75,12 +75,24 @@ export class PdfViewerElement extends HTMLElement {
   #tool: ViewerTool = "select";
   #drawDefaults: DrawDefaults = {};
   #readOnly = false;
+  #keyboardScope: Element | null = null;
+  /** Where screen readers hear about changes they can't otherwise perceive, such as an object moved with a key. */
+  #announcer: HTMLElement | undefined;
 
   connectedCallback(): void {
     if (this.#viewport !== undefined) {
+      // Coming back after a teardown, which let go of the keyboard scope.
+      this.#controller!.keyboardScope = this.#keyboardScope;
       return;
     }
     this.classList.add("pv-viewer");
+    // The application can name the viewer itself, with aria-label or aria-labelledby.
+    if (!this.hasAttribute("role")) {
+      this.setAttribute("role", "region");
+    }
+    if (!this.hasAttribute("aria-label") && !this.hasAttribute("aria-labelledby")) {
+      this.setAttribute("aria-label", "PDF viewer");
+    }
     this.dataset.documentState = "idle";
     this.dataset.tool = this.#tool;
     this.dataset.readonly = String(this.#readOnly);
@@ -89,13 +101,19 @@ export class PdfViewerElement extends HTMLElement {
     this.dataset.lastChange = "0";
     this.#viewport = document.createElement("div");
     this.#viewport.className = "pv-viewport";
-    this.append(this.#viewport);
+    this.#announcer = document.createElement("div");
+    this.#announcer.className = "pv-announcer";
+    this.#announcer.setAttribute("aria-live", "polite");
+    this.append(this.#viewport, this.#announcer);
     this.#resizeObserver = new ResizeObserver(() => this.#onResize());
     this.#resizeObserver.observe(this.#viewport);
     // Not passive, because it has to stop the browser from zooming the whole page.
     this.#viewport.addEventListener("wheel", (event) => this.#onWheel(event), { passive: false });
-    this.#controller = new InteractionController(this.#viewport, this.#store, toolOptions(this.#options),
-      (id) => this.#onDeleteRequested(id));
+    this.#controller = new InteractionController(this.#viewport, this.#store, toolOptions(this.#options), {
+      requestDelete: (id) => this.#onDeleteRequested(id),
+      announceEdit: (id, resized) => this.#announceEdit(id, resized),
+    });
+    this.#controller.keyboardScope = this.#keyboardScope;
     this.#applyTool();
   }
 
@@ -124,9 +142,26 @@ export class PdfViewerElement extends HTMLElement {
   disconnectedCallback(): void {
     queueMicrotask(() => {
       if (!this.isConnected) {
+        this.#controller?.dispose();
         void this.close();
       }
     });
+  }
+
+  /**
+   * An element outside the viewer where the keys that move and resize objects also work, acting on the selected
+   * object, for example the part of the application around the viewer. Keys pressed in a field that uses arrow keys
+   * itself, such as a text box, are left alone. Null, the default, keeps those keys to the viewer itself.
+   */
+  get keyboardScope(): Element | null {
+    return this.#keyboardScope;
+  }
+
+  set keyboardScope(element: Element | null) {
+    this.#keyboardScope = element;
+    if (this.#controller !== undefined) {
+      this.#controller.keyboardScope = element;
+    }
   }
 
   /** The displayed page, or 0 when no document is open. */
@@ -699,15 +734,37 @@ export class PdfViewerElement extends HTMLElement {
     this.#emit("pv-error", { code, message: errorMessage(error), documentFailed: false });
   }
 
+  /**
+   * Tells screen readers where a key moved an object, or what size it resized it to, in the coordinates the viewer is
+   * set to use.
+   */
+  #announceEdit(id: string, resized: boolean): void {
+    const object = this.#store.get(id);
+    if (object === undefined || this.#announcer === undefined) {
+      return;
+    }
+    const { x, y, width, height } = object.rect;
+    const name = this.#view?.objects.nameOf(id) ?? id;
+    this.#announcer.textContent = resized
+      ? `${name} resized to ${formatNumber(width)} by ${formatNumber(height)}`
+      : `${name} moved to ${formatNumber(x)}, ${formatNumber(y)}`;
+  }
+
   /** Returns false if the event could be canceled and a listener canceled it. */
   #emit<Type extends keyof PvEventMap>(type: Type, detail: PvEventMap[Type], cancelable = false): boolean {
     return this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, cancelable }));
   }
 }
 
-function toolOptions({ keyboardEditing, keyboardStep, keyboardLargeStep, keyboardLargeStepModifier,
-  roundCoordinates }: ResolvedOptions): ToolOptions {
-  return { keyboardEditing, keyboardStep, keyboardLargeStep, keyboardLargeStepModifier, roundCoordinates };
+function toolOptions({ keyboardEditing, keyboardStep, keyboardLargeStep, keyboardMoveModifier,
+  keyboardLargeStepModifier, selectOnFocus, roundCoordinates }: ResolvedOptions): ToolOptions {
+  return { keyboardEditing, keyboardStep, keyboardLargeStep, keyboardMoveModifier, keyboardLargeStepModifier,
+    selectOnFocus, roundCoordinates };
+}
+
+/** A coordinate as a screen reader should read it: to one decimal place at most. */
+function formatNumber(value: number): string {
+  return String(Math.round(value * 10) / 10);
 }
 
 function clampPage(page: number, pageCount: number): number {
