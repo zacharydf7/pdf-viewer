@@ -652,7 +652,7 @@ public class PdfViewerTests : BunitContext
     {
         var options = new PdfViewerOptions
         {
-            InitialZoom = ViewerZoomMode.FitPage, HideFormFields = true, KeyboardEditing = false,
+            InitialZoom = ViewerZoomMode.FitPage, KeepZoom = true, HideFormFields = true, KeyboardEditing = false,
             KeyboardStep = 0.5, KeyboardLargeStep = 25, KeyboardMoveModifier = ViewerKeyModifier.Meta,
             KeyboardLargeStepModifier = ViewerKeyModifier.Alt, SelectOnFocus = true, RoundCoordinates = true,
             SelectOnCreate = true, WheelZoom = false,
@@ -662,7 +662,7 @@ public class PdfViewerTests : BunitContext
         var json = System.Text.Json.JsonSerializer.Serialize(options, InteropJson);
 
         const string expected = """
-            {"initialZoom":"fit-page","hideFormFields":true,"keyboardEditing":false,"keyboardStep":0.5,
+            {"initialZoom":"fit-page","keepZoom":true,"hideFormFields":true,"keyboardEditing":false,"keyboardStep":0.5,
             "keyboardLargeStep":25,"keyboardMoveModifier":"meta","keyboardLargeStepModifier":"alt",
             "selectOnFocus":true,"roundCoordinates":true,
             "selectOnCreate":true,"wheelZoom":false,"coordinates":"display","objectHitArea":"border"}

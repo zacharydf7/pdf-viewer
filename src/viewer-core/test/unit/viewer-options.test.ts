@@ -10,7 +10,7 @@ describe("merging", () => {
   });
 
   it("mergeOptions_ShouldChangeOnlyOptionsGiven_WhenGivenSome", () => {
-    const given = { roundCoordinates: true, selectOnCreate: true, objectHitArea: "border" } as const;
+    const given = { roundCoordinates: true, selectOnCreate: true, objectHitArea: "border", keepZoom: true } as const;
 
     expect(mergeOptions(defaultOptions, given)).toEqual({ ...defaultOptions, ...given });
   });

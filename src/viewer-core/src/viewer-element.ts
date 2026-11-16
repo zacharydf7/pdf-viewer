@@ -76,6 +76,8 @@ export class PdfViewerElement extends HTMLElement {
   #drawDefaults: DrawDefaults = {};
   #readOnly = false;
   #keyboardScope: Element | null = null;
+  /** How many page turns are under way, from fetching the page until it has rendered. */
+  #turns = 0;
   /** Where screen readers hear about changes they can't otherwise perceive, such as an object moved with a key. */
   #announcer: HTMLElement | undefined;
 
@@ -120,8 +122,7 @@ export class PdfViewerElement extends HTMLElement {
   /**
    * Applies the options given. Any left out keep their current values. They take effect at once without ending a
    * gesture, and the page repaints only for options that change how it's painted or measured. A new initial zoom takes
-   * effect only while no document is open. The zoom carries over from one document to the next, so a change made while
-   * one is open has no effect.
+   * effect at once while no document is open, and otherwise when the next document opens, unless keepZoom is on.
    */
   configure(options: ViewerOptions): void {
     const before = this.#options;
@@ -219,6 +220,10 @@ export class PdfViewerElement extends HTMLElement {
     const attempt = this.#openAttempt = {};
     // Set first, so a test waiting for "ready" can't be satisfied by the previous document.
     this.#setDocumentState("loading");
+    // Before anything is awaited, so a zoom set while this document loads applies to it.
+    if (!this.#options.keepZoom) {
+      this.#zoom = this.#options.initialZoom;
+    }
     let opened: EngineDocument;
     try {
       // Inside the try, so if the previous document fails to close, this open ends in the error state instead of staying
@@ -245,12 +250,19 @@ export class PdfViewerElement extends HTMLElement {
     const firstPage = clampPage(this.#requestedPage ?? initialPage, session.pageCount);
     this.#pageNumber = firstPage;
     this.dataset.currentPage = String(firstPage);
-    this.#setDocumentState("ready");
-    const navigation = this.#navigation;
-    this.#emit("pv-document-loaded", { pageCount: session.pageCount, pageLabels: session.pageLabels });
-    // A listener may already have navigated or closed the document, and that has to win.
-    if (session === this.#session && navigation === this.#navigation) {
-      await this.#showPage(session, firstPage, previousPage);
+    // The first page's turn counts from here, so the viewer doesn't look idle while listeners hear the document loaded.
+    this.#turns++;
+    try {
+      this.#setDocumentState("ready");
+      const navigation = this.#navigation;
+      this.#emit("pv-document-loaded", { pageCount: session.pageCount, pageLabels: session.pageLabels });
+      // A listener may already have navigated or closed the document, and that has to win.
+      if (session === this.#session && navigation === this.#navigation) {
+        await this.#showPage(session, firstPage, previousPage);
+      }
+    } finally {
+      this.#turns--;
+      this.#updateBusy();
     }
   }
 
@@ -478,7 +490,19 @@ export class PdfViewerElement extends HTMLElement {
     return { geometry, size: displaySize(geometry), bounds: view.element.getBoundingClientRect() };
   }
 
+  /** Counts the turn as busy until its page has rendered, or the turn has failed or been replaced. */
   async #showPage(session: DocumentSession, pageNumber: number, previousPage = this.#pageNumber): Promise<void> {
+    this.#turns++;
+    this.#updateBusy();
+    try {
+      await this.#turnTo(session, pageNumber, previousPage);
+    } finally {
+      this.#turns--;
+      this.#updateBusy();
+    }
+  }
+
+  async #turnTo(session: DocumentSession, pageNumber: number, previousPage: number): Promise<void> {
     const navigation = this.#navigation = {};
     let page: EnginePage;
     try {
@@ -500,9 +524,16 @@ export class PdfViewerElement extends HTMLElement {
     const view = new PageView(pageNumber, page, geometry, this.#store, this.#controller!.presentation, {
       onRendered: (scale) => this.#emit("pv-page-rendered", { page: pageNumber, scale }),
       onRenderError: (error) => this.#emitError("render", error),
+      onBusyChanged: () => this.#updateBusy(),
     });
     this.#replaceView(view);
     this.#viewport!.replaceChildren(view.element);
+    // Another page starts at its top left, rather than where the last one was scrolled to. A new document already does,
+    // because closing the last one emptied the viewport.
+    if (changed) {
+      this.#viewport!.scrollTop = 0;
+      this.#viewport!.scrollLeft = 0;
+    }
     const rendered = this.#renderCurrentPage();
     // Listeners hear about the page before it finishes painting, so they can replace its objects without waiting.
     if (changed) {
@@ -567,6 +598,16 @@ export class PdfViewerElement extends HTMLElement {
     if (view !== undefined) {
       this.#controller!.attach(view);
     }
+    this.#updateBusy();
+  }
+
+  /**
+   * Sets data-busy while a document is loading, a page turn is under way, or the page shown is rendering or extracting
+   * its text, so it's absent exactly when the viewer is idle.
+   */
+  #updateBusy(): void {
+    const busy = this.dataset.documentState === "loading" || this.#turns > 0 || (this.#view?.busy ?? false);
+    this.toggleAttribute("data-busy", busy);
   }
 
   /** The chosen tool is kept while the viewer is read-only, for when that ends. */
@@ -721,6 +762,7 @@ export class PdfViewerElement extends HTMLElement {
     if (state !== "error") {
       delete this.dataset.errorCode;
     }
+    this.#updateBusy();
   }
 
   #fail(error: unknown): void {

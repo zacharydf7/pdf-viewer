@@ -53,6 +53,176 @@ test.describe("hidden start", () => {
   });
 });
 
+test.describe("busy state", () => {
+  interface BusyChange {
+    busy: boolean;
+    page: string | undefined;
+    pageState: string | undefined;
+    textState: string | undefined;
+    renderScale: string | undefined;
+  }
+
+  /**
+   * Records the page as it is once per observer callback after data-busy comes or goes, so a test can check what the
+   * viewer had done by then. Changes within one task are merged into one entry, so a busy flag that drops and comes
+   * back before the task ends shows as two entries with busy set.
+   */
+  async function recordBusy(viewer: Viewer): Promise<() => Promise<BusyChange[]>> {
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      const changes: unknown[] = [];
+      new MutationObserver(() => {
+        const page = element.querySelector<HTMLElement>(".pv-page")?.dataset;
+        changes.push({ busy: element.hasAttribute("data-busy"), page: page?.pageNumber, pageState: page?.pageState,
+          textState: page?.textState, renderScale: page?.renderScale });
+      }).observe(element, { attributes: true, attributeFilter: ["data-busy"] });
+      (window as unknown as { busyChanges: unknown[] }).busyChanges = changes;
+    });
+    return () => viewer.page.evaluate(() => (window as unknown as { busyChanges: BusyChange[] }).busyChanges);
+  }
+
+  test("dataBusy_ShouldStayOnUntilPageAndTextAreReady_WhenDocumentOpens", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+    const changes = await recordBusy(viewer);
+
+    await viewer.open("letter");
+    await expect(viewer.host).not.toHaveAttribute("data-busy");
+
+    const recorded = await changes();
+    expect(recorded.map(({ busy }) => busy)).toEqual([true, false]);
+    expect(recorded[1]).toMatchObject({ page: "1", pageState: "rendered", textState: "ready" });
+  });
+
+  test("dataBusy_ShouldBeSetAtOnceAndStayUntilRendered_WhenZoomChanges", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    const changes = await recordBusy(viewer);
+
+    const busyAtOnce = await viewer.host.evaluate((element: PdfViewerElement) => {
+      void element.setZoom(2);
+      return element.hasAttribute("data-busy");
+    });
+    await expect(viewer.host).not.toHaveAttribute("data-busy");
+
+    expect(busyAtOnce).toBe(true);
+    expect((await changes()).at(-1)).toMatchObject({ busy: false, pageState: "rendered", renderScale: "2" });
+  });
+
+  test("dataBusy_ShouldBeSetAtOnceAndStayUntilNewPageIsReady_WhenTurningPage", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    const changes = await recordBusy(viewer);
+
+    const busyAtOnce = await viewer.host.evaluate((element: PdfViewerElement) => {
+      void element.goToPage(2);
+      return element.hasAttribute("data-busy");
+    });
+    await expect(viewer.host).not.toHaveAttribute("data-busy");
+
+    expect(busyAtOnce).toBe(true);
+    const recorded = await changes();
+    expect(recorded.map(({ busy }) => busy)).toEqual([true, false]);
+    expect(recorded[1]).toMatchObject({ page: "2", pageState: "rendered", textState: "ready" });
+  });
+
+  test("dataBusy_ShouldClear_WhenDocumentFailsToOpen", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+
+    await viewer.host.evaluate((element: PdfViewerElement, url) => {
+      void element.open({ kind: "url", url });
+    }, fixtureUrl("missing"));
+
+    await expect(viewer.host).toHaveAttribute("data-document-state", "error");
+    await expect(viewer.host).not.toHaveAttribute("data-busy");
+  });
+
+  test("dataBusy_ShouldClear_WhenDocumentIsClosedWhileLoading", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+
+    await viewer.host.evaluate(async (element: PdfViewerElement, url) => {
+      void element.open({ kind: "url", url });
+      await element.close();
+    }, fixtureUrl("letter"));
+
+    await expect(viewer.host).toHaveAttribute("data-document-state", "idle");
+    await expect(viewer.host).not.toHaveAttribute("data-busy");
+  });
+
+  test("dataBusy_ShouldBeAbsent_WhenPageWaitsForViewerToBeShown", async ({ page }) => {
+    const viewer = new Viewer(page);
+    await viewer.goto();
+    await viewer.host.evaluate((element: PdfViewerElement, url) => {
+      element.style.display = "none";
+      void element.open({ kind: "url", url });
+    }, fixtureUrl("letter"));
+    await expect(viewer.pageElement()).toHaveAttribute("data-page-state", "pending");
+
+    await expect(viewer.host).not.toHaveAttribute("data-busy");
+  });
+});
+
+test.describe("zoom and scroll for a new document or page", () => {
+  test("open_ShouldStartAtInitialZoom_WhenPreviousDocumentWasZoomed", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.setZoom(2.5);
+
+    await viewer.open("a4");
+
+    await expect(viewer.host).toHaveAttribute("data-zoom", "1");
+  });
+
+  test("open_ShouldUseZoomSetWhileLoading_WhenZoomIsSetBeforeDocumentIsReady", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+
+    await viewer.host.evaluate((element: PdfViewerElement, url) => {
+      void element.open({ kind: "url", url });
+      void element.setZoom(2);
+    }, fixtureUrl("a4"));
+    await viewer.waitForPage();
+
+    await expect(viewer.host).toHaveAttribute("data-zoom", "2");
+  });
+
+  test("open_ShouldKeepZoom_WhenKeepZoomIsOn", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1, keepZoom: true });
+    await viewer.setZoom(2.5);
+
+    await viewer.open("a4");
+
+    await expect(viewer.host).toHaveAttribute("data-zoom", "2.5");
+  });
+
+  test("goToPage_ShouldShowNewPageFromTop_WhenPreviousPageWasScrolled", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 3 });
+    const viewport = page.locator(".pv-viewport");
+    await viewport.evaluate((element) => element.scrollTo(200, 600));
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(2));
+
+    expect(await viewport.evaluate((element) => [element.scrollLeft, element.scrollTop])).toEqual([0, 0]);
+  });
+
+  test("goToPage_ShouldKeepScroll_WhenGivenPageAlreadyShown", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 3 });
+    const viewport = page.locator(".pv-viewport");
+    await viewport.evaluate((element) => element.scrollTo(0, 600));
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(1));
+
+    expect(await viewport.evaluate((element) => element.scrollTop)).toBe(600);
+  });
+
+  test("open_ShouldShowNewDocumentFromTop_WhenItOpensOnSamePageNumber", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 3, keepZoom: true });
+    const viewport = page.locator(".pv-viewport");
+    await viewport.evaluate((element) => element.scrollTo(0, 600));
+
+    await viewer.open("letter");
+
+    expect(await viewport.evaluate((element) => element.scrollTop)).toBe(0);
+  });
+});
+
 test.describe("fit and center", () => {
   test("page_ShouldBeCenteredAndFullyVisible_WhenFittingPage", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: "fit-page" }, "a4");

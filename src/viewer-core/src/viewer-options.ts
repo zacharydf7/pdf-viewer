@@ -4,10 +4,16 @@ export type ZoomSetting = number | "fit-width" | "fit-page";
 
 export interface ViewerOptions {
   /**
-   * The zoom to start with. Defaults to fit-width. Only a change made while no document is open takes effect, because
-   * the zoom carries over from one document to the next.
+   * The zoom each document opens at. Defaults to fit-width. A change takes effect at once while no document is open,
+   * and otherwise when the next one opens. With keepZoom on, the zoom carries over from one document to the next
+   * instead, so only a change made while no document is open takes effect.
    */
   initialZoom?: ZoomSetting;
+  /**
+   * Whether a document that opens keeps the zoom the last one had, instead of opening at initialZoom. Defaults to
+   * false.
+   */
+  keepZoom?: boolean;
   /** Leaves form fields unpainted, while other annotations still appear. Defaults to false. */
   hideFormFields?: boolean;
   /**
@@ -61,6 +67,7 @@ export type ResolvedOptions = Required<ViewerOptions>;
 
 export const defaultOptions: ResolvedOptions = Object.freeze({
   initialZoom: "fit-width",
+  keepZoom: false,
   hideFormFields: false,
   keyboardEditing: true,
   keyboardStep: 1,
@@ -86,6 +93,7 @@ export function mergeOptions(current: ResolvedOptions, options: ViewerOptions): 
   const zoom = options.initialZoom === undefined ? undefined : normalizeZoom(options.initialZoom);
   const merged: ResolvedOptions = {
     initialZoom: zoom ?? current.initialZoom,
+    keepZoom: options.keepZoom ?? current.keepZoom,
     hideFormFields: options.hideFormFields ?? current.hideFormFields,
     keyboardEditing: options.keyboardEditing ?? current.keyboardEditing,
     keyboardStep: positive(options.keyboardStep) ?? current.keyboardStep,

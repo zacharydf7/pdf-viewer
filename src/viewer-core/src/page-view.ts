@@ -7,6 +7,12 @@ import type { ToolPresentation } from "./tool.js";
 
 const maximumCanvasPixels = 2 ** 25;
 
+/** The page's render state, as data-page-state shows it. */
+type PageState = "pending" | "rendering" | "rendered" | "error";
+
+/** The page's text state, as data-text-state shows it. */
+type TextState = "pending" | "ready" | "error";
+
 /** How a page is displayed. */
 export interface PageDisplay {
   scale: number;
@@ -20,6 +26,8 @@ export interface PageDisplay {
 export interface PageViewListener {
   onRendered(scale: number): void;
   onRenderError(error: unknown): void;
+  /** The page started or stopped rendering or extracting its text. */
+  onBusyChanged(): void;
 }
 
 /**
@@ -36,6 +44,8 @@ export class PageView {
   #canvasRender: RenderHandle | undefined;
   #textRender: TextRender | undefined;
   #textReady = false;
+  #pageState: PageState | undefined;
+  #textState: TextState | undefined;
 
   constructor(pageNumber: number, page: EnginePage, geometry: PageGeometry, store: ObjectStore,
     presentation: ToolPresentation, listener: PageViewListener) {
@@ -50,10 +60,15 @@ export class PageView {
     this.objects = new ObjectView(this.element, pageNumber, geometry, store, presentation);
   }
 
+  /** Whether the page is rendering or extracting its text. */
+  get busy(): boolean {
+    return this.#pageState === "rendering" || this.#textState === "pending";
+  }
+
   /** Marks the page as waiting for a size to fit, which cancels any render under way. */
   markPending(): void {
     this.#cancelCanvasRender();
-    this.element.dataset.pageState = "pending";
+    this.#setPageState("pending");
   }
 
   /**
@@ -68,7 +83,7 @@ export class PageView {
     element.style.width = `${size.width}px`;
     element.style.height = `${size.height}px`;
     element.style.setProperty("--total-scale-factor", String(page.totalScale(scale)));
-    element.dataset.pageState = "rendering";
+    this.#setPageState("rendering");
     element.dataset.rotation = String(page.geometry(viewRotation).rotation);
     element.dataset.pageWidth = String(geometry.width);
     element.dataset.pageHeight = String(geometry.height);
@@ -86,7 +101,7 @@ export class PageView {
       await canvasRender.done;
     } catch (error) {
       if (!(error instanceof RenderCanceled) && canvasRender === this.#canvasRender) {
-        element.dataset.pageState = "error";
+        this.#setPageState("error");
         this.#listener.onRenderError(error);
       }
       return;
@@ -95,7 +110,7 @@ export class PageView {
       element.querySelector(":scope > .pv-canvas")?.remove();
       element.prepend(canvas);
       element.dataset.renderScale = String(scale);
-      element.dataset.pageState = "rendered";
+      this.#setPageState("rendered");
       this.#listener.onRendered(scale);
     }
   }
@@ -118,7 +133,7 @@ export class PageView {
       return;
     }
     this.#textRender?.cancel();
-    this.element.dataset.textState = "pending";
+    this.#setTextState("pending");
     const container = document.createElement("div");
     container.className = "textLayer";
     const render = this.page.renderText(container, scale, viewRotation);
@@ -127,14 +142,26 @@ export class PageView {
       if (render === this.#textRender) {
         this.objects.element.before(container);
         this.#textReady = true;
-        this.element.dataset.textState = "ready";
+        this.#setTextState("ready");
       }
     }, (error: unknown) => {
       if (render === this.#textRender && !(error instanceof RenderCanceled)) {
-        this.element.dataset.textState = "error";
+        this.#setTextState("error");
         this.#listener.onRenderError(error);
       }
     });
+  }
+
+  #setPageState(state: PageState): void {
+    this.#pageState = state;
+    this.element.dataset.pageState = state;
+    this.#listener.onBusyChanged();
+  }
+
+  #setTextState(state: TextState): void {
+    this.#textState = state;
+    this.element.dataset.textState = state;
+    this.#listener.onBusyChanged();
   }
 
   #cancelCanvasRender(): void {

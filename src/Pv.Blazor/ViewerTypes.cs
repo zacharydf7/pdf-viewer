@@ -183,10 +183,16 @@ public enum ViewerKeyModifier
 public sealed record PdfViewerOptions
 {
     /// <summary>
-    /// The zoom to start with. Only a change made while no document is open takes effect, because the zoom carries over
-    /// from one document to the next.
+    /// The zoom each document opens at. A change takes effect at once while no document is open, and otherwise when
+    /// the next one opens. With <see cref="KeepZoom"/> on, the zoom carries over from one document to the next
+    /// instead, so only a change made while no document is open takes effect.
     /// </summary>
     public ViewerZoomMode InitialZoom { get; init; } = ViewerZoomMode.FitWidth;
+
+    /// <summary>
+    /// Whether a document that opens keeps the zoom the last one had, instead of opening at <see cref="InitialZoom"/>.
+    /// </summary>
+    public bool KeepZoom { get; init; }
 
     /// <summary>Leaves form fields unpainted, while other annotations still appear.</summary>
     public bool HideFormFields { get; init; }
