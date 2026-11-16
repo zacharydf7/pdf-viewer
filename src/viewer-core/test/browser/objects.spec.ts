@@ -663,14 +663,23 @@ test.describe("keyboard", () => {
     expect(await focusedId(viewer)).toBe("b");
   });
 
-  test("deleteKey_ShouldLeaveFocusOnObjectList_WhenOnlyObjectIsRemoved", async ({ page }) => {
+  test("deleteKey_ShouldMoveFocusToPage_WhenOnlyObjectIsRemoved", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
     await viewer.object("a").focus();
 
     await page.keyboard.press("Delete");
 
-    await expect(page.locator(".pv-objects")).toBeFocused();
+    const pageGroup = page.getByRole("group", { name: "Page 1" });
+    await expect(pageGroup).toBeFocused();
+    await expect(page.locator(".pv-objects")).not.toHaveAttribute("role");
+    await expect(page.locator(".pv-objects")).not.toHaveAttribute("aria-label");
+    const ring = await pageGroup.evaluate((element) => {
+      const computed = getComputedStyle(element, "::after");
+      return { style: computed.outlineStyle, offset: parseFloat(computed.outlineOffset) };
+    });
+    expect(ring.style).toBe("solid");
+    expect(ring.offset).toBeLessThan(0);
   });
 
   test("deleteKey_ShouldDoNothing_WhenLocked", async ({ page }) => {

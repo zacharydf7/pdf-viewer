@@ -6,6 +6,8 @@ what ships. Wait on them instead of using timers, and use them from any test fra
 Everything sits inside `<pdf-viewer>`, in the light DOM, so ordinary selectors reach it. The viewer is a region named
 "PDF viewer" unless the application gives it `aria-label` or `aria-labelledby`, and each page is a group named "Page 2"
 or similar, so `getByRole("region", { name: "PDF viewer" })` and `getByRole("group", { name: "Page 2" })` find them.
+The viewer's scrolling area, `.pv-viewport`, is a tab stop, so keyboard users can scroll a zoomed page with the arrow
+keys.
 
 ## Viewer: `pdf-viewer`
 

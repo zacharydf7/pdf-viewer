@@ -202,6 +202,31 @@ test.describe("zoom and scroll for a new document or page", () => {
     expect(await viewport.evaluate((element) => [element.scrollLeft, element.scrollTop])).toEqual([0, 0]);
   });
 
+  test("arrowKey_ShouldScrollZoomedPage_WhenViewportHasFocus", async ({ page }) => {
+    await openViewer(page, { initialZoom: 3 });
+    const viewport = page.locator(".pv-viewport");
+    await viewport.focus();
+
+    await page.keyboard.press("ArrowDown");
+
+    await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  });
+
+  test("viewport_ShouldShowFocusRingInsideItself_WhenReachedByTab", async ({ page }) => {
+    await openViewer(page, { initialZoom: 3 });
+    const viewport = page.locator(".pv-viewport");
+
+    await page.keyboard.press("Tab");
+
+    await expect(viewport).toBeFocused();
+    const { style, offset } = await viewport.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return { style: computed.outlineStyle, offset: parseFloat(computed.outlineOffset) };
+    });
+    expect(style).toBe("solid");
+    expect(offset).toBeLessThan(0);
+  });
+
   test("goToPage_ShouldKeepScroll_WhenGivenPageAlreadyShown", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 3 });
     const viewport = page.locator(".pv-viewport");

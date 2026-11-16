@@ -66,7 +66,6 @@ export class ObjectView {
     this.element.dataset.pointer = presentation.pointer;
     this.#objectsElement = document.createElement("div");
     this.#objectsElement.className = "pv-objects";
-    this.#objectsElement.setAttribute("aria-label", `Objects on page ${pageNumber}`);
     this.#handlesElement = document.createElement("div");
     this.#handlesElement.className = "pv-handles";
     this.#handlesElement.setAttribute("aria-hidden", "true");
@@ -274,12 +273,18 @@ export class ObjectView {
     this.#appDataKeys.delete(id);
   }
 
+  /**
+   * A page with no objects has no list, and an element without a role can't be named, so the role and its label are
+   * added and removed together.
+   */
   #syncListboxRole(count: number): void {
     const hasRole = this.#objectsElement.hasAttribute("role");
     if (count > 0 && !hasRole) {
       this.#objectsElement.setAttribute("role", "listbox");
+      this.#objectsElement.setAttribute("aria-label", `Objects on page ${this.#pageNumber}`);
     } else if (count === 0 && hasRole) {
       this.#objectsElement.removeAttribute("role");
+      this.#objectsElement.removeAttribute("aria-label");
     }
   }
 
@@ -353,7 +358,7 @@ export class ObjectView {
 
   /**
    * Gives focus a new home when a change removed the focused object: its next neighbor in reading order, the one before
-   * it if it was last, or the list itself once it's empty. Then keeps the tab stop on an object Tab can reach. While
+   * it if it was last, or the page once the list is empty. Then keeps the tab stop on an object Tab can reach. While
    * the tab stop is the first object, only the objects a change touched are compared with it, so adding objects one at
    * a time doesn't visit every object each time.
    */
@@ -366,8 +371,10 @@ export class ObjectView {
       const after = order.find(({ rect }) => compareReadingOrder(pageRectToDisplay(this.#geometry, rect), lost) >= 0);
       const target = after ?? order.at(-1);
       if (target === undefined) {
-        this.#objectsElement.tabIndex = -1;
-        this.#objectsElement.focus({ preventScroll: true });
+        // Focus the page, which has an accessible name, rather than the list, which has no role or name once it's
+        // empty.
+        this.#page.tabIndex = -1;
+        this.#page.focus({ preventScroll: true });
       } else {
         this.#setTabStop(target.id, "focused");
         this.#objectElements.get(target.id)!.focus({ preventScroll: true });

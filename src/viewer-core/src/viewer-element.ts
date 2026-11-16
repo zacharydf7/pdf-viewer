@@ -103,6 +103,8 @@ export class PdfViewerElement extends HTMLElement {
     this.dataset.lastChange = "0";
     this.#viewport = document.createElement("div");
     this.#viewport.className = "pv-viewport";
+    // A tab stop, so keyboard users can scroll a page that's zoomed past the viewer with the arrow keys.
+    this.#viewport.tabIndex = 0;
     this.#announcer = document.createElement("div");
     this.#announcer.className = "pv-announcer";
     this.#announcer.setAttribute("aria-live", "polite");

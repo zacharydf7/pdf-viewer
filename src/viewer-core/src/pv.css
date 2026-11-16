@@ -156,6 +156,26 @@
   outline-offset: 2px;
 }
 
+/* Drawn inside, because the viewport fills the viewer and the viewer clips anything outside it. */
+.pv-viewport:focus-visible {
+  outline: 3px solid CanvasText;
+  outline-offset: -3px;
+}
+
+/*
+  A page takes focus when its last object is deleted. Its ring is drawn inside too, because the viewport clips a page
+  that fills it, and on an overlay above the object layer, which would otherwise cover it.
+*/
+.pv-page:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  outline: 3px solid CanvasText;
+  outline-offset: -3px;
+  pointer-events: none;
+}
+
 /*
   In the border hit area, the object itself ignores the pointer and a slightly larger ring catches it instead. A pseudo-element
   counts as its object for events, and a clip-path can change where the ring catches the pointer without changing how the
