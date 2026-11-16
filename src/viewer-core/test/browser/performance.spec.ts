@@ -299,6 +299,24 @@ test("setZoom_ShouldRepaintWithinBudget_WhenPageHas5000Objects", async ({ page }
   expectWithinBudget(time, 250);
 });
 
+test("setZoom_ShouldRepaintWithinBudget_WhenPageHas5000ObjectsWithBordersInPageUnits", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 });
+  await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    element.setObjects(window.perf!.grid(5_000, 1).map((object) => ({ ...object, style: { borderWidth: 1 } })));
+    await window.perf!.nextFrame();
+  });
+
+  const time = await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    const start = performance.now();
+    await element.setZoom(2);
+    await window.perf!.nextFrame();
+    return performance.now() - start;
+  });
+
+  await expect(viewer.pageElement()).toHaveAttribute("data-render-scale", "2");
+  expectWithinBudget(time, 150);
+});
+
 test("goToPage_ShouldShowPageWithinBudget_WhenPagesHave5000ObjectsEach", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
   await viewer.host.evaluate((element: PdfViewerElement) => {

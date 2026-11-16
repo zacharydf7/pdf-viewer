@@ -523,6 +523,54 @@ test.describe("kinds and styles", () => {
     await expect(viewer.host).toHaveAttribute("data-tool", "select");
   });
 
+  test("borderWidth_ShouldDoubleOnScreen_WhenGivenInPageUnitsAndZoomDoubles", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 2 });
+    await viewer.addObject({ id: "a", page: 1, rect: start, style: { borderWidth: 3 } });
+    const width = () => viewer.object("a").evaluate((element) => parseFloat(getComputedStyle(element).borderTopWidth));
+    const atTwo = await width();
+
+    await viewer.setZoom(4);
+
+    // Browsers snap borders to device pixels, so allow a pixel either way.
+    expect(Math.abs(await width() - atTwo * 2)).toBeLessThanOrEqual(1);
+  });
+
+  test("borderWidth_ShouldStayTheSameOnScreen_WhenGivenAsCssLengthAndZoomChanges", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect: start, style: { borderWidth: "4px" } });
+
+    await viewer.setZoom(3);
+
+    await expect(viewer.object("a")).toHaveCSS("border-top-width", "4px");
+  });
+
+  test("borderStyle_ShouldDrawBorder_WhenGiven", async ({ page }) => {
+    const viewer = await openViewer(page, {});
+
+    await viewer.addObject({ id: "a", page: 1, rect: start, style: { borderStyle: "dotted" } });
+
+    await expect(viewer.object("a")).toHaveCSS("border-top-style", "dotted");
+  });
+
+  test("selection_ShouldTakeOutlineFromVariables_WhenTheyAreSet", async ({ page }) => {
+    const viewer = await openViewer(page, {});
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.style.setProperty("--pv-selection-color", "rgb(255, 0, 0)");
+      element.style.setProperty("--pv-selection-width", "5px");
+      element.style.setProperty("--pv-selection-style", "dotted");
+      element.style.setProperty("--pv-selection-offset", "6px");
+    });
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.selectObject("a"));
+
+    const object = viewer.object("a");
+    await expect(object).toHaveCSS("outline-color", "rgb(255, 0, 0)");
+    await expect(object).toHaveCSS("outline-width", "5px");
+    await expect(object).toHaveCSS("outline-style", "dotted");
+    await expect(object).toHaveCSS("outline-offset", "6px");
+  });
+
   test("drawRect_ShouldCarryKindThroughToChangeEvent_WhenToolHasKind", async ({ page }) => {
     const viewer = await openViewer(page, {});
     await viewer.host.evaluate((element: PdfViewerElement) => {

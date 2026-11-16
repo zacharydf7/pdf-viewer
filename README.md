@@ -97,7 +97,7 @@ a `FileExtensionContentTypeProvider`.
 cd src/viewer-core
 npm test                      # unit tests
 npx playwright install        # once
-npm run test:browser          # real browsers: Chromium, Firefox and WebKit, then the performance budgets
+npm run test:browser          # real browsers: Chromium, Firefox, WebKit and Chromium in forced colors, then budgets
 npm run test:performance      # Chromium performance budgets only, printing each timing
 
 # .NET
@@ -118,6 +118,14 @@ Browser suites run without test-level retries, so a flaky test fails rather than
 The viewer fills its parent's height, with a minimum of 300px so it stays visible in a parent with no set height. In a shorter
 parent it overflows, and you can lower the minimum with the `--pv-viewer-min-height` CSS variable.
 `--pv-viewer-background` sets the color around the page.
+
+An object's border is drawn inside its rectangle. Give its width as `ViewerLength.PageUnits(1.5)` to have it scale with
+the zoom like the page, or as a CSS length such as `"2px"` to keep it the same on screen. The selected object's outline
+takes its color, width, style and offset from `--pv-selection-color`, `--pv-selection-width`, `--pv-selection-style`
+and `--pv-selection-offset`. While the object has keyboard focus, it shows a double ring in the focus color instead.
+In high contrast modes, where every border takes the same system color, the selection is dashed in the highlight color,
+focus is solid, and both together are a double ring in the highlight color. To tell kinds of objects apart there, give
+each kind its own `BorderStyle`.
 
 ## Known limitations
 

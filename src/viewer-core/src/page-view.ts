@@ -1,6 +1,7 @@
 import type { EnginePage, RenderHandle, TextRender } from "./engine.js";
 import { RenderCanceled } from "./engine.js";
 import type { PageGeometry, Rotation } from "./geometry.js";
+import { displaySize } from "./geometry.js";
 import type { ObjectStore } from "./object-store.js";
 import { ObjectView } from "./object-view.js";
 import type { ToolPresentation } from "./tool.js";
@@ -83,6 +84,8 @@ export class PageView {
     element.style.width = `${size.width}px`;
     element.style.height = `${size.height}px`;
     element.style.setProperty("--total-scale-factor", String(page.totalScale(scale)));
+    // How many CSS pixels one unit of the objects' coordinates takes at this zoom, for borders given in page units.
+    element.style.setProperty("--pv-unit", `${size.width / displaySize(geometry).width}px`);
     this.#setPageState("rendering");
     element.dataset.rotation = String(page.geometry(viewRotation).rotation);
     element.dataset.pageWidth = String(geometry.width);

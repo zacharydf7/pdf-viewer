@@ -1,6 +1,6 @@
 import type { PageGeometry, Rect, ResizeHandle } from "./geometry.js";
 import { compareReadingOrder, pageRectToDisplay, pageRectToPercent, readingOrder } from "./geometry.js";
-import type { ObjectStore, PageObject } from "./object-store.js";
+import type { ObjectStore, ObjectStyle, PageObject } from "./object-store.js";
 import { isOnPage } from "./object-store.js";
 import type { DrawDefaults, PointerTarget, Preview, ToolPresentation } from "./tool.js";
 import { respondsToUser } from "./tool.js";
@@ -327,7 +327,8 @@ export class ObjectView {
     element.tabIndex = focusable && object.id === this.#tabStop ? 0 : -1;
     element.style.setProperty("--pv-object-color", object.style?.color ?? "");
     element.style.setProperty("--pv-object-fill", object.style?.fill ?? "");
-    element.style.setProperty("--pv-object-border-width", object.style?.borderWidth ?? "");
+    element.style.setProperty("--pv-object-border-width", borderWidthCss(object.style?.borderWidth));
+    element.style.setProperty("--pv-object-border-style", object.style?.borderStyle ?? "");
   }
 
   /** Writes each value as a data-app-* attribute, and removes those for keys the object no longer has. */
@@ -500,7 +501,15 @@ function styleDraft(element: HTMLElement, { kind, cssClass, style }: DrawDefault
     element.dataset.objectKind = kind;
   }
   element.style.setProperty("--pv-object-color", style?.color ?? "");
-  element.style.setProperty("--pv-object-border-width", style?.borderWidth ?? "");
+  element.style.setProperty("--pv-object-border-width", borderWidthCss(style?.borderWidth));
+}
+
+/**
+ * A border width as CSS. A number is in page units, which the page's --pv-unit turns into CSS pixels at the current
+ * zoom, and a string is a CSS length already. Empty when there's none, so the stylesheet's default applies.
+ */
+export function borderWidthCss(width: ObjectStyle["borderWidth"]): string {
+  return typeof width === "number" ? `calc(var(--pv-unit) * ${width})` : width ?? "";
 }
 
 /** Reads back what formatRect wrote. */

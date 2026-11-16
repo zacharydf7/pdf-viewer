@@ -124,8 +124,9 @@
   box-sizing: border-box;
 }
 
+/* The border is drawn inside the rectangle, so its outer edge is the rectangle's edge. */
 .pv-object {
-  border: var(--pv-object-border-width, 2px) solid var(--pv-object-color, #1565c0);
+  border: var(--pv-object-border-width, 2px) var(--pv-object-border-style, solid) var(--pv-object-color, #1565c0);
   background: var(--pv-object-fill, transparent);
   pointer-events: auto;
   cursor: move;
@@ -146,14 +147,32 @@
   pointer-events: none;
 }
 
+/* An application can restyle the selection with these variables alone, on the viewer or any element around it. */
 .pv-object[aria-selected="true"] {
-  outline: 2px dashed var(--pv-object-color, #1565c0);
-  outline-offset: 2px;
+  outline: var(--pv-selection-width, 2px) var(--pv-selection-style, dashed)
+    var(--pv-selection-color, var(--pv-object-color, #1565c0));
+  outline-offset: var(--pv-selection-offset, 2px);
 }
 
 .pv-object:focus-visible {
   outline: 3px solid CanvasText;
   outline-offset: 2px;
+}
+
+/* Focus would otherwise hide the selection, so a focused, selected object gets a double ring. */
+.pv-object[aria-selected="true"]:focus-visible {
+  outline-width: 5px;
+  outline-style: double;
+}
+
+/*
+  High contrast modes give every border and outline the same system color. The selection's ring takes the highlight
+  color there, so it differs from focus in color as well as in shape.
+*/
+@media (forced-colors: active) {
+  .pv-object[aria-selected="true"] {
+    outline-color: Highlight;
+  }
 }
 
 /* Drawn inside, because the viewport fills the viewer and the viewer clips anything outside it. */

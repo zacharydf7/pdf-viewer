@@ -11,7 +11,7 @@ export type { DeleteRequested, DocumentLoaded, ObjectDrawn, PageChanged, PageInf
   ViewerErrorCode, ViewerErrorDetail } from "./events.js";
 export type { Point, Rect, Rotation } from "./geometry.js";
 export type { KeyModifier } from "./keyboard-editing.js";
-export type { ChangeOrigin, EditGesture, NewPageObject, ObjectBatch, ObjectPatch, ObjectsChanged, ObjectStyle,
-  ObjectUpdate, PageObject, SelectionChanged } from "./object-store.js";
+export type { BorderStyle, ChangeOrigin, EditGesture, NewPageObject, ObjectBatch, ObjectPatch, ObjectsChanged,
+  ObjectStyle, ObjectUpdate, PageObject, SelectionChanged } from "./object-store.js";
 export type { DrawDefaults, ViewerTool } from "./tool.js";
 export type { ViewerOptions, ZoomSetting } from "./viewer-options.js";

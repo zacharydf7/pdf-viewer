@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Pv.Blazor;
@@ -19,9 +20,87 @@ public sealed record ViewerObjectStyle
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Fill { get; init; }
 
-    /// <summary>Border width, as any CSS length.</summary>
+    /// <summary>
+    /// Border width: <see cref="ViewerLength.PageUnits"/>, which scale with the zoom like the page, or any CSS
+    /// length, such as <c>"2px"</c>, which stays the same on screen. The border is drawn inside the rectangle, so its
+    /// outer edge is the rectangle's edge.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? BorderWidth { get; init; }
+    public ViewerLength? BorderWidth { get; init; }
+
+    /// <summary>
+    /// How the border is drawn, solid by default. Unlike color, it survives high contrast modes, which replace every
+    /// border's color with the same system color, so it can tell kinds of object apart there.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ViewerBorderStyle? BorderStyle { get; init; }
+}
+
+/// <summary>How an object's border is drawn.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ViewerBorderStyle>))]
+public enum ViewerBorderStyle
+{
+    [JsonStringEnumMemberName("solid")] Solid,
+    [JsonStringEnumMemberName("dashed")] Dashed,
+    [JsonStringEnumMemberName("dotted")] Dotted,
+    [JsonStringEnumMemberName("double")] Double,
+}
+
+/// <summary>
+/// A length that is either a CSS length, such as <c>"2px"</c>, or a number of page units, in the coordinates objects
+/// use, which scale with the zoom. A string converts to a CSS length, so <c>BorderWidth = "2px"</c> works.
+/// </summary>
+[JsonConverter(typeof(ViewerLengthJsonConverter))]
+public readonly record struct ViewerLength
+{
+    private ViewerLength(string? cssLength, double? pageUnits)
+    {
+        CssLength = cssLength;
+        PageUnitCount = pageUnits;
+    }
+
+    /// <summary>The CSS length, or null when the length is in page units.</summary>
+    public string? CssLength { get; }
+
+    /// <summary>The number of page units, or null when the length is a CSS length.</summary>
+    public double? PageUnitCount { get; }
+
+    /// <summary>A CSS length, such as <c>"2px"</c>, which stays the same on screen at any zoom.</summary>
+    public static ViewerLength Css(string length) => new(length, null);
+
+    /// <summary>A number of units in the coordinates objects use, which scales with the zoom like the page.</summary>
+    public static ViewerLength PageUnits(double units) => new(null, units);
+
+    public static implicit operator ViewerLength(string cssLength) => Css(cssLength);
+}
+
+/// <summary>
+/// Writes a page-unit length as a number and a CSS length as a string, which is how the viewer reads them.
+/// </summary>
+internal sealed class ViewerLengthJsonConverter : JsonConverter<ViewerLength>
+{
+    public override ViewerLength Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        reader.TokenType == JsonTokenType.Number
+            ? ViewerLength.PageUnits(reader.GetDouble())
+            : ViewerLength.Css(reader.GetString() ?? "");
+
+    public override void Write(Utf8JsonWriter writer, ViewerLength value, JsonSerializerOptions options)
+    {
+        // A default ViewerLength is neither kind. It's written as null, which leaves the width unset, so the viewer's
+        // default applies.
+        if (value.PageUnitCount is { } units)
+        {
+            writer.WriteNumberValue(units);
+        }
+        else if (value.CssLength is { } length)
+        {
+            writer.WriteStringValue(length);
+        }
+        else
+        {
+            writer.WriteNullValue();
+        }
+    }
 }
 
 /// <summary>What the draw tool gives each new object.</summary>

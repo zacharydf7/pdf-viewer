@@ -1,12 +1,24 @@
 import type { Rect } from "./geometry.js";
 
+/** How an object's border is drawn. */
+export type BorderStyle = "solid" | "dashed" | "dotted" | "double";
+
 export interface ObjectStyle {
   /** Border color, as any CSS color. */
   color?: string;
   /** Fill color, as any CSS color. */
   fill?: string;
-  /** Border width, as any CSS length. */
-  borderWidth?: string;
+  /**
+   * Border width: a number in the coordinates objects use, which scales with the zoom like the page, or any CSS
+   * length, which stays the same on screen. The border is drawn inside the rectangle, so its outer edge is the
+   * rectangle's edge.
+   */
+  borderWidth?: string | number;
+  /**
+   * How the border is drawn. Defaults to "solid". Unlike color, it survives high contrast modes, which replace every
+   * border's color with the same system color, so it can tell kinds of object apart there.
+   */
+  borderStyle?: BorderStyle;
 }
 
 /**

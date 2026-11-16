@@ -648,6 +648,31 @@ public class PdfViewerTests : BunitContext
     }
 
     [Fact]
+    public void ViewerObjectStyle_ShouldWriteNumberAndReadItBack_WhenBorderIsInPageUnits()
+    {
+        var style = new ViewerObjectStyle
+        {
+            BorderWidth = ViewerLength.PageUnits(1.5), BorderStyle = ViewerBorderStyle.Dashed,
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(style, InteropJson);
+
+        Assert.Equal("""{"borderWidth":1.5,"borderStyle":"dashed"}""", json);
+        Assert.Equal(style, System.Text.Json.JsonSerializer.Deserialize<ViewerObjectStyle>(json, InteropJson));
+    }
+
+    [Fact]
+    public void ViewerObjectStyle_ShouldWriteStringAndReadItBack_WhenBorderIsGivenAsCssLength()
+    {
+        var style = new ViewerObjectStyle { BorderWidth = "4px" };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(style, InteropJson);
+
+        Assert.Equal("""{"borderWidth":"4px"}""", json);
+        Assert.Equal(style, System.Text.Json.JsonSerializer.Deserialize<ViewerObjectStyle>(json, InteropJson));
+    }
+
+    [Fact]
     public void PdfViewerOptions_ShouldSerializeAsViewerReadsThem_WhenSent()
     {
         var options = new PdfViewerOptions

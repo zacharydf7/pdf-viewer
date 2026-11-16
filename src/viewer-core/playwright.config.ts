@@ -2,6 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 const screen = { viewport: { width: 1000, height: 800 }, deviceScaleFactor: 1 };
 const performanceTests = "performance.spec.ts";
+const forcedColorsTests = "forced-colors.spec.ts";
+const ignored = [performanceTests, forcedColorsTests];
 
 export default defineConfig({
   testDir: "test/browser",
@@ -19,9 +21,15 @@ export default defineConfig({
     reuseExistingServer: true,
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"], ...screen }, testIgnore: performanceTests },
-    { name: "firefox", use: { ...devices["Desktop Firefox"], ...screen }, testIgnore: performanceTests },
-    { name: "webkit", use: { ...devices["Desktop Safari"], ...screen }, testIgnore: performanceTests },
+    { name: "chromium", use: { ...devices["Desktop Chrome"], ...screen }, testIgnore: ignored },
+    { name: "firefox", use: { ...devices["Desktop Firefox"], ...screen }, testIgnore: ignored },
+    { name: "webkit", use: { ...devices["Desktop Safari"], ...screen }, testIgnore: ignored },
+    // Emulates a high contrast mode, which Chromium supports best.
+    {
+      name: "forced-colors",
+      use: { ...devices["Desktop Chrome"], ...screen, forcedColors: "active" },
+      testMatch: forcedColorsTests,
+    },
     // Runs after the other projects, one test at a time: running alongside them would skew the timings, and these
     // heavy tests would slow theirs past their timeouts. Budgets are set for Chromium only, since each engine would
     // need its own.
@@ -30,7 +38,7 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], ...screen },
       testMatch: performanceTests,
       fullyParallel: false,
-      dependencies: ["chromium", "firefox", "webkit"],
+      dependencies: ["chromium", "firefox", "webkit", "forced-colors"],
     },
   ],
 });
