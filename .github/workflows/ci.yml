@@ -92,8 +92,8 @@ jobs:
         with:
           dotnet-version: 10.0.x
       # The Linux image also has the .NET 11 SDK, which dotnet would pick without a global.json. Its Debug builds add a
-      # Hot Reload script whose settings request returns 404 outside dotnet watch, and the end-to-end tests fail on the
-      # console error that leaves.
+      # Hot Reload script whose settings request returns 404 outside dotnet watch, and the console error from that 404
+      # fails the end-to-end tests.
       - run: dotnet new globaljson --sdk-version ${{ steps.setup-dotnet.outputs.dotnet-version }}
       # Building Pv.Blazor restores and builds the TypeScript core too.
       - run: dotnet build Pv.slnx
