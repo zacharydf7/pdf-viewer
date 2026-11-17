@@ -24,7 +24,7 @@ export interface KeyOptions {
 
 /**
  * What a key does to the object list or the focused object:
- * - "focus" moves focus to another object, in reading order, without selecting it.
+ * - "focus" moves focus to another object, in focus order, without selecting it.
  * - "select" selects the focused object and "clear" clears the selection.
  * - "delete" asks for the focused object to be deleted.
  * - "edit" moves the object by a distance as displayed, or with resize, moves its bottom-right corner.

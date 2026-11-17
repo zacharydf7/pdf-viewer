@@ -154,6 +154,13 @@ public sealed record ViewerObject(string Id, int? Page, PageRect Rect)
     public bool EditableWhenReadOnly { get; init; }
 
     /// <summary>
+    /// The object's place in the order the arrow keys move focus through its page's objects. Lower values come first,
+    /// and ties follow reading order. Leave it at 0 for reading order, or set it to each object's position in a list
+    /// of your own so the arrow keys follow that list.
+    /// </summary>
+    public int FocusOrder { get; init; }
+
+    /// <summary>
     /// The accessible name. Without one, it's "Object 3 on page 2" or similar, with a number unique on its page.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -189,7 +196,8 @@ public sealed record ViewerObject(string Id, int? Page, PageRect Rect)
     public bool Equals(ViewerObject? other) =>
         other is not null && Id == other.Id && Page == other.Page && Rect == other.Rect && Locked == other.Locked
         && Selectable == other.Selectable && Hidden == other.Hidden
-        && EditableWhenReadOnly == other.EditableWhenReadOnly && Label == other.Label && Kind == other.Kind
+        && EditableWhenReadOnly == other.EditableWhenReadOnly && FocusOrder == other.FocusOrder && Label == other.Label
+        && Kind == other.Kind
         && CssClass == other.CssClass && Style == other.Style && SameEntries(AppData, other.AppData);
 
     public override int GetHashCode() => HashCode.Combine(Id, Page, Rect, Kind, Label);

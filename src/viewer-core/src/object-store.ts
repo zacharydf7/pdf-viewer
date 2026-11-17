@@ -45,6 +45,12 @@ export interface PageObject {
    * puts on the page for the user to adjust.
    */
   readonly editableWhenReadOnly: boolean;
+  /**
+   * The object's place in the order the arrow keys move focus through its page's objects. Lower values come first,
+   * and ties follow reading order. Defaults to 0, so objects follow reading order unless the application gives its own
+   * order, such as a list's.
+   */
+  readonly focusOrder: number;
   /** The accessible name. Without one, it's "Object 3 on page 2" or similar, with a number unique on its page. */
   readonly label?: string;
   /** Classes from the application's own CSS, separated by spaces, so it can style states such as emphasis. */
@@ -376,6 +382,7 @@ function frozenObject(object: NewPageObject): PageObject {
     selectable: true,
     hidden: false,
     editableWhenReadOnly: false,
+    focusOrder: 0,
     ...object,
     rect: Object.freeze({ ...object.rect }),
     ...(object.style !== undefined && { style: Object.freeze({ ...object.style }) }),

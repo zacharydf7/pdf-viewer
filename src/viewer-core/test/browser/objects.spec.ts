@@ -461,6 +461,13 @@ test.describe("keyboard", () => {
     await viewer.addObject({ id: "a", page: 1, rect: start });
   }
 
+  /** The same three, with a focus order that differs from reading order: "b", then "c", then "a". */
+  async function addThreeInFocusOrder(viewer: Viewer): Promise<void> {
+    await viewer.addObject({ id: "c", page: 1, rect: { ...start, y: 400 }, focusOrder: 1 });
+    await viewer.addObject({ id: "b", page: 1, rect: { ...start, x: 350 }, focusOrder: 0 });
+    await viewer.addObject({ id: "a", page: 1, rect: start, focusOrder: 2 });
+  }
+
   async function focusedId(viewer: Viewer): Promise<string | undefined> {
     return viewer.page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.objectId);
   }
@@ -497,6 +504,41 @@ test.describe("keyboard", () => {
     expect(visited).toEqual(["b", "c", "c", "b", "a", "c"]);
     await expect(viewer.host).toHaveAttribute("data-selected-object", "");
     await expect(viewer.object("c")).toHaveAttribute("tabindex", "0");
+  });
+
+  test("arrowKeys_ShouldMoveFocusInFocusOrder_WhenObjectsHaveOne", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addThreeInFocusOrder(viewer);
+    await viewer.object("b").focus();
+
+    const visited: (string | undefined)[] = [];
+    for (const key of ["ArrowDown", "ArrowDown", "ArrowDown", "Home", "End"]) {
+      await page.keyboard.press(key);
+      visited.push(await focusedId(viewer));
+    }
+
+    expect(visited).toEqual(["c", "a", "a", "b", "a"]);
+  });
+
+  test("objectList_ShouldBeOneTabStopAtFirstObjectInFocusOrder_WhenObjectsHaveOne", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addThreeInFocusOrder(viewer);
+
+    await expect(page.locator('[data-object-id][tabindex="0"]')).toHaveCount(1);
+    await expect(viewer.object("b")).toHaveAttribute("tabindex", "0");
+    await expect(viewer.object("a")).toHaveAttribute("data-focus-order", "2");
+  });
+
+  // This is how an application keeps the arrow keys in step with its own list, such as a tree of the same objects.
+  test("arrowKeys_ShouldSelectNextObjectInFocusOrder_WhenSelectOnFocusIsOn", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ selectOnFocus: true }));
+    await addThreeInFocusOrder(viewer);
+    await viewer.object("c").click();
+
+    await page.keyboard.press("ArrowDown");
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
   });
 
   test("tabStop_ShouldStayOnObjectFocusedLast_WhenFocusLeavesAndAnotherObjectChanges", async ({ page }) => {
@@ -651,6 +693,20 @@ test.describe("keyboard", () => {
 
     await expect(viewer.object("b")).toHaveCount(0);
     expect(await focusedId(viewer)).toBe("c");
+  });
+
+  // Reverse reading order, so the object after "b" in focus order comes before it in reading order.
+  test("deleteKey_ShouldMoveFocusToNextObjectInFocusOrder_WhenObjectsHaveOne", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "c", page: 1, rect: { ...start, y: 400 }, focusOrder: 0 });
+    await viewer.addObject({ id: "b", page: 1, rect: { ...start, x: 350 }, focusOrder: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect: start, focusOrder: 2 });
+    await viewer.object("b").focus();
+
+    await page.keyboard.press("Delete");
+
+    await expect(viewer.object("b")).toHaveCount(0);
+    expect(await focusedId(viewer)).toBe("a");
   });
 
   test("deleteKey_ShouldMoveFocusToPreviousObject_WhenLastObjectIsRemoved", async ({ page }) => {

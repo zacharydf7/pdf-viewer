@@ -1,5 +1,5 @@
-import type { PageGeometry, Rect, ResizeHandle } from "./geometry.js";
-import { compareReadingOrder, pageRectToDisplay, pageRectToPercent, readingOrder } from "./geometry.js";
+import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
+import { compareReadingOrder, pageRectToDisplay, pageRectToPercent } from "./geometry.js";
 import type { ObjectStore, ObjectStyle, PageObject } from "./object-store.js";
 import { isOnPage } from "./object-store.js";
 import type { DrawDefaults, PointerTarget, Preview, ToolPresentation } from "./tool.js";
@@ -45,13 +45,13 @@ export class ObjectView {
   readonly #draftElements = new Map<string, HTMLElement>();
   /**
    * The one object Tab reaches, as in a listbox: the selected object, or else the object focused last, or else the
-   * first in reading order.
+   * first in focus order.
    */
   #tabStop: string | undefined;
   /** Which of those the tab stop is, which decides what a change to other objects can do to it. */
   #tabStopIs: "selected" | "focused" | "first" = "first";
   /** Where the focused object was when a change removed it, so focus can go to its neighbor. */
-  #lostFocusAt: Rect | undefined;
+  #lostFocusAt: { rect: Rect; focusOrder: number } | undefined;
 
   constructor(page: HTMLElement, pageNumber: number, geometry: PageGeometry, store: ObjectStore,
     presentation: ToolPresentation) {
@@ -119,11 +119,11 @@ export class ObjectView {
   }
 
   /**
-   * Moves focus from an object to another in reading order, without wrapping at either end, and scrolls only as far
+   * Moves focus from an object to another in focus order, without wrapping at either end, and scrolls only as far
    * as it takes to show it.
    */
   moveFocus(from: string, to: "previous" | "next" | "first" | "last"): void {
-    const order = this.#focusableInReadingOrder();
+    const order = this.#focusableInFocusOrder();
     const index = order.findIndex(({ id }) => id === from);
     const target = to === "first" ? order[0]
       : to === "last" ? order.at(-1)
@@ -264,7 +264,7 @@ export class ObjectView {
 
   #removeElement(id: string, element: HTMLElement): void {
     if (element.contains(document.activeElement)) {
-      this.#lostFocusAt = parseRect(element.dataset.pageRect);
+      this.#lostFocusAt = { rect: parseRect(element.dataset.pageRect), focusOrder: Number(element.dataset.focusOrder) };
     }
     element.remove();
     this.#objectElements.delete(id);
@@ -321,6 +321,7 @@ export class ObjectView {
     element.dataset.locked = String(object.locked);
     element.dataset.selectable = String(object.selectable);
     element.dataset.editableWhenReadOnly = String(object.editableWhenReadOnly);
+    element.dataset.focusOrder = String(object.focusOrder);
     const label = object.label ?? `Object ${this.#numbers.get(object.id)} on page ${this.#pageNumber}`;
     element.setAttribute("aria-label", label);
     element.setAttribute("aria-selected", String(selected));
@@ -358,7 +359,7 @@ export class ObjectView {
   }
 
   /**
-   * Gives focus a new home when a change removed the focused object: its next neighbor in reading order, the one before
+   * Gives focus a new home when a change removed the focused object: its next neighbor in focus order, the one before
    * it if it was last, or the page once the list is empty. Then keeps the tab stop on an object Tab can reach. While
    * the tab stop is the first object, only the objects a change touched are compared with it, so adding objects one at
    * a time doesn't visit every object each time.
@@ -367,9 +368,9 @@ export class ObjectView {
     const lostAt = this.#lostFocusAt;
     this.#lostFocusAt = undefined;
     if (lostAt !== undefined) {
-      const lost = pageRectToDisplay(this.#geometry, lostAt);
-      const order = this.#focusableInReadingOrder();
-      const after = order.find(({ rect }) => compareReadingOrder(pageRectToDisplay(this.#geometry, rect), lost) >= 0);
+      const lost = focusPlace(lostAt, this.#geometry);
+      const order = this.#focusableInFocusOrder();
+      const after = order.find((object) => compareFocusOrder(focusPlace(object, this.#geometry), lost) >= 0);
       const target = after ?? order.at(-1);
       if (target === undefined) {
         // Focus the page, which has an accessible name, rather than the list, which has no role or name once it's
@@ -402,14 +403,14 @@ export class ObjectView {
     }
   }
 
-  /** The first object in reading order that the user can focus, among these, found without sorting them. */
+  /** The first object in focus order that the user can focus, among these, found without sorting them. */
   #firstFocusable(ids: Iterable<string>): string | undefined {
-    let first: { id: string; position: Rect } | undefined;
+    let first: (FocusPlace & { id: string }) | undefined;
     for (const id of ids) {
       if (this.#canFocus(id)) {
-        const position = pageRectToDisplay(this.#geometry, this.#store.get(id)!.rect);
-        if (first === undefined || compareReadingOrder(position, first.position) < 0) {
-          first = { id, position };
+        const place = focusPlace(this.#store.get(id)!, this.#geometry);
+        if (first === undefined || compareFocusOrder(place, first) < 0) {
+          first = { id, ...place };
         }
       }
     }
@@ -439,10 +440,10 @@ export class ObjectView {
       && respondsToUser(object, this.#presentation.readOnly);
   }
 
-  #focusableInReadingOrder(): PageObject[] {
+  #focusableInFocusOrder(): PageObject[] {
     const focusable = [...this.#objectElements.keys()].filter((id) => this.#canFocus(id))
       .map((id) => this.#store.get(id)!);
-    return readingOrder(focusable, this.#geometry, ({ rect }) => rect);
+    return inFocusOrder(focusable, this.#geometry);
   }
 
   /** Handles appear only when one object is selected, because they resize that object alone. */
@@ -510,6 +511,30 @@ function styleDraft(element: HTMLElement, { kind, cssClass, style }: DrawDefault
  */
 export function borderWidthCss(width: ObjectStyle["borderWidth"]): string {
   return typeof width === "number" ? `calc(var(--pv-unit) * ${width})` : width ?? "";
+}
+
+/** An object's place in focus order: its focusOrder, then its top-left corner as displayed. */
+export interface FocusPlace {
+  focusOrder: number;
+  position: Point;
+}
+
+/** Compares by focusOrder, then in reading order. Negative when the first comes first. */
+export function compareFocusOrder(first: FocusPlace, second: FocusPlace): number {
+  return first.focusOrder - second.focusOrder || compareReadingOrder(first.position, second.position);
+}
+
+/** Where an object comes in focus order on a page shown with this geometry, so reading order follows the rotation. */
+function focusPlace({ focusOrder, rect }: Pick<PageObject, "focusOrder" | "rect">,
+  geometry: PageGeometry): FocusPlace {
+  return { focusOrder, position: pageRectToDisplay(geometry, rect) };
+}
+
+/** Puts objects in focus order, as their page is shown. */
+export function inFocusOrder(objects: readonly PageObject[], geometry: PageGeometry): PageObject[] {
+  return objects.map((object) => ({ object, ...focusPlace(object, geometry) }))
+    .sort(compareFocusOrder)
+    .map(({ object }) => object);
 }
 
 /** Reads back what formatRect wrote. */

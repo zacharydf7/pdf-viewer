@@ -243,6 +243,28 @@ test("arrowKey_ShouldMoveFocusWithinBudget_WhenPageHas5000Objects", async ({ pag
   expectWithinBudget(median(samples), 2);
 });
 
+test("arrowKey_ShouldMoveFocusWithinBudget_WhenPageHas5000ObjectsInFocusOrder", async ({ page }) => {
+  const viewer = await openViewer(page, { initialZoom: 1 });
+  // The focus order shuffles the grid, so every press has to sort the objects fully, as for an application's own list.
+  // 7919 is prime, so the order reaches every object once, and 50 presses from object-0 end on object-3950.
+  await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    element.setObjects(window.perf!.grid(5_000, 1)
+      .map((object, index) => ({ ...object, focusOrder: (index * 7_919) % 5_000 })));
+    await window.perf!.nextFrame();
+  });
+  await viewer.object("object-0").focus();
+
+  const samples = await viewer.host.evaluate(() => Array.from({ length: 50 }, () => {
+    const start = performance.now();
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    window.perf!.layout();
+    return performance.now() - start;
+  }));
+
+  await expect(viewer.object("object-3950")).toBeFocused();
+  expectWithinBudget(median(samples), 2);
+});
+
 test("updateObject_ShouldStayWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
 

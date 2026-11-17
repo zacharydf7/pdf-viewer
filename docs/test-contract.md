@@ -58,6 +58,7 @@ depends on sharp pixels.
 | `data-page-rect` | `x,y,width,height` in the coordinates objects use |
 | `data-locked`, `data-selectable` | `true` or `false` |
 | `data-editable-when-read-only` | `true` if the user can still select and edit the object while the viewer is read-only, otherwise `false` |
+| `data-focus-order` | The object's focus order, `0` unless the application gave one. Arrow keys move focus from lower to higher, in reading order where they tie |
 | `aria-selected` | `true` or `false` |
 | `tabindex` | `0` on the one object Tab reaches on the page, and `-1` on the others |
 

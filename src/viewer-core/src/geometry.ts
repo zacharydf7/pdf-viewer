@@ -94,14 +94,6 @@ export function compareReadingOrder(first: Point, second: Point): number {
   return first.y - second.y || first.x - second.x;
 }
 
-/** Puts items in reading order, as displayed, by the top-left corner of each rectangle. */
-export function readingOrder<T>(items: readonly T[], geometry: PageGeometry, rectOf: (item: T) => Rect): T[] {
-  return items
-    .map((item) => ({ item, rect: pageRectToDisplay(geometry, rectOf(item)) }))
-    .sort((first, second) => compareReadingOrder(first.rect, second.rect))
-    .map(({ item }) => item);
-}
-
 export function displayRectToPage(geometry: PageGeometry, rect: Rect): Rect {
   return rectFromCorners(
     displayToPage(geometry, { x: rect.x, y: rect.y }),

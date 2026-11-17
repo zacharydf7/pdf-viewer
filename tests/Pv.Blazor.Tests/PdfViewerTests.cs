@@ -442,6 +442,16 @@ public class PdfViewerTests : BunitContext
     }
 
     [Fact]
+    public void ViewerObject_ShouldSendFocusOrder_WhenSerialized()
+    {
+        var viewerObject = new ViewerObject("a", 1, new PageRect(1, 2, 3, 4)) { FocusOrder = 3 };
+
+        using var json = System.Text.Json.JsonSerializer.SerializeToDocument(viewerObject, InteropJson);
+
+        Assert.Equal(3, json.RootElement.GetProperty("focusOrder").GetInt32());
+    }
+
+    [Fact]
     public void PageInfo_ShouldReadRotationInDegrees_WhenDeserializedFromViewer()
     {
         var info = System.Text.Json.JsonSerializer.Deserialize<PageInfo>(
@@ -1165,6 +1175,7 @@ public class PdfViewerTests : BunitContext
             [nameof(ViewerObject.Selectable)] = false,
             [nameof(ViewerObject.Hidden)] = true,
             [nameof(ViewerObject.EditableWhenReadOnly)] = true,
+            [nameof(ViewerObject.FocusOrder)] = 3,
             [nameof(ViewerObject.Label)] = "other",
             [nameof(ViewerObject.Kind)] = "other",
             [nameof(ViewerObject.CssClass)] = "other",
