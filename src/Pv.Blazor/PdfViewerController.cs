@@ -69,8 +69,9 @@ public sealed class PdfViewerController
 
     /// <summary>
     /// Announces a message to screen reader users through the viewer's polite live region, which also reports moves and
-    /// resizes made with the keyboard. Use it for a change your app makes that they can't otherwise perceive, such as
-    /// an undo.
+    /// resizes made with the keyboard. Use it for a change your application makes that those users can't otherwise
+    /// perceive, such as an undo. A message that repeats the current one is cleared and set again on the next frame, so
+    /// screen readers speak it again.
     /// </summary>
     public Task AnnounceAsync(string message) => SendAsync(backend => backend.AnnounceAsync(message));
 

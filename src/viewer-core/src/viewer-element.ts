@@ -294,7 +294,7 @@ export class PdfViewerElement extends HTMLElement {
     } else if (this.#session !== undefined) {
       const target = clampPage(pageNumber, this.#session.pageCount);
       // Showing the page again would rebuild it and take focus from the object the user is on. While any turn is under
-      // way, the request goes ahead and replaces it, so the page asked for is the one that ends up shown.
+      // way, the request goes ahead and replaces that turn, so the page asked for is the one that ends up shown.
       if (target === this.#view?.pageNumber && this.#turns === 0) {
         return;
       }
@@ -304,8 +304,9 @@ export class PdfViewerElement extends HTMLElement {
 
   /**
    * Announces a message to screen reader users through the viewer's polite live region, which also reports moves and
-   * resizes made with the keyboard. Use it for a change the application makes that they can't otherwise perceive, such
-   * as an undo.
+   * resizes made with the keyboard. Use it for a change the application makes that those users can't otherwise
+   * perceive, such as an undo. A message that repeats the current one is cleared and set again on the next frame, so
+   * screen readers speak it again.
    */
   announce(message: string): void {
     const announcer = this.#announcer;
