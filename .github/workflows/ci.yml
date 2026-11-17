@@ -106,4 +106,9 @@ jobs:
           name: end-to-end-${{ matrix.os }}
           path: tests/Pv.EndToEnd/bin/Debug/net10.0/sample-app.log
           if-no-files-found: ignore
-      # TODO: pack the NuGet package and upload it as an artifact once packaging (#1) lands.
+      - run: dotnet pack Pv.slnx -c Release -o artifacts/packages -p:WarnOnPackingNonPackableProject=false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages-${{ matrix.os }}
+          path: artifacts/packages/*.nupkg
+          if-no-files-found: error

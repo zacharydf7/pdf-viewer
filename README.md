@@ -95,7 +95,7 @@ SDK alone, without Node.js. `Pv.Testing.Bunit` and `Pv.Testing.Playwright` hold 
 version in `src/viewer-core/package.json`, which the `<pdf-viewer>` element also reports as `PdfViewerElement.version`.
 
 ```shell
-dotnet pack Pv.slnx -c Release -o artifacts/packages
+dotnet pack Pv.slnx -c Release -o artifacts/packages -p:WarnOnPackingNonPackableProject=false
 ```
 
 To use them from a folder, add it as a package source in the app's `nuget.config`, then reference the packages by
