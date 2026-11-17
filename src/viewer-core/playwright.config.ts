@@ -4,6 +4,8 @@ const screen = { viewport: { width: 1000, height: 800 }, deviceScaleFactor: 1 };
 const performanceTests = "performance.spec.ts";
 const forcedColorsTests = "forced-colors.spec.ts";
 const ignored = [performanceTests, forcedColorsTests];
+// Canvas size, ink bounds and handle hit areas depend on the device pixel ratio.
+const highDensityTests = ["coordinates.spec.ts", "objects.spec.ts", "interaction.spec.ts"];
 
 export default defineConfig({
   testDir: "test/browser",
@@ -14,6 +16,7 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:4173",
+    trace: "retain-on-failure",
   },
   webServer: {
     command: "node test/browser/server.mjs 4173",
@@ -24,6 +27,11 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"], ...screen }, testIgnore: ignored },
     { name: "firefox", use: { ...devices["Desktop Firefox"], ...screen }, testIgnore: ignored },
     { name: "webkit", use: { ...devices["Desktop Safari"], ...screen }, testIgnore: ignored },
+    {
+      name: "chromium-dpr2",
+      use: { ...devices["Desktop Chrome"], ...screen, deviceScaleFactor: 2 },
+      testMatch: highDensityTests,
+    },
     // Emulates a high contrast mode, which Chromium supports best.
     {
       name: "forced-colors",
@@ -38,7 +46,7 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], ...screen },
       testMatch: performanceTests,
       fullyParallel: false,
-      dependencies: ["chromium", "firefox", "webkit", "forced-colors"],
+      dependencies: ["chromium", "firefox", "webkit", "chromium-dpr2", "forced-colors"],
     },
   ],
 });
