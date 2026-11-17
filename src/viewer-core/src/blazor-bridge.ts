@@ -129,6 +129,7 @@ export class ViewerBridge {
   goToPage = (page: number): Promise<void> => this.#host.goToPage(page);
   /** Resolves once the object is in view, turning to its page first if it isn't displayed. */
   scrollObjectIntoView = (id: string): Promise<void> => this.#host.scrollObjectIntoView(id);
+  announce = (message: string): void => this.#host.announce(message);
   setZoom = (zoom: ZoomSetting): void => this.#run(this.#host.setZoom(zoom));
   /** Does nothing until a page has been sized, because until then there's no zoom to multiply. */
   zoomBy = (factor: number): void => {

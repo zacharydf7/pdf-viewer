@@ -222,6 +222,34 @@ test("goToPage_ShouldClampAndReportChange_WhenGivenPageBeyondEnd", async ({ page
   expect(await events()).toEqual([{ page: 3 }]);
 });
 
+test("goToPage_ShouldKeepPageAndFocus_WhenGivenPageAlreadyShown", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await viewer.open("letter");
+  await viewer.addObject({ id: "a", page: 1, rect: { x: 100, y: 100, width: 200, height: 100 } });
+  await viewer.object("a").focus();
+  await viewer.pageElement().evaluate((element) => { element.dataset.marked = "true"; });
+
+  await viewer.host.evaluate((element: PdfViewerElement) => element.goToPage(1));
+
+  await expect(viewer.object("a")).toBeFocused();
+  await expect(viewer.pageElement()).toHaveAttribute("data-marked", "true");
+});
+
+test("goToPage_ShouldEndOnShownPage_WhenGivenItWhileTurnToAnotherPageIsUnderWay", async ({ page }) => {
+  const viewer = new Viewer(page);
+  await viewer.goto();
+  await viewer.open("letter");
+
+  await viewer.host.evaluate(async (element: PdfViewerElement) => {
+    const turn = element.goToPage(2);
+    await element.goToPage(1);
+    await turn;
+  });
+
+  await expect(viewer.host).toHaveAttribute("data-current-page", "1");
+});
+
 test("removal_ShouldReturnToIdle_WhenElementLeavesDocument", async ({ page }) => {
   const viewer = new Viewer(page);
   await viewer.goto();

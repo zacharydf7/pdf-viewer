@@ -420,6 +420,16 @@ public sealed class PdfViewerEndToEndTests(SampleAppFixture app) : IAsyncLifetim
     }
 
     [Fact]
+    public async Task AnnounceAsync_ShouldPutMessageInLiveRegion_WhenCalledFromDotNet()
+    {
+        await OpenAsync();
+
+        await TestId("announce").ClickAsync();
+
+        await Expect(_page.Locator(".pv-announcer")).ToHaveTextAsync("Sample announcement");
+    }
+
+    [Fact]
     public async Task KeyboardScope_ShouldMoveSelectedObject_WhenAltArrowIsPressedInApplicationPanel()
     {
         await _page.GotoAsync("/?doc=documents/letter.pdf&keyboardScope=true");

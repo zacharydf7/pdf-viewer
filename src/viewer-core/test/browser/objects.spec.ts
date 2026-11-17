@@ -607,6 +607,45 @@ test.describe("keyboard", () => {
     await expect(viewer.host).toHaveAttribute("data-selected-object", "b");
   });
 
+  test("announce_ShouldPutMessageInLiveRegion_WhenApplicationAnnounces", async ({ page }) => {
+    const viewer = await openViewer(page);
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.announce("Heading moved back to 100, 100"));
+
+    await expect(page.locator(".pv-announcer")).toHaveText("Heading moved back to 100, 100");
+  });
+
+  test("announce_ShouldClearRegionFirst_WhenMessageRepeats", async ({ page }) => {
+    const viewer = await openViewer(page);
+    const texts = await viewer.host.evaluate(async (element: PdfViewerElement) => {
+      const announcer = element.querySelector(".pv-announcer")!;
+      const seen: string[] = [];
+      // Each change of the text is one record, whose added node holds the new text, or none when it was cleared.
+      new MutationObserver((records) => {
+        seen.push(...records.map((record) => [...record.addedNodes].map((node) => node.textContent).join("")));
+      }).observe(announcer, { childList: true });
+      element.announce("Undone.");
+      element.announce("Undone.");
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return seen;
+    });
+
+    expect(texts).toEqual(["Undone.", "", "Undone."]);
+  });
+
+  test("announce_ShouldEndOnNewestMessage_WhenItFollowsRepeatInSameFrame", async ({ page }) => {
+    const viewer = await openViewer(page);
+
+    await viewer.host.evaluate(async (element: PdfViewerElement) => {
+      element.announce("Undone.");
+      element.announce("Undone.");
+      element.announce("Heading moved to 101, 100");
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+
+    await expect(page.locator(".pv-announcer")).toHaveText("Heading moved to 101, 100");
+  });
+
   test("altArrowKey_ShouldSelectAndMoveFocusedObject_WhenPressed", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });

@@ -392,6 +392,8 @@ public sealed partial class FakePdfViewer : IViewerBackend
     Task IViewerBackend.SetPageRotationAsync(int page, int? degrees) =>
         Record(nameof(PdfViewerController.SetPageRotationAsync), page, (PageRotation?)degrees);
 
+    Task IViewerBackend.AnnounceAsync(string message) => Record(nameof(PdfViewerController.AnnounceAsync), message);
+
     Task IViewerBackend.ScrollObjectIntoViewAsync(string id, CancellationToken cancellationToken) =>
         CommandAsync(nameof(PdfViewerController.ScrollObjectIntoViewAsync), [id], async notifications =>
         {

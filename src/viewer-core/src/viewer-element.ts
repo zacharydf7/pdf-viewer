@@ -86,6 +86,8 @@ export class PdfViewerElement extends HTMLElement {
   #turns = 0;
   /** Where screen readers hear about changes they can't otherwise perceive, such as an object moved with a key. */
   #announcer: HTMLElement | undefined;
+  /** The frame that will set a repeated message again, canceled when a newer message arrives first. */
+  #pendingAnnouncement: number | undefined;
 
   connectedCallback(): void {
     if (this.#viewport !== undefined) {
@@ -290,7 +292,40 @@ export class PdfViewerElement extends HTMLElement {
       this.#requestedPage = pageNumber;
       await this.#opening;
     } else if (this.#session !== undefined) {
-      await this.#showPage(this.#session, clampPage(pageNumber, this.#session.pageCount));
+      const target = clampPage(pageNumber, this.#session.pageCount);
+      // Showing the page again would rebuild it and take focus from the object the user is on. While any turn is under
+      // way, the request goes ahead and replaces it, so the page asked for is the one that ends up shown.
+      if (target === this.#view?.pageNumber && this.#turns === 0) {
+        return;
+      }
+      await this.#showPage(this.#session, target);
+    }
+  }
+
+  /**
+   * Announces a message to screen reader users through the viewer's polite live region, which also reports moves and
+   * resizes made with the keyboard. Use it for a change the application makes that they can't otherwise perceive, such
+   * as an undo.
+   */
+  announce(message: string): void {
+    const announcer = this.#announcer;
+    if (announcer === undefined) {
+      return;
+    }
+    if (this.#pendingAnnouncement !== undefined) {
+      cancelAnimationFrame(this.#pendingAnnouncement);
+      this.#pendingAnnouncement = undefined;
+    }
+    // A screen reader may not speak a live region again when its text stays the same, so a repeated message is cleared
+    // first and set again on the next frame.
+    if (announcer.textContent === message) {
+      announcer.textContent = "";
+      this.#pendingAnnouncement = requestAnimationFrame(() => {
+        this.#pendingAnnouncement = undefined;
+        announcer.textContent = message;
+      });
+    } else {
+      announcer.textContent = message;
     }
   }
 
@@ -789,13 +824,10 @@ export class PdfViewerElement extends HTMLElement {
    * set to use.
    */
   #announceEdit(id: string, { x, y, width, height }: Rect, resized: boolean): void {
-    if (this.#announcer === undefined) {
-      return;
-    }
     const name = this.#view?.objects.nameOf(id) ?? id;
-    this.#announcer.textContent = resized
+    this.announce(resized
       ? `${name} resized to ${formatNumber(width)} by ${formatNumber(height)}`
-      : `${name} moved to ${formatNumber(x)}, ${formatNumber(y)}`;
+      : `${name} moved to ${formatNumber(x)}, ${formatNumber(y)}`);
   }
 
   /** Returns false if the event could be canceled and a listener canceled it. */

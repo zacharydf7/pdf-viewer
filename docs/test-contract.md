@@ -101,11 +101,11 @@ viewer belong to it, even inside another viewer's scope, and when several viewer
 and the others don't. The keys that move and resize work with both the select and draw tools, but with the draw tool,
 the keys that select, clear the selection or delete are left alone. When a key moves or resizes an object,
 `.pv-announcer`, a polite live region, gives its new position or size, for example "Heading moved to 101, 100" or
-"Heading resized to 200 by 101". The object moves on the page at once, but `data-page-rect` and the store change only
-when the run of keys ends, which reports the run as one `pv-objects-changed` event. A run ends when the move modifier is
-released, a key other than an arrow or modifier key is pressed, the pointer is pressed, the window loses focus, or the
-tool or read-only mode changes. An arrow key that switches between moving and resizing, or that edits another object,
-ends the run and starts another.
+"Heading resized to 200 by 101". `announce(message)` puts the application's own message there, such as one for an undo.
+The object moves on the page at once, but `data-page-rect` and the store change only when the run of keys ends, which
+reports the run as one `pv-objects-changed` event. A run ends when the move modifier is released, a key other than an
+arrow or modifier key is pressed, the pointer is pressed, the window loses focus, or the tool or read-only mode changes.
+An arrow key that switches between moving and resizing, or that edits another object, ends the run and starts another.
 
 ## Draft: `[data-draft-id]`
 

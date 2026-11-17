@@ -47,6 +47,8 @@ internal interface IViewerBackend : IAsyncDisposable
 
     Task ScrollObjectIntoViewAsync(string id, CancellationToken cancellationToken);
 
+    Task AnnounceAsync(string message);
+
     Task<PageInfo> GetPageInfoAsync(int page, CancellationToken cancellationToken);
 
     Task SetToolAsync(ViewerTool tool, ViewerDrawDefaults? drawDefaults);
@@ -159,6 +161,8 @@ internal sealed class JsViewerBackend(IJSObjectReference module, IJSObjectRefere
 
     public Task ScrollObjectIntoViewAsync(string id, CancellationToken cancellationToken) =>
         bridge.InvokeVoidAsync("scrollObjectIntoView", cancellationToken, id).AsTask();
+
+    public Task AnnounceAsync(string message) => SendAsync("announce", message);
 
     public Task<PageInfo> GetPageInfoAsync(int page, CancellationToken cancellationToken) =>
         bridge.InvokeAsync<PageInfo>("getPageInfo", cancellationToken, page).AsTask();

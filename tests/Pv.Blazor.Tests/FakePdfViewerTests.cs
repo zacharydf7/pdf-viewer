@@ -579,6 +579,18 @@ public class FakePdfViewerTests : BunitContext
     }
 
     [Fact]
+    public async Task Commands_ShouldRecordAnnouncement_WhenControllerAnnounces()
+    {
+        var page = await OpenAsync();
+
+        await page.Instance.Controller.AnnounceAsync("Heading moved back");
+
+        var command = Assert.Single(Viewer.Commands);
+        Assert.Equal(nameof(PdfViewerController.AnnounceAsync), command.Name);
+        Assert.Equal(["Heading moved back"], command.Arguments);
+    }
+
+    [Fact]
     public void Viewer_ShouldThrow_WhenNoViewerHasRendered()
     {
         Assert.Throws<InvalidOperationException>(() => _viewers.Viewer);

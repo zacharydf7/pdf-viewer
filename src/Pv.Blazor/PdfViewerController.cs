@@ -68,6 +68,13 @@ public sealed class PdfViewerController
         RunAsync(backend => backend.ScrollObjectIntoViewAsync(id, cancellationToken), cancellationToken);
 
     /// <summary>
+    /// Announces a message to screen reader users through the viewer's polite live region, which also reports moves and
+    /// resizes made with the keyboard. Use it for a change your app makes that they can't otherwise perceive, such as
+    /// an undo.
+    /// </summary>
+    public Task AnnounceAsync(string message) => SendAsync(backend => backend.AnnounceAsync(message));
+
+    /// <summary>
     /// A page's label, and its size and rotation in the coordinates objects use, whether or not it's displayed.
     /// </summary>
     public Task<PageInfo> GetPageInfoAsync(int page, CancellationToken cancellationToken = default) =>

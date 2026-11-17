@@ -31,6 +31,10 @@
                     @onclick="NudgeSelectedRight">
                 Nudge selected right
             </button>
+            <button type="button" data-testid="announce"
+                    @onclick="@(() => _controller.AnnounceAsync("Sample announcement"))">
+                Announce
+            </button>
         </div>
 
         @if (_deleteRequest is not null)
