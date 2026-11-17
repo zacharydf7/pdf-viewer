@@ -154,6 +154,16 @@ public sealed partial class FakePdfViewer : IViewerBackend
     });
 
     /// <summary>
+    /// Reports an error that leaves the open document as it is, as the browser does when a page fails to load or paint.
+    /// </summary>
+    public Task ReportErrorAsync(ViewerErrorCode code = ViewerErrorCode.Render,
+        string message = "The page couldn't be painted.") => ActAsync(async notifications =>
+    {
+        RequireDocument();
+        await notifications.NotifyError(new ViewerError(code, message, DocumentClosed: false));
+    });
+
+    /// <summary>
     /// Draws a rectangle on the displayed page with the draw tool, and returns the new object's ID. With an
     /// <see cref="PdfViewer.OnObjectDrawn"/> handler, the object stays a draft until the handler finishes, and this
     /// completes after that.

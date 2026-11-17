@@ -23,7 +23,6 @@ export interface InteractivePage {
  * way.
  */
 export class InteractionController {
-  readonly #root: HTMLElement;
   readonly #pages = new Set<InteractivePage>();
   readonly #context: ToolContext & { options: ToolOptions };
   #tool: Tool | undefined;
@@ -40,7 +39,6 @@ export class InteractionController {
    */
   constructor(root: HTMLElement, store: ObjectStore, options: ToolOptions,
     { requestDelete, announceEdit }: Pick<ToolContext, "requestDelete" | "announceEdit">) {
-    this.#root = root;
     this.#context = { store, show: (preview) => this.#show(preview), options, requestDelete, announceEdit };
     root.addEventListener("pointerdown", (event) => this.#onPointerDown(event));
     root.addEventListener("pointermove", (event) => this.#onPointerMove(event));
@@ -67,15 +65,23 @@ export class InteractionController {
   /**
    * An element outside the viewer, such as the part of the application around it, where keys that move or resize an
    * object also work. They act on the selected object, unless focus is in a field that uses arrow keys itself, such as
-   * a text box. Null for none.
+   * a text box. Keys pressed while nothing has focus count as pressed there too. Null for none.
    */
   set keyboardScope(element: Element | null) {
     this.#scopeListener?.abort();
     this.#scopeListener = undefined;
     if (element !== null) {
       this.#scopeListener = new AbortController();
-      element.addEventListener("keydown", (event) => this.#onScopeKeyDown(event as KeyboardEvent),
-        { signal: this.#scopeListener.signal });
+      const { signal } = this.#scopeListener;
+      element.addEventListener("keydown", (event) => this.#onScopeKeyDown(event as KeyboardEvent), { signal });
+      // With nothing focused, keys go to the body, which is outside any scope but the body itself.
+      const { body, documentElement } = element.ownerDocument;
+      element.ownerDocument.addEventListener("keydown", (event) => {
+        const { target } = event;
+        if ((target === body || target === documentElement) && !element.contains(target as Node)) {
+          this.#onScopeKeyDown(event);
+        }
+      }, { signal });
     }
   }
 
@@ -209,6 +215,7 @@ export class InteractionController {
    * handled keys stop propagating, so a host application's own shortcuts keep working.
    */
   #onKeyDown(event: KeyboardEvent): void {
+    keysInViewers.add(event);
     const page = this.#pageOf(event.target);
     const target = page?.objects.targetOf(event.target);
     const action = target?.kind === "object" ? keyAction(event, this.#context.options) : undefined;
@@ -233,10 +240,14 @@ export class InteractionController {
 
   /**
    * Keys in the keyboard scope outside the viewer, which only move or resize the selected object. Like a key on a
-   * focused object, one the tool turns down doesn't reach the browser either.
+   * focused object, one the tool turns down doesn't reach the browser either. They work even when something in the
+   * scope has canceled their default action, as components often do with every key they see. To keep the viewer from
+   * acting on a key, stop it from propagating before it reaches the scope, or before it reaches the document for a key
+   * pressed while nothing has focus. Keys pressed in any viewer belong to that viewer. When several viewers listen in
+   * the same place, the first that acts on a key keeps it from the others.
    */
   #onScopeKeyDown(event: KeyboardEvent): void {
-    if (event.defaultPrevented || this.#root.contains(event.target as Node) || takesArrowKeys(event.target)) {
+    if (keysInViewers.has(event) || takesArrowKeys(event.target)) {
       return;
     }
     const action = keyAction(event, this.#context.options);
@@ -248,7 +259,7 @@ export class InteractionController {
     event.preventDefault();
     if (this.#tool?.keyDown?.({ id: id!, geometry: page.objects.geometry, action })) {
       this.#startKeyEdit(action.kind);
-      event.stopPropagation();
+      event.stopImmediatePropagation();
     }
   }
 
@@ -313,12 +324,19 @@ export class InteractionController {
 /** Modifier keys. Pressing one, or holding it until it repeats, doesn't end a run of edit keys. */
 const modifierKeys = new Set(["Alt", "Control", "Meta", "Shift"]);
 
+/**
+ * Keys pressed inside a viewer. They belong to that viewer, even when it's inside another viewer's keyboard scope and
+ * turns them down.
+ */
+const keysInViewers = new WeakSet<Event>();
+
 /** Input types that don't use arrow keys, so the viewer's keys still work while one has focus. */
 const inputsWithoutArrowKeys = new Set(["button", "checkbox", "color", "file", "image", "reset", "submit"]);
 
 /**
  * Whether an element uses arrow keys itself, as a text box, list or slider does, so keys pressed in it belong to it
- * rather than to the viewer.
+ * rather than to the viewer. A combobox counts too, because Alt with the down arrow opens its list. With the default
+ * Alt modifier, other widgets, such as a tree, don't conflict, because they use arrow keys without it.
  */
 function takesArrowKeys(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -327,5 +345,6 @@ function takesArrowKeys(target: EventTarget | null): boolean {
   if (target instanceof HTMLInputElement) {
     return !inputsWithoutArrowKeys.has(target.type);
   }
-  return target.isContentEditable || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+  return target.isContentEditable || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+    || target.getAttribute("role") === "combobox";
 }

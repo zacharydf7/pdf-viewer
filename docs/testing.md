@@ -88,7 +88,8 @@ Assert.Single(page.Instance.Regions);
 ```
 
 - **Opening.** A document doesn't open by itself. After your component sets a source, call `LoadDocumentAsync`, or
-  `FailDocumentAsync` to test how it handles a document that can't open.
+  `FailDocumentAsync` to test how it handles a document that can't open. `ReportErrorAsync` reports an error that
+  leaves the document open, such as a page that couldn't be painted.
 - **The user.** `SimulateDrawAsync`, `SimulateClickAsync`, `SimulateEditAsync` (a move, resize or nudge) and
   `SimulateDeleteKeyAsync` act as the user does. Each completes once your component has handled what it caused,
   including an `OnObjectDrawn` handler that waits on a dialog. When the test has to close that dialog, start the draw

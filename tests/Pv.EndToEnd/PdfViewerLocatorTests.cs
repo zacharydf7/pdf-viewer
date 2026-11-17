@@ -155,6 +155,30 @@ public sealed class PdfViewerLocatorTests(SampleAppFixture app) : IAsyncLifetime
             (await _viewer.Objects("heading").GetAttributeAsync("data-object-id"))!));
     }
 
+    [Fact]
+    public async Task DrawAsync_ShouldDraw_WhenTooltipCoversPageUntilMouseLeavesToolButton()
+    {
+        await OpenAsync("letter", headless: false);
+        var toolButton = _page.GetByTestId("tool-draw");
+        await toolButton.ClickAsync();
+        // Like a hover tooltip, it covers the page, but not its button, until the mouse leaves the button.
+        await toolButton.EvaluateAsync(
+            """
+            button => {
+              const { left, top, width, height } = document.querySelector(".pv-page").getBoundingClientRect();
+              const tooltip = document.body.appendChild(document.createElement("div"));
+              Object.assign(tooltip.style, { position: "fixed", left: `${left}px`, top: `${top}px`, width: `${width}px`,
+                height: `${height}px`, zIndex: "1000" });
+              button.addEventListener("mouseleave", () => tooltip.remove(), { once: true });
+            }
+            """);
+        await _viewer.WaitForToolAsync(ViewerTool.DrawRectangle, "heading");
+
+        await _viewer.DrawAsync(new PageRect(100, 100, 100, 60));
+
+        await Expect(_viewer.Objects("heading")).ToHaveCountAsync(1);
+    }
+
     // The fixture's sample text starts at the ink's left edge, x 100, with its baseline 40 units below the ink, at y 290.
     [Theory]
     [InlineData("letter")]

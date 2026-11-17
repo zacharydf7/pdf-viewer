@@ -97,10 +97,12 @@ public partial class PdfViewer
     /// <summary>
     /// An element of your page, such as a panel beside the viewer, where the keys that move and resize objects also
     /// work while focus is there: <see cref="PdfViewerOptions.KeyboardMoveModifier"/> with an arrow key, with or
-    /// without Shift. They act on the selected object. Keys pressed in a field that uses arrow keys itself, such as a
-    /// text box, are left alone. Without it, those keys work only on a focused object in the viewer. Capture the
-    /// element with <c>@ref</c>, which is set after your component first renders, so render again once it is, for
-    /// example from <c>OnAfterRender</c>.
+    /// without Shift. They act on the selected object, with the select or draw tool, and they also work while nothing
+    /// on the page has focus, or when something in the element has canceled the key's default action. Keys pressed in a
+    /// field that uses arrow keys itself, such as a text box, are left alone, and so is a key you stop from propagating
+    /// before it reaches the element, or before it reaches the document for a key pressed while nothing has focus.
+    /// Without it, those keys work only on a focused object in the viewer. Capture the element with <c>@ref</c>, which
+    /// is set after your component first renders, so render again once it is, for example from <c>OnAfterRender</c>.
     /// </summary>
     [Parameter] public ElementReference? KeyboardScope { get; set; }
 

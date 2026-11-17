@@ -40,8 +40,9 @@ order. Alt with an arrow key moves the focused object, and adding Shift resizes 
 stays down are one change, reported when it's released, so your undo can treat them as one step. Switching between
 moving and resizing starts a new change. You can change the modifier and the step sizes in the options.
 `MoveObjectByAsync` moves an object from code. To make Alt with an arrow key work from elsewhere in your page too, such
-as your own list of objects, pass that element as `KeyboardScope`; the keys then act on the selected object. To confirm
-a deletion, handle `OnDeleteRequested`: the Delete key then removes nothing until you take the object out of your list.
+as your own list of objects, pass that element as `KeyboardScope`; the keys then act on the selected object, with the
+select or draw tool, and also while nothing on the page has focus. To confirm a deletion, handle `OnDeleteRequested`:
+the Delete key then removes nothing until you take the object out of your list.
 
 `Pv` is a placeholder name, and the project will be renamed.
 

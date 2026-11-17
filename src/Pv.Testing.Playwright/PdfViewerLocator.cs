@@ -144,13 +144,15 @@ public sealed class PdfViewerLocator
     }
 
     /// <summary>
-    /// Waits until the topmost element at a point in the browser viewport is the target or inside it, for a gesture
-    /// with the real mouse that the locator has no method for, such as dragging a resize handle. The pointer methods
-    /// wait like this because a tooltip or dialog can cover the target for a moment. A point outside the browser
+    /// Moves the mouse to a point in the browser viewport and waits until the topmost element there is the target or
+    /// inside it, for a gesture with the real mouse that the locator has no method for, such as dragging a resize
+    /// handle. The pointer methods do this because a tooltip or dialog can cover the target for a moment, and a
+    /// tooltip shown while the mouse is over its button stays until the mouse leaves. A point outside the browser
     /// viewport never reaches anything, so scroll the target into view first.
     /// </summary>
     public async Task WaitForPointerTargetAsync(ILocator target, double x, double y)
     {
+        await Host.Page.Mouse.MoveAsync((float)x, (float)y);
         await using var element = await target.ElementHandleAsync();
         try
         {

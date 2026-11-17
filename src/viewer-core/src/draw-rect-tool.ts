@@ -1,8 +1,9 @@
 import type { Point } from "./geometry.js";
 import { clampPoint, rectFromCorners } from "./geometry.js";
+import { KeyEditor } from "./key-editor.js";
 import type { ObjectStore } from "./object-store.js";
-import type { DrawDefaults, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext, ToolPresentation }
-  from "./tool.js";
+import type { DrawDefaults, ObjectKeyPress, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext,
+  ToolPresentation } from "./tool.js";
 import { finalRect } from "./tool.js";
 
 /** The smallest width and height a drawn rectangle can have, in page units, so a click doesn't make one. */
@@ -10,6 +11,8 @@ const minimumDrawSize = 2;
 
 /**
  * Draws a rectangle from where the pointer is pressed to where it's released, and leaves it with the store as a draft.
+ * Keys still move and resize objects while it's active, so the user can adjust what they just drew, but the keys that
+ * select, clear the selection or delete are left alone.
  */
 export class DrawRectTool implements Tool {
   readonly presentation: ToolPresentation = { pointer: "page", focusable: true, handles: false, readOnly: false };
@@ -18,6 +21,7 @@ export class DrawRectTool implements Tool {
   /** Kept for its options, which are read at each use because they can change. */
   readonly #context: ToolContext;
   readonly #defaults: DrawDefaults;
+  readonly #keys: KeyEditor;
   #draw: { page: number; start: Point; current: Point } | undefined;
 
   /** The defaults are applied to every rectangle drawn. */
@@ -26,6 +30,7 @@ export class DrawRectTool implements Tool {
     this.#show = context.show;
     this.#context = context;
     this.#defaults = defaults;
+    this.#keys = new KeyEditor(context, false);
   }
 
   pointerDown({ page, geometry, point }: PointerPress): PressResult {
@@ -64,6 +69,18 @@ export class DrawRectTool implements Tool {
       this.#show(undefined);
     }
     return drawing;
+  }
+
+  keyDown({ id, geometry, action }: ObjectKeyPress): boolean {
+    return this.#draw === undefined && action.kind === "edit" && this.#keys.edit(id, geometry, action);
+  }
+
+  endKeyEdit(): void {
+    this.#keys.end();
+  }
+
+  objectsChanged(): void {
+    this.#keys.objectsChanged();
   }
 
   #showDraft(): void {

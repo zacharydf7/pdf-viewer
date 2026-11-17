@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DrawRectTool } from "../../src/draw-rect-tool.js";
-import type { DrawDefaults, PointerPress } from "../../src/tool.js";
-import { at, recordingContext } from "./tool-support.js";
+import type { DrawDefaults, ObjectKeyPress, PointerPress } from "../../src/tool.js";
+import { at, geometry, recordingContext } from "./tool-support.js";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -188,5 +188,61 @@ describe("canceling", () => {
 
     expect(tool.cancel()).toBe(false);
     expect(record.log).toEqual([]);
+  });
+});
+
+describe("keyboard", () => {
+  const rect = { x: 100, y: 150, width: 200, height: 100 };
+
+  /** A draw tool, and a page with object "a" on it. */
+  function setupWithObject() {
+    const setupResult = setup();
+    setupResult.store.add({ id: "a", page: 1, rect }, "api");
+    return setupResult;
+  }
+
+  function key(action: ObjectKeyPress["action"]): ObjectKeyPress {
+    return { id: "a", geometry: geometry(), action };
+  }
+
+  const stepRight = key({ kind: "edit", resize: false, deltaX: 1, deltaY: 0 });
+
+  it("endKeyEdit_ShouldReportOneNudge_WhenRunMovedObjectWhileToolIsActive", () => {
+    const { tool, record } = setupWithObject();
+
+    const handled = tool.keyDown(stepRight);
+    tool.keyDown(stepRight);
+    tool.endKeyEdit();
+
+    expect(handled).toBe(true);
+    expect(record.updated).toHaveLength(1);
+    expect(record.updated[0]).toMatchObject({ gesture: "nudge", object: { rect: { ...rect, x: 102 } } });
+  });
+
+  it("keyDown_ShouldLeaveKeyAlone_WhenDrawIsUnderWay", () => {
+    const { tool } = setupWithObject();
+    tool.pointerDown(press(10, 10));
+
+    expect(tool.keyDown(stepRight)).toBe(false);
+  });
+
+  it("keyDown_ShouldLeaveKeyAlone_WhenKeySelectsOrDeletes", () => {
+    const { tool, record } = setupWithObject();
+
+    expect(tool.keyDown(key({ kind: "select" }))).toBe(false);
+    expect(tool.keyDown(key({ kind: "delete" }))).toBe(false);
+    expect(record.selections).toEqual([]);
+    expect(record.deleteRequests).toEqual([]);
+  });
+
+  it("objectsChanged_ShouldDropRun_WhenObjectIsRemoved", () => {
+    const { tool, store, record } = setupWithObject();
+
+    tool.keyDown(stepRight);
+    store.remove("a", "api");
+    tool.objectsChanged();
+    tool.endKeyEdit();
+
+    expect(record.updated).toEqual([]);
   });
 });

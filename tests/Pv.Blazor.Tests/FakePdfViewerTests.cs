@@ -153,6 +153,21 @@ public class FakePdfViewerTests : BunitContext
     }
 
     [Fact]
+    public async Task ReportErrorAsync_ShouldReportErrorAndKeepDocumentOpen_WhenDocumentIsOpen()
+    {
+        var errors = new List<ViewerError>();
+        Render<PdfViewer>(parameters => parameters
+            .Add(viewer => viewer.Source, "/a.pdf")
+            .Add(viewer => viewer.OnError, errors.Add));
+        await Viewer.LoadDocumentAsync();
+
+        await Viewer.ReportErrorAsync();
+
+        Assert.Equal((ViewerErrorCode.Render, false), (Assert.Single(errors).Code, errors[0].DocumentClosed));
+        Assert.True(Viewer.IsDocumentOpen);
+    }
+
+    [Fact]
     public async Task GoToPageAsync_ShouldOpenOnRequestedPage_WhenIssuedWhileDocumentIsOpening()
     {
         var page = Render<ApplicationPage>();

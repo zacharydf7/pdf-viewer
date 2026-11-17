@@ -127,6 +127,15 @@ export interface Tool {
   endKeyEdit?(): void;
 }
 
+/** The smallest width and height a resize leaves, in page units. */
+export const minimumResizeSize = 1;
+
+/** Whether an edit's object was removed, hidden or moved to another page since the edit began. */
+export function isGone(store: ObjectStore, { id, page }: { id: string; page: number | null }): boolean {
+  const object = store.get(id);
+  return object?.page !== page || object.hidden;
+}
+
 /** A rectangle the user made, rounded to whole page units when coordinate rounding is on. */
 export function finalRect(geometry: PageGeometry, rect: Rect, roundCoordinates: boolean): Rect {
   return roundCoordinates ? roundRect(geometry, rect) : rect;

@@ -93,13 +93,19 @@ and the chosen tool stay as they are, and methods such as `updateObject` and `se
 chosen.
 
 Set `keyboardScope` on the element to another element, such as one of the application's panels, and the keys that move
-and resize objects also work while focus is there, acting on the selected object. Keys pressed in a field that uses
-arrow keys itself, such as a text box, are left alone. When a key moves or resizes an object, `.pv-announcer`, a polite
-live region, gives its new position or size, for example "Heading moved to 101, 100" or "Heading resized to 200 by 101".
-The object moves on the page at once, but `data-page-rect` and the store change only when the run of keys ends, which
-reports the run as one `pv-objects-changed` event. A run ends when the move modifier is released, a key other than an
-arrow or modifier key is pressed, the pointer is pressed, the window loses focus, or the tool or read-only mode changes.
-An arrow key that switches between moving and resizing, or that edits another object, ends the run and starts another.
+and resize objects also work while focus is there, acting on the selected object. They also work while nothing has
+focus, and when something in that element has canceled the key's default action. Keys pressed in a field that uses arrow
+keys itself, such as a text box, are left alone, and so is a key the application stops from propagating before it
+reaches that element, or before it reaches the document for a key pressed while nothing has focus. Keys pressed in a
+viewer belong to it, even inside another viewer's scope, and when several viewers could act on one key, one of them does
+and the others don't. The keys that move and resize work with both the select and draw tools, but with the draw tool,
+the keys that select, clear the selection or delete are left alone. When a key moves or resizes an object,
+`.pv-announcer`, a polite live region, gives its new position or size, for example "Heading moved to 101, 100" or
+"Heading resized to 200 by 101". The object moves on the page at once, but `data-page-rect` and the store change only
+when the run of keys ends, which reports the run as one `pv-objects-changed` event. A run ends when the move modifier is
+released, a key other than an arrow or modifier key is pressed, the pointer is pressed, the window loses focus, or the
+tool or read-only mode changes. An arrow key that switches between moving and resizing, or that edits another object,
+ends the run and starts another.
 
 ## Draft: `[data-draft-id]`
 

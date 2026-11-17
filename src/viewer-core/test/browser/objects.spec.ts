@@ -1,6 +1,7 @@
+import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import type { PdfViewerElement } from "../../src/viewer-element.js";
-import { expectRectsClose, parseRect, Viewer } from "./support.js";
+import { expectRectsClose, fixtureUrl, parseRect, Viewer } from "./support.js";
 
 const start = { x: 100, y: 100, width: 200, height: 100 };
 
@@ -654,6 +655,19 @@ test.describe("keyboard", () => {
     expect(await events()).toMatchObject([{ gesture: "nudge", previous: { rect: start } }]);
   });
 
+  test("altArrowKey_ShouldMoveFocusedObject_WhenDrawToolIsActive", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const events = await viewer.recordUpdated();
+    await viewer.setTool("draw-rect");
+    await viewer.object("a").focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge"]);
+  });
+
   test("altArrowKeys_ShouldReportRun_WhenWindowLosesFocusWhileAltIsHeld", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.addObject({ id: "a", page: 1, rect: start });
@@ -982,6 +996,63 @@ test.describe("keyboard scope", () => {
     expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge"]);
   });
 
+  test("altArrowKey_ShouldMoveSelectedObject_WhenSomethingInScopeCanceledTheKey", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    const button = page.locator("#in-panel");
+    await button.evaluate((element) => element.addEventListener("keydown", (event) => event.preventDefault()));
+    await button.focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
+  });
+
+  test("altArrowKey_ShouldMoveSelectedObject_WhenNothingHasFocus", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
+  });
+
+  test("altArrowKey_ShouldMoveSelectedObject_WhenDrawToolIsActive", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    await viewer.setTool("draw-rect");
+    await page.locator("#in-panel").focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
+  });
+
+  test("altArrowKey_ShouldMoveNothing_WhenFocusIsOnComboboxInScope", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    const button = page.locator("#in-panel");
+    await button.evaluate((element) => element.setAttribute("role", "combobox"));
+    await button.focus();
+
+    await page.keyboard.press("Alt+ArrowDown");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  test("altArrowKey_ShouldMoveNothing_WhenElementInScopeStopsIt", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    const button = page.locator("#in-panel");
+    await button.evaluate((element) => element.addEventListener("keydown", (event) => event.stopPropagation()));
+    await button.focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
   test("altArrowKey_ShouldMoveNothing_WhenFocusIsInTextFieldInScope", async ({ page }) => {
     const viewer = await openViewer(page);
     await addPanel(viewer);
@@ -1052,8 +1123,81 @@ test.describe("keyboard scope", () => {
     await page.locator("#in-panel").focus();
 
     await page.keyboard.press("Alt+ArrowRight");
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press("Alt+ArrowRight");
 
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+  });
+
+  /**
+   * Opens a second viewer, "#second", beside the harness's "#viewer", each with object "a" selected, and returns both
+   * objects. The second one is locked when asked.
+   */
+  async function openTwoViewers(page: Page, secondLocked = false): Promise<Locator> {
+    await new Viewer(page).goto();
+    await page.evaluate(async ([url, locked]) => {
+      const second = document.createElement("pdf-viewer") as PdfViewerElement;
+      second.id = "second";
+      document.body.append(second);
+      const hosts = [document.querySelector("#viewer") as PdfViewerElement, second];
+      await Promise.all(hosts.map((host) => host.open({ kind: "url", url: url as string })));
+      hosts.forEach((host, index) => {
+        const rect = { x: 100, y: 100, width: 200, height: 100 };
+        host.setObjects([{ id: "a", page: 1, rect, locked: index === 1 && locked as boolean }]);
+        host.selectObject("a");
+      });
+    }, [fixtureUrl("letter"), secondLocked] as const);
+    const objects = page.locator('[data-object-id="a"]');
+    await expect(objects).toHaveCount(2);
+    return objects;
+  }
+
+  async function pageRects(objects: Locator): Promise<string[]> {
+    const rects = await objects.evaluateAll((elements) =>
+      elements.map((element) => (element as HTMLElement).dataset.pageRect!));
+    return rects.sort();
+  }
+
+  test("altArrowKey_ShouldMoveOneViewersObject_WhenNothingHasFocusAndTwoViewersHaveScopes", async ({ page }) => {
+    const objects = await openTwoViewers(page);
+    await page.evaluate(() => {
+      for (const host of document.querySelectorAll("pdf-viewer")) {
+        (host as PdfViewerElement).keyboardScope = document.body.appendChild(document.createElement("div"));
+      }
+    });
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect.poll(() => pageRects(objects)).toEqual(["100,100,200,100", "101,100,200,100"]);
+  });
+
+  test("altArrowKey_ShouldMoveOneViewersObject_WhenTwoViewersShareScope", async ({ page }) => {
+    const objects = await openTwoViewers(page);
+    await page.evaluate(() => {
+      const panel = document.body.appendChild(document.createElement("div"));
+      panel.innerHTML = '<button id="shared">Item</button>';
+      for (const host of document.querySelectorAll("pdf-viewer")) {
+        (host as PdfViewerElement).keyboardScope = panel;
+      }
+    });
+    await page.locator("#shared").focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect.poll(() => pageRects(objects)).toEqual(["100,100,200,100", "101,100,200,100"]);
+  });
+
+  // The body is the first viewer's scope, so the second viewer is inside it.
+  test("altArrowKey_ShouldMoveNothing_WhenViewerInsideAnotherViewersScopeTurnsItDown", async ({ page }) => {
+    const objects = await openTwoViewers(page, true);
+    await page.evaluate(() => {
+      (document.querySelector("#viewer") as PdfViewerElement).keyboardScope = document.body;
+    });
+    await page.locator('#second [data-object-id="a"]').focus();
+
+    await page.keyboard.press("Alt+ArrowRight");
+
+    await expect.poll(() => pageRects(objects)).toEqual(["100,100,200,100", "100,100,200,100"]);
   });
 });
 
