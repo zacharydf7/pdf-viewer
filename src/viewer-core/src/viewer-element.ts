@@ -3,7 +3,7 @@ import type { DocumentSource, EngineDocument, EnginePage } from "./engine.js";
 import { DocumentError, openDocument } from "./engine.js";
 import type { PageInfo, PvEventMap } from "./events.js";
 import { errorMessage } from "./events.js";
-import type { PageGeometry, Point, Rotation, Size } from "./geometry.js";
+import type { PageGeometry, Point, Rect, Rotation, Size } from "./geometry.js";
 import { displaySize, displayToPage, fitScale, moveRect, normalizeRotation, pageToDisplay } from "./geometry.js";
 import { InteractionController } from "./interaction-controller.js";
 import type { NewPageObject, ObjectBatch, ObjectPatch, ObjectsChanged, PageObject, SelectionChanged }
@@ -115,7 +115,7 @@ export class PdfViewerElement extends HTMLElement {
     this.#viewport.addEventListener("wheel", (event) => this.#onWheel(event), { passive: false });
     this.#controller = new InteractionController(this.#viewport, this.#store, toolOptions(this.#options), {
       requestDelete: (id) => this.#onDeleteRequested(id),
-      announceEdit: (id, resized) => this.#announceEdit(id, resized),
+      announceEdit: (id, rect, resized) => this.#announceEdit(id, rect, resized),
     });
     this.#controller.keyboardScope = this.#keyboardScope;
     this.#applyTool();
@@ -782,12 +782,10 @@ export class PdfViewerElement extends HTMLElement {
    * Tells screen readers where a key moved an object, or what size it resized it to, in the coordinates the viewer is
    * set to use.
    */
-  #announceEdit(id: string, resized: boolean): void {
-    const object = this.#store.get(id);
-    if (object === undefined || this.#announcer === undefined) {
+  #announceEdit(id: string, { x, y, width, height }: Rect, resized: boolean): void {
+    if (this.#announcer === undefined) {
       return;
     }
-    const { x, y, width, height } = object.rect;
     const name = this.#view?.objects.nameOf(id) ?? id;
     this.#announcer.textContent = resized
       ? `${name} resized to ${formatNumber(width)} by ${formatNumber(height)}`

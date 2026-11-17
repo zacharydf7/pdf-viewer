@@ -1,4 +1,4 @@
-import type { PageGeometry, Rotation } from "../../src/geometry.js";
+import type { PageGeometry, Rect, Rotation } from "../../src/geometry.js";
 import type { ChangeOrigin, ObjectUpdate, PageObject, SelectionChanged } from "../../src/object-store.js";
 import { ObjectStore } from "../../src/object-store.js";
 import type { PointerInput, Preview, ToolContext, ToolOptions } from "../../src/tool.js";
@@ -50,8 +50,8 @@ export function recordingContext(options: Partial<ToolOptions> = {}):
     record.shown.push(preview);
   };
   const requestDelete = (id: string) => { record.log.push("request-delete"); record.deleteRequests.push(id); };
-  const announceEdit = (id: string, resized: boolean) =>
-    record.announcements.push(`${id} ${resized ? "resized" : "moved"}`);
+  const announceEdit = (id: string, { x, y, width, height }: Rect, resized: boolean) =>
+    record.announcements.push(`${id} ${resized ? `resized to ${width} by ${height}` : `moved to ${x}, ${y}`}`);
   const context = { store, show, requestDelete, announceEdit, options: { ...defaultToolOptions, ...options } };
   return { context, store, record };
 }

@@ -310,13 +310,14 @@ describe("resizing", () => {
 });
 
 describe("keyboard", () => {
-  it("keyDown_ShouldSelectThenReportNudge_WhenGivenEditOfUnselectedObject", () => {
+  it("endKeyEdit_ShouldSelectThenReportNudge_WhenRunEditedUnselectedObject", () => {
     const { tool, record } = setup();
 
     const handled = tool.keyDown(editKey());
+    tool.endKeyEdit();
 
     expect(handled).toBe(true);
-    expect(record.log.slice(1)).toEqual(["select", "update"]);
+    expect(record.log.slice(1)).toEqual(["select", "show:object", "show:none", "update"]);
     expect(record.selections[0]).toMatchObject({ origin: "user", ids: ["a"] });
     expect(record.updated[0]).toMatchObject({ origin: "user", gesture: "nudge" });
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 101 });
@@ -332,10 +333,11 @@ describe("keyboard", () => {
     expect(store.selectedIds).toEqual(["a", "b"]);
   });
 
-  it("keyDown_ShouldReportResize_WhenGivenResizeEdit", () => {
+  it("endKeyEdit_ShouldReportResize_WhenRunResized", () => {
     const { tool, record } = setup();
 
     tool.keyDown(editKey(1, 0, true));
+    tool.endKeyEdit();
 
     expect(record.updated[0]!.gesture).toBe("resize");
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, width: 201 });
@@ -347,7 +349,73 @@ describe("keyboard", () => {
     tool.keyDown(editKey());
     tool.keyDown(editKey(1, 0, true));
 
-    expect(record.announcements).toEqual(["a moved", "a resized"]);
+    expect(record.announcements).toEqual(["a moved to 101, 150", "a resized to 201 by 100"]);
+  });
+
+  it("keyDown_ShouldShowEachStepAndChangeNothing_WhenRunIsUnderWay", () => {
+    const { tool, record } = setup();
+
+    tool.keyDown(editKey());
+    tool.keyDown(editKey());
+
+    expect(record.updated).toEqual([]);
+    expect(record.shown.at(-1)).toEqual({ kind: "object", id: "a", rect: { ...rect, x: 102 } });
+  });
+
+  it("endKeyEdit_ShouldReportOneNudge_WhenRunHadSeveralKeys", () => {
+    const { tool, record } = setup();
+
+    tool.keyDown(editKey());
+    tool.keyDown(editKey());
+    tool.keyDown(editKey(0, 1));
+    tool.endKeyEdit();
+
+    expect(record.updated).toHaveLength(1);
+    expect(record.updated[0]).toMatchObject({ gesture: "nudge", previous: { rect } });
+    expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 102, y: 151 });
+  });
+
+  it("endKeyEdit_ShouldReportNothing_WhenRunEndsWhereItBegan", () => {
+    const { tool, record } = setup();
+
+    tool.keyDown(editKey());
+    tool.keyDown(editKey(-1));
+    tool.endKeyEdit();
+
+    expect(record.updated).toEqual([]);
+  });
+
+  it("keyDown_ShouldEndRunFirst_WhenResizeFollowsMove", () => {
+    const { tool, record } = setup();
+
+    tool.keyDown(editKey());
+    tool.keyDown(editKey(1, 0, true));
+
+    expect(record.updated.map(({ gesture }) => gesture)).toEqual(["nudge"]);
+    tool.endKeyEdit();
+    expect(record.updated.map(({ gesture }) => gesture)).toEqual(["nudge", "resize"]);
+  });
+
+  it("keyDown_ShouldEndRunFirst_WhenAnotherObjectIsEdited", () => {
+    const { tool, store, record } = setup();
+    store.add({ id: "b", page: 1, rect }, "api");
+
+    tool.keyDown(editKey());
+    tool.keyDown({ ...editKey(), id: "b" });
+
+    expect(record.updated.map(({ object }) => object.id)).toEqual(["a"]);
+  });
+
+  it("objectsChanged_ShouldDropRun_WhenObjectIsRemoved", () => {
+    const { tool, store, record } = setup();
+
+    tool.keyDown(editKey());
+    store.remove("a", "api");
+    tool.objectsChanged();
+    tool.endKeyEdit();
+
+    expect(record.updated).toEqual([]);
+    expect(record.shown.at(-1)).toBeUndefined();
   });
 
   it("keyDown_ShouldHandleKeyAndReportNothing_WhenEditMeetsPageEdge", () => {
@@ -355,6 +423,7 @@ describe("keyboard", () => {
     store.select(["a"], "api");
 
     const handled = tool.keyDown(editKey(-1));
+    tool.endKeyEdit();
 
     expect(handled).toBe(true);
     expect(record.updated).toEqual([]);
@@ -364,6 +433,7 @@ describe("keyboard", () => {
     const { tool, record } = setup({ roundCoordinates: true }, { rect: { ...rect, x: 100.4 } });
 
     tool.keyDown(editKey());
+    tool.endKeyEdit();
 
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 101 });
   });
@@ -533,6 +603,7 @@ describe("read-only viewer", () => {
     const { tool, record } = setupReadOnly({ editableWhenReadOnly: true });
 
     expect(tool.keyDown(editKey())).toBe(true);
+    tool.endKeyEdit();
     expect(record.updated[0]!.object.rect).toEqual({ ...rect, x: 101 });
   });
 });

@@ -95,8 +95,11 @@ chosen.
 Set `keyboardScope` on the element to another element, such as one of the application's panels, and the keys that move
 and resize objects also work while focus is there, acting on the selected object. Keys pressed in a field that uses
 arrow keys itself, such as a text box, are left alone. When a key moves or resizes an object, `.pv-announcer`, a polite
-live region, gives its new position or size, for example "Heading moved to 101, 100" or "Heading resized to 200 by
-101".
+live region, gives its new position or size, for example "Heading moved to 101, 100" or "Heading resized to 200 by 101".
+The object moves on the page at once, but `data-page-rect` and the store change only when the run of keys ends, which
+reports the run as one `pv-objects-changed` event. A run ends when the move modifier is released, a key other than an
+arrow or modifier key is pressed, the pointer is pressed, the window loses focus, or the tool or read-only mode changes.
+An arrow key that switches between moving and resizing, or that edits another object, ends the run and starts another.
 
 ## Draft: `[data-draft-id]`
 
@@ -154,7 +157,7 @@ These are bubbling `CustomEvent`s on `<pdf-viewer>`.
 | `pv-page-change` | `{ page }` |
 | `pv-object-drawn` | `{ object }`, the object the user finished drawing, with the draw tool's defaults applied. It's raised before the object is added, and it can be canceled. Unless a listener calls `preventDefault()`, the object is added at once and `pv-objects-changed` follows. A listener that cancels it keeps the object as a draft, and commits or discards it later |
 | `pv-delete-requested` | `{ object }`, the object the user pressed Delete on. It can be canceled. Unless a listener calls `preventDefault()`, the object is removed at once and `pv-objects-changed` follows. A listener that cancels it decides for itself, and removes the object if it agrees. The Blazor component cancels it whenever `OnDeleteRequested` has a handler. A locked object raises nothing |
-| `pv-objects-changed` | `{ sequence, origin, added, updated, removed }`, where `origin` is `user` or `api`. One event reports one change, however many objects it touched. `added` and `removed` list objects, the removed ones as they were. `updated` lists `{ object, previous, gesture }`, where `previous` is the object before the change. `gesture` is set when the user changed the rectangle: `move` for dragging the object, `resize` for dragging a handle or pressing the move modifier and Shift with an arrow key, `nudge` for the move modifier with an arrow key or a call to `moveObjectBy` |
+| `pv-objects-changed` | `{ sequence, origin, added, updated, removed }`, where `origin` is `user` or `api`. One event reports one change, however many objects it touched. `added` and `removed` list objects, the removed ones as they were. `updated` lists `{ object, previous, gesture }`, where `previous` is the object before the change. `gesture` is set when the user changed the rectangle: `move` for dragging the object, `resize` for dragging a handle or a run of arrow keys with the move modifier and Shift, `nudge` for a run of arrow keys with the move modifier or a call to `moveObjectBy` |
 | `pv-selection-change` | `{ sequence, origin, ids, primaryId }`. `ids` has every selected object in the order selected, and `primaryId` is the last of them, or `null` |
 | `pv-error` | `{ code, message, documentFailed }`, where `code` is one of the `data-error-code` values when `documentFailed` is true. Otherwise it's `page` or `render` for a page that failed, or `command` for a rejected command from .NET. For a URL source, `network` also covers any other error from pdf.js, because it reports a refused connection as a generic error |
 

@@ -357,11 +357,15 @@ public enum EditGesture
     /// <summary>Dragging the object.</summary>
     [JsonStringEnumMemberName("move")] Move,
 
-    /// <summary>Dragging a handle, or pressing Shift with an arrow key.</summary>
+    /// <summary>
+    /// Dragging a handle, or arrow keys with the move modifier and Shift. The arrow keys pressed while the move
+    /// modifier stays down are one change, reported when it's released.
+    /// </summary>
     [JsonStringEnumMemberName("resize")] Resize,
 
     /// <summary>
-    /// Pressing an arrow key without Shift, or a call to <see cref="PdfViewerController.MoveObjectByAsync"/>.
+    /// Arrow keys with the move modifier, or a call to <see cref="PdfViewerController.MoveObjectByAsync"/>. The arrow
+    /// keys pressed while the move modifier stays down are one change, reported when it's released.
     /// </summary>
     [JsonStringEnumMemberName("nudge")] Nudge,
 }

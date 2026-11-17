@@ -31,6 +31,8 @@ export class InteractionController {
   #gesture: { page: InteractivePage; listener: AbortController } | undefined;
   /** What removes the listener on the keyboard scope. */
   #scopeListener: AbortController | undefined;
+  /** What removes the window listeners that end a run of keys that moved or resized an object. */
+  #keyEditListener: AbortController | undefined;
 
   /**
    * A tool that wants an object deleted calls requestDelete with its id, and one that moved or resized an object with a
@@ -83,6 +85,7 @@ export class InteractionController {
    * editable.
    */
   setTool(tool: ViewerTool, drawDefaults: DrawDefaults, readOnly: boolean): void {
+    this.#endKeyEdit();
     this.#cancelGesture();
     const context = this.#context;
     this.#tool = readOnly ? new SelectTool(context, true)
@@ -214,7 +217,9 @@ export class InteractionController {
     }
     if (action.kind === "focus") {
       page!.objects.moveFocus(target!.id, action.to);
-    } else if (!this.#tool?.keyDown?.({ id: target!.id, geometry: page!.objects.geometry, action })) {
+    } else if (this.#tool?.keyDown?.({ id: target!.id, geometry: page!.objects.geometry, action })) {
+      this.#startKeyEdit(action.kind);
+    } else {
       // A move key the tool turns down, as on a locked object, still mustn't reach the browser, where Alt with an
       // arrow key goes back or forward in the browser's history.
       if (action.kind === "edit") {
@@ -242,12 +247,48 @@ export class InteractionController {
     }
     event.preventDefault();
     if (this.#tool?.keyDown?.({ id: id!, geometry: page.objects.geometry, action })) {
+      this.#startKeyEdit(action.kind);
       event.stopPropagation();
     }
   }
 
-  /** Detaches from the keyboard scope, which can outlive the viewer. */
+  /**
+   * After a key that edits an object, the run of keys goes on until the move modifier is released, a key other than
+   * an edit or modifier key is pressed, the pointer is pressed or the window loses focus. The listeners are on the
+   * window, in the capture phase, because those can happen anywhere and the run must end before anything else handles
+   * them.
+   */
+  #startKeyEdit(kind: string): void {
+    if (kind !== "edit" || this.#keyEditListener !== undefined) {
+      return;
+    }
+    const listener = this.#keyEditListener = new AbortController();
+    const options = { signal: listener.signal, capture: true };
+    const end = () => this.#endKeyEdit();
+    window.addEventListener("keyup", (event) => {
+      if (!event[`${this.#context.options.keyboardMoveModifier}Key`]) {
+        end();
+      }
+    }, options);
+    window.addEventListener("keydown", (event) => {
+      if (!modifierKeys.has(event.key) && keyAction(event, this.#context.options)?.kind !== "edit") {
+        end();
+      }
+    }, options);
+    window.addEventListener("pointerdown", end, options);
+    // Not in the capture phase, which would also catch each element that loses focus, not just the window.
+    window.addEventListener("blur", end, { signal: listener.signal });
+  }
+
+  #endKeyEdit(): void {
+    this.#keyEditListener?.abort();
+    this.#keyEditListener = undefined;
+    this.#tool?.endKeyEdit?.();
+  }
+
+  /** Ends any run of edit keys, and detaches from the keyboard scope, which can outlive the viewer. */
   dispose(): void {
+    this.#endKeyEdit();
     this.keyboardScope = null;
   }
 
@@ -268,6 +309,9 @@ export class InteractionController {
     return { page: page.pageNumber, geometry, point: fractionToPage(geometry, x, y) };
   }
 }
+
+/** Modifier keys. Pressing one, or holding it until it repeats, doesn't end a run of edit keys. */
+const modifierKeys = new Set(["Alt", "Control", "Meta", "Shift"]);
 
 /** Input types that don't use arrow keys, so the viewer's keys still work while one has focus. */
 const inputsWithoutArrowKeys = new Set(["button", "checkbox", "color", "file", "image", "reset", "submit"]);

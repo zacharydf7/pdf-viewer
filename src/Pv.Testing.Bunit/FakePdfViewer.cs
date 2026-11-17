@@ -231,7 +231,7 @@ public sealed partial class FakePdfViewer : IViewerBackend
     /// <summary>
     /// Changes an object's rectangle as the user does with a gesture. <see cref="EditGesture.Move"/> drags the object,
     /// which selects it first. <see cref="EditGesture.Resize"/> drags a handle, which an object has only while it's
-    /// the one object selected. <see cref="EditGesture.Nudge"/> presses the move modifier with an arrow key, on the
+    /// the one object selected. <see cref="EditGesture.Nudge"/> holds the move modifier and presses arrow keys, on the
     /// focused object or in <see cref="KeyboardScope"/>. That selects the object unless it's selected already, and
     /// needs keyboard editing on. The rectangle is the one the gesture ends with: on the page, at least one unit each
     /// way, and for a move or nudge the same size as before.

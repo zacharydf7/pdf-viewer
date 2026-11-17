@@ -265,6 +265,25 @@ test("arrowKey_ShouldMoveFocusWithinBudget_WhenPageHas5000ObjectsInFocusOrder", 
   expectWithinBudget(median(samples), 2);
 });
 
+test("altArrowKey_ShouldShowMoveWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
+  const viewer = await openWithObjects(page, 5_000);
+  await viewer.object("object-0").focus();
+
+  const samples = await viewer.host.evaluate(() => Array.from({ length: 50 }, () => {
+    const start = performance.now();
+    const press = { key: "ArrowRight", altKey: true, bubbles: true };
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", press));
+    const script = performance.now() - start;
+    window.perf!.layout();
+    return { script, total: performance.now() - start };
+  }));
+  // Releasing Alt ends the run, which the store then gets as one change.
+  await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt" })));
+
+  await expect(viewer.object("object-0")).toHaveAttribute("data-page-rect", /^50,/);
+  expectTimingsWithinBudget(samples, 1, 10);
+});
+
 test("updateObject_ShouldStayWithinBudget_WhenPageHas5000Objects", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
 

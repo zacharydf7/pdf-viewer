@@ -1,10 +1,10 @@
-import type { Point, Rect, ResizeHandle } from "./geometry.js";
+import type { PageGeometry, Point, Rect, ResizeHandle } from "./geometry.js";
 import { moveRect, pageToDisplay, resizeRectBy } from "./geometry.js";
 import { rectAfterEdit } from "./keyboard-editing.js";
 import type { ObjectStore } from "./object-store.js";
 import type { ObjectKeyPress, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext, ToolPresentation }
   from "./tool.js";
-import { commitRect, respondsToUser } from "./tool.js";
+import { commitRect, finalRect, respondsToUser } from "./tool.js";
 
 const minimumResizeSize = 1;
 
@@ -22,6 +22,19 @@ interface DragBase {
 type Drag = (DragBase & { kind: "move" }) | (DragBase & { kind: "resize"; handle: ResizeHandle });
 
 /**
+ * Keys that moved or resized one object, shown on the page but not yet in the store. Like a drag, the run is one
+ * change, so an application records it once, as one step to undo.
+ */
+interface KeyEdit {
+  id: string;
+  /** The object's page, or null for an object on every page, so the run ends if that changes. */
+  page: number | null;
+  gesture: "nudge" | "resize";
+  geometry: PageGeometry;
+  rect: Rect;
+}
+
+/**
  * Selects objects, drags them to move them, drags their handles to resize them, and edits the focused object with the
  * keyboard. Pressing empty page area clears the selection. In a read-only viewer it does all that only for objects
  * marked editableWhenReadOnly, and an empty press leaves the selection alone.
@@ -34,6 +47,7 @@ export class SelectTool implements Tool {
   /** Kept for its options, which are read at each use because they can change. */
   readonly #context: ToolContext;
   #drag: Drag | undefined;
+  #keyEdit: KeyEdit | undefined;
 
   constructor(context: ToolContext, readOnly = false) {
     this.presentation = { pointer: "objects", focusable: true, handles: true, readOnly };
@@ -117,16 +131,28 @@ export class SelectTool implements Tool {
    */
   objectsChanged(): void {
     const drag = this.#drag;
-    const object = drag === undefined ? undefined : this.#store.get(drag.id);
-    if (drag !== undefined && (object?.page !== drag.page || object.hidden)) {
+    if (drag !== undefined && this.#isGone(drag)) {
       this.cancel();
     }
+    const keyEdit = this.#keyEdit;
+    if (keyEdit !== undefined && this.#isGone(keyEdit)) {
+      this.#keyEdit = undefined;
+      this.#show(undefined);
+    }
+  }
+
+  /** Whether an edit's object was removed, hidden or moved to another page since the edit began. */
+  #isGone({ id, page }: { id: string; page: number | null }): boolean {
+    const object = this.#store.get(id);
+    return object?.page !== page || object.hidden;
   }
 
   /**
    * Selects, clears, deletes or edits. A key that moves or resizes an object selects it first, unless it's selected
    * already, so the change is made to what the user is working on. A locked object can be selected, but not deleted
-   * or edited.
+   * or edited. Moves and resizes are shown at once, and the store gets them when the run of keys ends. A key that
+   * edits another object, or resizes during a run of moves or moves during a run of resizes, ends the run and starts
+   * another.
    */
   keyDown({ id, geometry, action }: ObjectKeyPress): boolean {
     const object = this.#store.get(id);
@@ -147,11 +173,29 @@ export class SelectTool implements Tool {
     if (!this.#store.isSelected(id)) {
       this.#store.select([id], "user");
     }
-    const { options } = this.#context;
-    const rect = rectAfterEdit(geometry, object.rect, action, minimumResizeSize);
-    commitRect(this.#store, id, rect, action.resize ? "resize" : "nudge", geometry, options.roundCoordinates);
-    this.#context.announceEdit(id, action.resize);
+    const gesture = action.resize ? "resize" : "nudge";
+    if (this.#keyEdit !== undefined && (this.#keyEdit.id !== id || this.#keyEdit.gesture !== gesture)) {
+      this.endKeyEdit();
+    }
+    // Each step is rounded as the store would round it, so the run ends where the same keys one at a time would.
+    const edited = rectAfterEdit(geometry, this.#keyEdit?.rect ?? object.rect, action, minimumResizeSize);
+    const rect = finalRect(geometry, edited, this.#context.options.roundCoordinates);
+    this.#keyEdit = { id, page: object.page, gesture, geometry, rect };
+    this.#show({ kind: "object", id, rect });
+    this.#context.announceEdit(id, rect, action.resize);
     return true;
+  }
+
+  endKeyEdit(): void {
+    const keyEdit = this.#keyEdit;
+    if (keyEdit === undefined) {
+      return;
+    }
+    this.#keyEdit = undefined;
+    // Cleared first, so listeners of the change see the object where the store has it.
+    this.#show(undefined);
+    const { id, rect, gesture, geometry } = keyEdit;
+    commitRect(this.#store, id, rect, gesture, geometry, this.#context.options.roundCoordinates);
   }
 
   #follow(drag: Drag, { geometry, point }: PointerInput): void {

@@ -71,8 +71,9 @@ export type ObjectPatch = Partial<Omit<PageObject, "id">>;
 export type ChangeOrigin = "user" | "api";
 
 /**
- * How the user changed an object's rectangle: "move" by dragging it, "resize" by dragging a handle or pressing Shift
- * with an arrow key, and "nudge" by pressing an arrow key without Shift, or through moveObjectBy on the element.
+ * How the user changed an object's rectangle: "move" by dragging it, "resize" by dragging a handle or with the move
+ * modifier, Shift and arrow keys, and "nudge" with the move modifier and arrow keys, or through moveObjectBy on the
+ * element. The arrow keys pressed while the move modifier stays down are one change.
  */
 export type EditGesture = "move" | "resize" | "nudge";
 

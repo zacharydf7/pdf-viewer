@@ -36,11 +36,12 @@ stays editable anyway, which suits a rectangle the dialog itself asks the user t
 The objects on a page are one tab stop. Arrow keys move focus between them without selecting, and Space or Enter
 selects. Focus moves in reading order unless you give objects a `FocusOrder`, such as each one's position in your own
 list. With `SelectOnFocus` on, the arrow keys also select, so the selection moves through the objects in your list's
-order. Alt with an arrow key moves the focused object, and adding Shift resizes it. You can change the modifier and the
-step sizes in the options. `MoveObjectByAsync` moves an object from code. To make Alt with an arrow key work from
-elsewhere in your page too, such as your own list of objects, pass that element as `KeyboardScope`; the keys then act
-on the selected object. To confirm a deletion, handle `OnDeleteRequested`: the Delete key then removes nothing until you
-take the object out of your list.
+order. Alt with an arrow key moves the focused object, and adding Shift resizes it. The arrow keys pressed while Alt
+stays down are one change, reported when it's released, so your undo can treat them as one step. Switching between
+moving and resizing starts a new change. You can change the modifier and the step sizes in the options.
+`MoveObjectByAsync` moves an object from code. To make Alt with an arrow key work from elsewhere in your page too, such
+as your own list of objects, pass that element as `KeyboardScope`; the keys then act on the selected object. To confirm
+a deletion, handle `OnDeleteRequested`: the Delete key then removes nothing until you take the object out of your list.
 
 `Pv` is a placeholder name, and the project will be renamed.
 

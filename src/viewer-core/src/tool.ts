@@ -95,8 +95,11 @@ export interface ToolContext {
   show(preview: Preview | undefined): void;
   /** Asks for an object to be deleted, which the application may decide on itself. */
   requestDelete(id: string): void;
-  /** Tells screen reader users that a key moved or resized an object, which they otherwise can't perceive. */
-  announceEdit(id: string, resized: boolean): void;
+  /**
+   * Tells screen reader users where a key moved an object or what size it made it, which they otherwise can't
+   * perceive. The rectangle is the one shown, which the store gets when the run of keys ends.
+   */
+  announceEdit(id: string, rect: Rect, resized: boolean): void;
 }
 
 /**
@@ -120,6 +123,8 @@ export interface Tool {
   objectsChanged?(): void;
   /** Returns whether the tool handled the key. A key it doesn't handle goes on to the host application. */
   keyDown?(input: ObjectKeyPress): boolean;
+  /** Ends a run of keys that moved or resized an object, which the store then gets as one change. */
+  endKeyEdit?(): void;
 }
 
 /** A rectangle the user made, rounded to whole page units when coordinate rounding is on. */

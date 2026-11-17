@@ -634,6 +634,87 @@ test.describe("keyboard", () => {
     expect((await events()).map(({ gesture }) => gesture)).toEqual(["resize"]);
   });
 
+  test("altArrowKeys_ShouldReportOneNudge_WhenPressedWhileAltIsHeld", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const events = await viewer.recordUpdated();
+    await viewer.object("a").focus();
+
+    await page.keyboard.down("Alt");
+    for (const key of ["ArrowRight", "ArrowRight", "ArrowDown"]) {
+      await page.keyboard.press(key);
+    }
+    // Shown and announced where the keys took it, but not changed until Alt is released.
+    await expect(page.locator(".pv-announcer")).toHaveText(/moved to 102, 101$/);
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+    expect(await events()).toEqual([]);
+    await page.keyboard.up("Alt");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "102,101,200,100");
+    expect(await events()).toMatchObject([{ gesture: "nudge", previous: { rect: start } }]);
+  });
+
+  test("altArrowKeys_ShouldReportRun_WhenWindowLosesFocusWhileAltIsHeld", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const events = await viewer.recordUpdated();
+    await viewer.object("a").focus();
+
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("ArrowRight");
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
+    await page.keyboard.up("Alt");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge"]);
+  });
+
+  test("altArrowKeys_ShouldReportRunFirst_WhenAnotherKeyIsPressedWhileAltIsHeld", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const events = await viewer.recordUpdated();
+    await viewer.object("a").focus();
+
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("a");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
+    await page.keyboard.up("Alt");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge"]);
+  });
+
+  test("altArrowKeys_ShouldReportRun_WhenViewerTurnsReadOnlyWhileAltIsHeld", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const events = await viewer.recordUpdated();
+    await viewer.object("a").focus();
+
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("ArrowRight");
+    await viewer.host.evaluate((element: PdfViewerElement) => { element.readOnly = true; });
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
+    await page.keyboard.up("Alt");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge"]);
+  });
+
+  test("altArrowKeys_ShouldReportRunFirst_WhenPointerIsPressedWhileAltIsHeld", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "a", page: 1, rect: start });
+    const events = await viewer.recordUpdated();
+    await viewer.object("a").focus();
+
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("ArrowRight");
+    await viewer.pageElement().click({ position: { x: 5, y: 5 } });
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,100");
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "");
+    await page.keyboard.up("Alt");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge"]);
+  });
+
   test("altArrowKey_ShouldMoveObjectAsDisplayed_WhenPageIsRotated", async ({ page }) => {
     const viewer = await openViewer(page);
     await viewer.setRotation(90);
@@ -884,6 +965,21 @@ test.describe("keyboard scope", () => {
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "101,100,200,101");
     expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge", "resize"]);
     await expect(page.locator("#in-panel")).toBeFocused();
+  });
+
+  test("altArrowKeys_ShouldReportOneNudge_WhenPressedInScopeWhileAltIsHeld", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await addPanel(viewer);
+    const events = await viewer.recordUpdated();
+    await page.locator("#in-panel").focus();
+
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.up("Alt");
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "102,100,200,100");
+    expect((await events()).map(({ gesture }) => gesture)).toEqual(["nudge"]);
   });
 
   test("altArrowKey_ShouldMoveNothing_WhenFocusIsInTextFieldInScope", async ({ page }) => {
