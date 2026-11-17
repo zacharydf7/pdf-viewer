@@ -85,7 +85,7 @@ test.describe("zoom", () => {
     await expect(viewer.pageElement()).toHaveAttribute("data-render-scale", "2");
     const canvas = viewer.pageElement().locator("canvas");
     const canvasWidth = await canvas.evaluate((element: HTMLCanvasElement) => element.width);
-    expect(canvasWidth).toBe(1224);
+    expect(canvasWidth).toBe(1224 * await page.evaluate(() => window.devicePixelRatio));
   });
 });
 

@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  viewer-core:
+    name: viewer-core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: src/viewer-core
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/viewer-core/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+
+  # The browser harness imports the built dist/pv.js, so each job builds before testing. The performance project is
+  # left out: its budgets are tuned on a developer machine, and shared runners are too slow and noisy to hold them.
+  # Run it locally with `npm run test:performance` in src/viewer-core.
+  browser:
+    name: browser (${{ matrix.os }}, ${{ matrix.browser }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        browser: [chromium, firefox, webkit]
+        include:
+          - browser: chromium
+            projects: --project=chromium --project=chromium-dpr2 --project=forced-colors
+          - browser: firefox
+            projects: --project=firefox
+          - browser: webkit
+            projects: --project=webkit
+    defaults:
+      run:
+        working-directory: src/viewer-core
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/viewer-core/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npx playwright test ${{ matrix.projects }} --reporter=list,html
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-${{ matrix.os }}-${{ matrix.browser }}
+          path: |
+            src/viewer-core/playwright-report/
+            src/viewer-core/test-results/
+
+  dotnet:
+    name: dotnet (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/viewer-core/package-lock.json
+      - uses: actions/setup-dotnet@v6
+        id: setup-dotnet
+        with:
+          dotnet-version: 10.0.x
+      # The Linux image also has the .NET 11 SDK, which dotnet would pick without a global.json. Its Debug builds add a
+      # Hot Reload script whose settings request returns 404 outside dotnet watch, and the console error from that 404
+      # fails the end-to-end tests.
+      - run: dotnet new globaljson --sdk-version ${{ steps.setup-dotnet.outputs.dotnet-version }}
+      # Building Pv.Blazor restores and builds the TypeScript core too.
+      - run: dotnet build Pv.slnx
+      - run: node tests/Pv.EndToEnd/bin/Debug/net10.0/.playwright/package/cli.js install --with-deps chromium
+      - run: dotnet test tests/Pv.Blazor.Tests --no-build
+      - run: dotnet test tests/Pv.EndToEnd --no-build
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: end-to-end-${{ matrix.os }}
+          path: tests/Pv.EndToEnd/bin/Debug/net10.0/sample-app.log
+          if-no-files-found: ignore
+      # TODO: pack the NuGet package and upload it as an artifact once packaging (#1) lands.

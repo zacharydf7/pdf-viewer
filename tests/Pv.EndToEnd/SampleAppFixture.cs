@@ -40,6 +40,9 @@ public sealed class SampleAppFixture : IAsyncLifetime
             _server.Kill(entireProcessTree: true);
             await _server.WaitForExitAsync();
             _server.Dispose();
+            // CI uploads this log when a test fails, since a server error rarely shows up in the test's own failure
+            // message.
+            await File.WriteAllLinesAsync(Path.Combine(AppContext.BaseDirectory, "sample-app.log"), _serverOutput);
         }
     }
 
