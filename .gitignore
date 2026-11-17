@@ -10,6 +10,7 @@ CLAUDE.local.md
 # .NET
 bin/
 obj/
+artifacts/
 *.user
 .vs/
 TestResults/

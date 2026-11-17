@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Description>Playwright helpers that find and drive a Pv.Blazor viewer through its test contract.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Playwright" Version="1.64.1" />
     <ProjectReference Include="..\Pv.Blazor\Pv.Blazor.csproj" />

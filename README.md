@@ -88,6 +88,31 @@ dotnet run --project samples/Pv.Sample
 
 Then open the URL it prints, and either pick a local PDF or add `?doc=documents/letter.pdf` to the address.
 
+## Packages
+
+`Pv.Blazor` packs the built viewer and pdf.js as static web assets, so an app that uses the package builds with the .NET
+SDK alone, without Node.js. `Pv.Testing.Bunit` and `Pv.Testing.Playwright` hold the test kits. All three share the
+version in `src/viewer-core/package.json`, which the `<pdf-viewer>` element also reports as `PdfViewerElement.version`.
+
+```shell
+dotnet pack Pv.slnx -c Release -o artifacts/packages
+```
+
+To use them from a folder, add it as a package source in the app's `nuget.config`, then reference the packages by
+version instead of by project:
+
+```xml
+<packageSources>
+  <add key="pdf-viewer" value="path/to/artifacts/packages" />
+</packageSources>
+```
+
+NuGet caches a package by its version, so if you repack without changing the version, an app keeps using the copy it
+restored first. After you change the library, raise the version in `package.json` before packing again, or delete the
+cached copies under `~/.nuget/packages/pv.*`.
+
+To publish them to a private feed instead, push the `.nupkg` files with `dotnet nuget push`.
+
 ## Hosting
 
 The viewer's pdf.js files include `.bcmap` and `.icc` assets, which `UseStaticFiles` doesn't serve by default. Without them,

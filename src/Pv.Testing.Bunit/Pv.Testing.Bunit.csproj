@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Description>A fake PDF viewer for component tests of apps that use Pv.Blazor, such as tests written with bUnit.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Pv.Blazor\Pv.Blazor.csproj" />
   </ItemGroup>

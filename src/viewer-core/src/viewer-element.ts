@@ -37,6 +37,9 @@ function loadStyles(): Promise<void> {
   return stylesLoaded;
 }
 
+/** Set by the build from package.json. */
+declare const __PV_VERSION__: string;
+
 /**
  * The viewer, as a framework-independent custom element.
  *
@@ -45,6 +48,9 @@ function loadStyles(): Promise<void> {
  * rather than on timers.
  */
 export class PdfViewerElement extends HTMLElement {
+  /** The viewer's version, the same as its .NET packages' version. */
+  static readonly version: string = __PV_VERSION__;
+
   readonly #store = new ObjectStore({
     onChanged: (change) => this.#onObjectsChanged(change),
     onSelectionChanged: (change) => this.#onSelectionChanged(change),

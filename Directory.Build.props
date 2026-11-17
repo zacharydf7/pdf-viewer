@@ -5,5 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>false</IsPackable>
+    <!-- The packages and the <pdf-viewer> element share one version, the one in the viewer core's package.json. -->
+    <ViewerCorePackageJson>$(MSBuildThisFileDirectory)src/viewer-core/package.json</ViewerCorePackageJson>
+    <Version>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(ViewerCorePackageJson)')), '"version":\s*"([^"]+)"').Groups[1].Value)</Version>
   </PropertyGroup>
 </Project>

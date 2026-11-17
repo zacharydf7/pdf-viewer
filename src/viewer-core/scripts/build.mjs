@@ -1,6 +1,6 @@
 // Builds the viewer into dist/ and copies it to the Razor class library's static web assets.
 import { build } from "esbuild";
-import { cp, mkdir, readdir, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,6 +8,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
 const webAssets = join(root, "..", "Pv.Blazor", "wwwroot");
 const pdfJs = join(root, "node_modules", "pdfjs-dist");
+// The .NET packages take their version from the same package.json, so the two always match.
+const { version } = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(join(dist, "pdfjs"), { recursive: true });
@@ -20,6 +22,7 @@ await build({
   target: "es2022",
   minify: true,
   sourcemap: true,
+  define: { __PV_VERSION__: JSON.stringify(version) },
 });
 await cp(join(root, "src", "pv.css"), join(dist, "pv.css"));
 

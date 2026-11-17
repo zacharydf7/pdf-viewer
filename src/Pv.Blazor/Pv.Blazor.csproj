@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <ViewerCoreDirectory>$(MSBuildThisFileDirectory)..\viewer-core\</ViewerCoreDirectory>
+    <IsPackable>true</IsPackable>
+    <Description>A PDF viewer component for Blazor that includes its JavaScript viewer and pdf.js as static web assets.</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -9,7 +11,7 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.0" />
     <InternalsVisibleTo Include="Pv.Blazor.Tests" />
     <InternalsVisibleTo Include="Pv.Testing.Bunit" />
-    <ViewerCoreInput Include="$(ViewerCoreDirectory)src\**\*;$(ViewerCoreDirectory)scripts\**\*;$(ViewerCoreDirectory)package-lock.json" />
+    <ViewerCoreInput Include="$(ViewerCoreDirectory)src\**\*;$(ViewerCoreDirectory)scripts\**\*;$(ViewerCoreDirectory)package.json;$(ViewerCoreDirectory)package-lock.json" />
   </ItemGroup>
 
   <Target Name="RestoreViewerCore" Inputs="$(ViewerCoreDirectory)package-lock.json" Outputs="$(ViewerCoreDirectory)node_modules\.package-lock.json">

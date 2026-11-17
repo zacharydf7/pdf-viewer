@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import type { PdfViewerElement } from "../../src/viewer-element.js";
 import { expectRectsClose, fixtureUrl, manifest, openViewer, Viewer } from "./support.js";
@@ -283,6 +284,17 @@ test("move_ShouldKeepDocumentOpen_WhenElementIsReinsertedImmediately", async ({ 
   });
 
   await expect(viewer.host).toHaveAttribute("data-document-state", "ready");
+});
+
+// The .NET packages take their version from package.json too, so a bundle that reports it matches them.
+test("version_ShouldMatchPackageJson_WhenBundleIsBuilt", async ({ page }) => {
+  const packageJson = readFileSync(new URL("../../package.json", import.meta.url), "utf8");
+  const { version } = JSON.parse(packageJson) as { version: string };
+  await new Viewer(page).goto();
+
+  const reported = await page.evaluate(() => (customElements.get("pdf-viewer") as typeof PdfViewerElement).version);
+
+  expect(reported).toBe(version);
 });
 
 test("multipleViewers_ShouldEachShowOwnDocument_WhenOnSamePage", async ({ page }) => {
