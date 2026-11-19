@@ -88,11 +88,14 @@ export class PdfViewerElement extends HTMLElement {
   #announcer: HTMLElement | undefined;
   /** The frame that will set a repeated message again, canceled when a newer message arrives first. */
   #pendingAnnouncement: number | undefined;
+  /** What removes the document's listener for presses outside the viewer. */
+  #outsidePressListener: AbortController | undefined;
 
   connectedCallback(): void {
     if (this.#viewport !== undefined) {
-      // Coming back after a teardown, which let go of the keyboard scope.
+      // Coming back after a teardown, which let go of the keyboard scope and stopped listening for outside presses.
       this.#controller!.keyboardScope = this.#keyboardScope;
+      this.#listenForOutsidePresses();
       return;
     }
     this.classList.add("pv-viewer");
@@ -126,6 +129,7 @@ export class PdfViewerElement extends HTMLElement {
       announceEdit: (id, rect, resized) => this.#announceEdit(id, rect, resized),
     });
     this.#controller.keyboardScope = this.#keyboardScope;
+    this.#listenForOutsidePresses();
     this.#applyTool();
   }
 
@@ -154,6 +158,7 @@ export class PdfViewerElement extends HTMLElement {
     queueMicrotask(() => {
       if (!this.isConnected) {
         this.#controller?.dispose();
+        this.#outsidePressListener?.abort();
         void this.close();
       }
     });
@@ -760,6 +765,18 @@ export class PdfViewerElement extends HTMLElement {
     }
   }
 
+  /** Listens on the document, so a press anywhere outside the viewer can clear the selection. */
+  #listenForOutsidePresses(): void {
+    this.#outsidePressListener?.abort();
+    this.#outsidePressListener = new AbortController();
+    this.ownerDocument.addEventListener("pointerdown", (event) => {
+      if (this.#options.clearSelectionOnOutsidePress && !this.#readOnly && event.button === 0
+        && !event.composedPath().includes(this)) {
+        this.#store.select([], "user");
+      }
+    }, { signal: this.#outsidePressListener.signal });
+  }
+
   /**
    * Updates the shown drafts, and selects a committed draft when selectOnCreate is on. The application may have
    * committed it as hidden or unselectable, and then it isn't selected.
@@ -838,9 +855,9 @@ export class PdfViewerElement extends HTMLElement {
 }
 
 function toolOptions({ keyboardEditing, keyboardStep, keyboardLargeStep, keyboardMoveModifier,
-  keyboardLargeStepModifier, selectOnFocus, roundCoordinates }: ResolvedOptions): ToolOptions {
+  keyboardLargeStepModifier, selectOnFocus, roundCoordinates, drawOverObjects }: ResolvedOptions): ToolOptions {
   return { keyboardEditing, keyboardStep, keyboardLargeStep, keyboardMoveModifier, keyboardLargeStepModifier,
-    selectOnFocus, roundCoordinates };
+    selectOnFocus, roundCoordinates, drawOverObjects };
 }
 
 /** A coordinate as a screen reader should read it: to one decimal place at most. */

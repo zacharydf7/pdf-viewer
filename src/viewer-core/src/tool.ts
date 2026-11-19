@@ -59,8 +59,11 @@ export interface PressResult {
 
 /** How objects and the page respond while a tool is active. */
 export interface ToolPresentation {
-  /** What catches the pointer: objects and their handles, the whole page, or nothing. */
-  pointer: "objects" | "page" | "none";
+  /**
+   * What catches the pointer: objects and their handles, the whole page, objects and their handles with the page
+   * everywhere else, or nothing.
+   */
+  pointer: "objects" | "page" | "objects-and-page" | "none";
   /**
    * Whether selectable objects can take focus. Tab reaches one of them at a time, the object list's single tab stop.
    */
@@ -84,6 +87,8 @@ export interface ToolOptions extends KeyOptions {
   /** Whether an object that takes focus is selected too. */
   selectOnFocus: boolean;
   roundCoordinates: boolean;
+  /** Whether the draw tool draws over objects, rather than selecting, moving and resizing them. */
+  drawOverObjects: boolean;
 }
 
 /** What a tool works with. It reads and changes objects only through the store, and never touches the DOM. */

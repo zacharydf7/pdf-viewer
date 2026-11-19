@@ -46,6 +46,17 @@ export interface ViewerOptions {
   roundCoordinates?: boolean;
   /** Whether an object the user draws is selected once it's one of the viewer's objects. Defaults to false. */
   selectOnCreate?: boolean;
+  /**
+   * Whether the draw tool draws over objects. When off, a press on an object selects it and a drag moves or resizes
+   * it, as with the select tool, so only a press elsewhere on the page draws. Defaults to false.
+   */
+  drawOverObjects?: boolean;
+  /**
+   * Whether a press with the primary button outside the viewer clears the selection, as a press on empty page area
+   * does. It leaves the selection alone while the viewer is read-only, or when something stops the press from
+   * propagating to the document. Defaults to false.
+   */
+  clearSelectionOnOutsidePress?: boolean;
   /** Whether Ctrl+wheel and pinch gestures zoom. Defaults to true. */
   wheelZoom?: boolean;
   /**
@@ -77,6 +88,8 @@ export const defaultOptions: ResolvedOptions = Object.freeze({
   selectOnFocus: false,
   roundCoordinates: false,
   selectOnCreate: false,
+  drawOverObjects: false,
+  clearSelectionOnOutsidePress: false,
   wheelZoom: true,
   coordinates: "page",
   objectHitArea: "fill",
@@ -103,6 +116,8 @@ export function mergeOptions(current: ResolvedOptions, options: ViewerOptions): 
     selectOnFocus: options.selectOnFocus ?? current.selectOnFocus,
     roundCoordinates: options.roundCoordinates ?? current.roundCoordinates,
     selectOnCreate: options.selectOnCreate ?? current.selectOnCreate,
+    drawOverObjects: options.drawOverObjects ?? current.drawOverObjects,
+    clearSelectionOnOutsidePress: options.clearSelectionOnOutsidePress ?? current.clearSelectionOnOutsidePress,
     wheelZoom: options.wheelZoom ?? current.wheelZoom,
     coordinates: options.coordinates ?? current.coordinates,
     objectHitArea: options.objectHitArea ?? current.objectHitArea,

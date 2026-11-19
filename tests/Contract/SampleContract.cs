@@ -69,6 +69,17 @@ public static class SampleContract
             await driver.ExpectCountsAsync(objects: 0, drafts: 0);
             await driver.ExpectTextAsync("last-change", "");
         },
+        ["DrawToolMovesObjectItIsPressedOn"] = async driver =>
+        {
+            await driver.OpenAsync();
+            await driver.ClickAsync("add-object");
+            await driver.ExpectTextAsync("last-change", "Added Api code-1");
+            await ChooseDrawToolAsync(driver);
+            await driver.DragObjectByAsync("code-1", 40, 20);
+            await driver.ExpectTextAsync("last-change", "Updated User code-1");
+            await driver.ExpectTextAsync("selected-object", "code-1");
+            await driver.ExpectCountsAsync(objects: 1, drafts: 0);
+        },
         ["DragSelectsAndMoves"] = async driver =>
         {
             await driver.OpenAsync();

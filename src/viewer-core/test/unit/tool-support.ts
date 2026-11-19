@@ -20,7 +20,8 @@ export interface ToolRecord {
 }
 
 const defaultToolOptions: ToolOptions = { keyboardEditing: true, keyboardStep: 1, keyboardLargeStep: 10,
-  keyboardMoveModifier: "alt", keyboardLargeStepModifier: "ctrl", selectOnFocus: false, roundCoordinates: false };
+  keyboardMoveModifier: "alt", keyboardLargeStepModifier: "ctrl", selectOnFocus: false, roundCoordinates: false,
+  drawOverObjects: false };
 
 /** A tool context whose options a test can change, as the viewer does, while a tool is active. */
 export type TestContext = ToolContext & { options: ToolOptions };

@@ -690,7 +690,7 @@ public class PdfViewerTests : BunitContext
             InitialZoom = ViewerZoomMode.FitPage, KeepZoom = true, HideFormFields = true, KeyboardEditing = false,
             KeyboardStep = 0.5, KeyboardLargeStep = 25, KeyboardMoveModifier = ViewerKeyModifier.Meta,
             KeyboardLargeStepModifier = ViewerKeyModifier.Alt, SelectOnFocus = true, RoundCoordinates = true,
-            SelectOnCreate = true, WheelZoom = false,
+            SelectOnCreate = true, DrawOverObjects = true, ClearSelectionOnOutsidePress = true, WheelZoom = false,
             Coordinates = ViewerCoordinates.Display, ObjectHitArea = ViewerObjectHitArea.Border,
         };
 
@@ -700,7 +700,8 @@ public class PdfViewerTests : BunitContext
             {"initialZoom":"fit-page","keepZoom":true,"hideFormFields":true,"keyboardEditing":false,"keyboardStep":0.5,
             "keyboardLargeStep":25,"keyboardMoveModifier":"meta","keyboardLargeStepModifier":"alt",
             "selectOnFocus":true,"roundCoordinates":true,
-            "selectOnCreate":true,"wheelZoom":false,"coordinates":"display","objectHitArea":"border"}
+            "selectOnCreate":true,"drawOverObjects":true,"clearSelectionOnOutsidePress":true,"wheelZoom":false,
+            "coordinates":"display","objectHitArea":"border"}
             """;
         Assert.Equal(expected.Replace("\n", "").Replace("\r", ""), json);
     }

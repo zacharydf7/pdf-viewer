@@ -57,9 +57,19 @@ export class InteractionController {
     return this.#tool?.presentation ?? inactive;
   }
 
-  /** Takes effect at once, even during a gesture, which carries on under the new options. */
+  /**
+   * Takes effect at once, even during a gesture, which carries on under the new options. When the new options change
+   * what catches the pointer or whether handles show, the pages update to match.
+   */
   set options(options: ToolOptions) {
+    const before = this.presentation;
     this.#context.options = options;
+    const after = this.presentation;
+    if (after.pointer !== before.pointer || after.handles !== before.handles) {
+      for (const page of this.#pages) {
+        page.objects.presentation = after;
+      }
+    }
   }
 
   /**

@@ -332,6 +332,19 @@ public sealed record PdfViewerOptions
     /// </summary>
     public bool SelectOnCreate { get; init; }
 
+    /// <summary>
+    /// Whether the draw tool draws over objects. When off, a press on an object selects it and a drag moves or resizes
+    /// it, as with the select tool, so only a press elsewhere on the page draws.
+    /// </summary>
+    public bool DrawOverObjects { get; init; }
+
+    /// <summary>
+    /// Whether a press with the primary button outside the viewer clears the selection, as a press on empty page area
+    /// does. It leaves the selection alone while the viewer is read-only, or when something stops the press from
+    /// propagating to the document.
+    /// </summary>
+    public bool ClearSelectionOnOutsidePress { get; init; }
+
     /// <summary>Whether Ctrl+wheel and pinch gestures zoom.</summary>
     public bool WheelZoom { get; init; } = true;
 

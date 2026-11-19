@@ -19,7 +19,7 @@ keys.
 | `data-current-page` | The displayed page, starting at 1 |
 | `data-zoom` | The zoom being displayed or rendered, with 1 meaning 100%. Absent until a page has been sized. The element's `zoom` property gives the same number |
 | `data-busy` | Present while a document is loading, a page turn is under way, or the page shown is rendering or extracting its text, and absent once the viewer is idle. Style `pdf-viewer[data-busy]` to show a loading indicator |
-| `data-tool` | `select`, `draw-rect`, `none` |
+| `data-tool` | `select`, `draw-rect`, `none`. Unless the `drawOverObjects` option is on, `draw-rect` treats objects as `select` does: a press on an object selects it and a drag moves or resizes it. Only a press elsewhere on the page draws |
 | `data-tool-kind` | The kind the draw tool gives its objects. Present only while the draw tool is chosen with a kind |
 | `data-readonly` | `true` while the user is kept from selecting, drawing and editing objects, otherwise `false`. `data-tool` keeps showing the chosen tool meanwhile |
 | `data-object-hit-area` | `fill`, or `border` when only an unselected object's edges catch the pointer |

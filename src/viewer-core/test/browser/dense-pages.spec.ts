@@ -71,8 +71,22 @@ test.describe("border hit area", () => {
     await expect(viewer.object("hidden")).toHaveAttribute("aria-selected", "false");
   });
 
-  test("drawTool_ShouldDrawOverExistingBorder_WhenBorderHitAreaIsOn", async ({ page }) => {
+  test("drawTool_ShouldSelectObjectOnBorderAndDrawInsideIt_WhenBorderHitAreaIsOn", async ({ page }) => {
     const viewer = await openViewer(page, { objectHitArea: "border", initialZoom: 1 });
+    await viewer.addObject({ id: "outer", page: 1, rect: outer });
+    await viewer.setTool("draw-rect");
+
+    const box = (await viewer.object("outer").boundingBox())!;
+    await viewer.drag({ x: box.x + 60, y: box.y + 60 }, { x: box.x + 120, y: box.y + 120 });
+    await expect(page.locator("[data-object-id]")).toHaveCount(2);
+    await page.mouse.click(box.x + 1, box.y + box.height / 2);
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "outer");
+    await expect(viewer.object("outer")).toHaveAttribute("data-page-rect", "100,100,300,300");
+  });
+
+  test("drawTool_ShouldDrawOverExistingBorder_WhenBorderHitAreaAndDrawOverObjectsAreOn", async ({ page }) => {
+    const viewer = await openViewer(page, { objectHitArea: "border", initialZoom: 1, drawOverObjects: true });
     await viewer.addObject({ id: "outer", page: 1, rect: outer });
     await viewer.setTool("draw-rect");
 

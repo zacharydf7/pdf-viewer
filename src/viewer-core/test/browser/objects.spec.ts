@@ -236,6 +236,8 @@ test.describe("drafts", () => {
 
   test("draft_ShouldLetPressReachObjectUnderIt_WhenSelectToolIsActive", async ({ page }) => {
     const viewer = await openViewer(page);
+    // The draft is drawn over the object, which takes the press itself unless the draw tool draws over objects.
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ drawOverObjects: true }));
     await viewer.addObject({ id: "under", page: 1, rect: { x: 0, y: 0, width: 612, height: 792 } });
     await viewer.keepDrawnObjectsAsDrafts();
     await viewer.drawDraft();
@@ -243,6 +245,19 @@ test.describe("drafts", () => {
 
     const center = await viewer.center(viewer.drafts);
     await page.mouse.click(center.x, center.y);
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "under");
+    await expect(viewer.drafts).toHaveCount(1);
+  });
+
+  test("draft_ShouldLetPressReachObjectUnderIt_WhenDrawToolIsActive", async ({ page }) => {
+    const viewer = await openViewer(page);
+    await viewer.addObject({ id: "under", page: 1, rect: { x: 150, y: 180, width: 200, height: 100 } });
+    await viewer.keepDrawnObjectsAsDrafts();
+    await viewer.drawDraft();
+
+    const overlap = await viewer.pagePoint(0.33, 0.265);
+    await page.mouse.click(overlap.x, overlap.y);
 
     await expect(viewer.host).toHaveAttribute("data-selected-object", "under");
     await expect(viewer.drafts).toHaveCount(1);

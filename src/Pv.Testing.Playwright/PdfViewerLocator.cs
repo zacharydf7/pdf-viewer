@@ -97,7 +97,9 @@ public sealed class PdfViewerLocator
 
     /// <summary>
     /// Draws a rectangle with the real mouse, from its top-left corner to its bottom-right corner, on the given page or
-    /// else the current one. Waits first until the draw tool is chosen and the viewer isn't read-only.
+    /// else the current one. Waits first until the draw tool is chosen and the viewer isn't read-only. Throws if the
+    /// top-left corner is on an object or one of its handles, because a press there selects or resizes the object
+    /// unless <c>DrawOverObjects</c> is on.
     /// </summary>
     public async Task DrawAsync(PageRect rect, int? page = null)
     {
@@ -108,6 +110,19 @@ public sealed class PdfViewerLocator
         var start = await PageToClientAsync(pageNumber, rect.X, rect.Y);
         var end = await PageToClientAsync(pageNumber, rect.X + rect.Width, rect.Y + rect.Height);
         await WaitForPointerTargetAsync(Page(pageNumber), start.X, start.Y);
+        var pressed = await Host.Page.EvaluateAsync<string?>(
+            """
+            ({ x, y }) => {
+              const element = document.elementFromPoint(x, y)?.closest("[data-object-id], [data-handle-for]");
+              return element?.getAttribute("data-object-id") ?? element?.getAttribute("data-handle-for") ?? null;
+            }
+            """, new { x = start.X, y = start.Y });
+        if (pressed is not null)
+        {
+            throw new InvalidOperationException(
+                $"The draw starts on object \"{pressed}\", which catches the press, so the user would select or " +
+                "resize it rather than draw. Start on empty page area, or turn on PdfViewerOptions.DrawOverObjects.");
+        }
         await DragAsync(start, end);
     }
 

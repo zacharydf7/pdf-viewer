@@ -113,7 +113,8 @@
   z-index: 1;
 }
 
-.pv-object-layer[data-pointer="page"] {
+.pv-object-layer[data-pointer="page"],
+.pv-object-layer[data-pointer="objects-and-page"] {
   pointer-events: auto;
   cursor: crosshair;
 }
@@ -143,7 +144,7 @@
 
 .pv-object[data-selectable="false"],
 .pv-viewer[data-readonly="true"] .pv-object[data-editable-when-read-only="false"],
-.pv-object-layer:not([data-pointer="objects"]) .pv-object {
+.pv-object-layer:is([data-pointer="page"], [data-pointer="none"]) .pv-object {
   pointer-events: none;
 }
 
@@ -227,13 +228,15 @@
 
 .pv-viewer[data-object-hit-area="border"] .pv-object[data-selectable="false"]::before,
 .pv-viewer[data-readonly="true"] .pv-object[data-editable-when-read-only="false"]::before,
-.pv-object-layer:not([data-pointer="objects"]) .pv-object::before {
+.pv-object-layer:is([data-pointer="page"], [data-pointer="none"]) .pv-object::before {
   pointer-events: none;
 }
 
-/* A draft is dashed, in the color and width its object will have. */
+/* A draft is dashed, in the color and width its object will have. It ignores the pointer, which reaches what's under
+   it. */
 .pv-draft {
   border: var(--pv-object-border-width, 2px) dashed var(--pv-object-color, #1565c0);
+  pointer-events: none;
 }
 
 /* The target is 24 by 24 CSS pixels, which meets WCAG 2.5.8, and only its center is painted. */

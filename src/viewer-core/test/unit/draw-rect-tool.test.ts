@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DrawRectTool } from "../../src/draw-rect-tool.js";
-import type { DrawDefaults, ObjectKeyPress, PointerPress } from "../../src/tool.js";
+import type { DrawDefaults, ObjectKeyPress, PointerPress, ToolOptions } from "../../src/tool.js";
 import { at, geometry, recordingContext } from "./tool-support.js";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -166,6 +166,126 @@ describe("drawing", () => {
     tool.pointerUp(at(130, 240));
 
     expect(record.log).toEqual([]);
+  });
+});
+
+describe("pressing objects", () => {
+  const rect = { x: 100, y: 150, width: 200, height: 100 };
+
+  /** A draw tool with the options given, and a page with object "a" on it. */
+  function setupWithObject(options: Partial<ToolOptions> = {}) {
+    const { context, store, record } = recordingContext(options);
+    store.add({ id: "a", page: 1, rect }, "api");
+    return { tool: new DrawRectTool(context, {}), store, record, context };
+  }
+
+  function onObject(x: number, y: number): PointerPress {
+    return { ...at(x, y), target: { kind: "object", id: "a" } };
+  }
+
+  it("pointerDown_ShouldSelectObjectAndDrawNothing_WhenPressedOnObject", () => {
+    const { tool, store, record } = setupWithObject();
+
+    const result = tool.pointerDown(onObject(150, 200));
+
+    expect(result).toEqual({ gesture: true, focus: "a" });
+    expect(store.selectedIds).toEqual(["a"]);
+    expect(record.shown).toEqual([]);
+  });
+
+  it("pointerUp_ShouldMoveObjectAndLeaveNoDraft_WhenObjectIsDragged", () => {
+    const { tool, record } = setupWithObject();
+
+    tool.pointerDown(onObject(150, 200));
+    tool.pointerMove(at(160, 215));
+    tool.pointerUp(at(170, 230));
+
+    expect(record.updated).toHaveLength(1);
+    expect(record.updated[0]).toMatchObject({ gesture: "move", object: { rect: { ...rect, x: 120, y: 180 } } });
+    expect(record.drafts).toEqual([]);
+  });
+
+  it("pointerUp_ShouldResizeObject_WhenHandleIsDragged", () => {
+    const { tool, store, record } = setupWithObject();
+    store.select(["a"], "api");
+
+    tool.pointerDown({ ...at(300, 250), target: { kind: "handle", id: "a", handle: "se" } });
+    tool.pointerUp(at(320, 260));
+
+    expect(record.updated[0])
+      .toMatchObject({ gesture: "resize", object: { rect: { ...rect, width: 220, height: 110 } } });
+  });
+
+  it("pointerUp_ShouldDrawOverObject_WhenDrawOverObjectsIsOn", () => {
+    const { tool, store, record } = setupWithObject({ drawOverObjects: true });
+
+    const result = tool.pointerDown(onObject(150, 200));
+    tool.pointerUp(at(170, 230));
+
+    expect(result).toEqual({ gesture: true });
+    expect(store.selectedIds).toEqual([]);
+    expect(record.drafts[0]!.rect).toEqual({ x: 150, y: 200, width: 20, height: 30 });
+  });
+
+  it("presentation_ShouldLetObjectsCatchPointerAndShowHandles_WhenDrawOverObjectsIsOff", () => {
+    const { tool } = setupWithObject();
+
+    expect(tool.presentation).toEqual({ pointer: "objects-and-page", focusable: true, handles: true, readOnly: false });
+  });
+
+  it("presentation_ShouldLeavePointerToPage_WhenDrawOverObjectsIsTurnedOn", () => {
+    const { tool, context } = setupWithObject();
+
+    context.options = { ...context.options, drawOverObjects: true };
+
+    expect(tool.presentation).toEqual({ pointer: "page", focusable: true, handles: false, readOnly: false });
+  });
+
+  it("cancel_ShouldPutObjectBack_WhenObjectDragIsUnderWay", () => {
+    const { tool, record } = setupWithObject();
+    tool.pointerDown(onObject(150, 200));
+    tool.pointerMove(at(170, 230));
+
+    const canceled = tool.cancel();
+    tool.pointerUp(at(170, 230));
+
+    expect(canceled).toBe(true);
+    expect(record.shown.at(-1)).toBeUndefined();
+    expect(record.updated).toEqual([]);
+  });
+
+  it("keyDown_ShouldLeaveKeyAlone_WhenObjectDragIsUnderWay", () => {
+    const { tool } = setupWithObject();
+    tool.pointerDown(onObject(150, 200));
+
+    const handled = tool.keyDown({ id: "a", geometry: geometry(), action: { kind: "edit", resize: false, deltaX: 1,
+      deltaY: 0 } });
+
+    expect(handled).toBe(false);
+  });
+
+  it("pointerUp_ShouldClearSelection_WhenClickIsTooSmallToDraw", () => {
+    const { tool, store, record } = setupWithObject();
+    store.select(["a"], "api");
+
+    tool.pointerDown(press(10, 10));
+    tool.pointerUp(at(10, 10));
+
+    expect(store.selectedIds).toEqual([]);
+    expect(record.selections.at(-1)!.origin).toBe("user");
+    expect(record.drafts).toEqual([]);
+  });
+
+  it("objectsChanged_ShouldEndObjectDrag_WhenObjectIsRemoved", () => {
+    const { tool, store, record } = setupWithObject();
+    tool.pointerDown(onObject(150, 200));
+    tool.pointerMove(at(170, 230));
+
+    store.remove("a", "api");
+    tool.objectsChanged();
+    tool.pointerUp(at(190, 250));
+
+    expect(record.updated).toEqual([]);
   });
 });
 

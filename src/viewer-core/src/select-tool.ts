@@ -43,6 +43,11 @@ export class SelectTool implements Tool {
     this.#keys = new KeyEditor(context, readOnly);
   }
 
+  /** Whether a drag is under way. */
+  get dragging(): boolean {
+    return this.#drag !== undefined;
+  }
+
   pointerDown({ geometry, point, target }: PointerPress): PressResult {
     if (target === undefined) {
       if (!this.#readOnly) {

@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import type { PdfViewerElement } from "../../src/viewer-element.js";
 import { openViewer } from "./support.js";
@@ -77,9 +78,12 @@ test.describe("window listener", () => {
 });
 
 test.describe("what catches the pointer", () => {
-  for (const [tool, catches] of [["select", true], ["draw-rect", false], ["none", false]] as const) {
-    test(`object_ShouldCatchPointerOnlyForSelect_WhenToolIs${tool}`, async ({ page }) => {
-      const viewer = await openViewer(page, { initialZoom: 1 });
+  const cases = [["select", false, true], ["draw-rect", false, true], ["draw-rect", true, false],
+    ["none", false, false]];
+  for (const [tool, drawOverObjects, catches] of cases as ["select" | "draw-rect" | "none", boolean, boolean][]) {
+    const over = drawOverObjects ? "WithDrawOverObjects" : "";
+    test(`object_Should${catches ? "" : "Not"}CatchPointer_WhenToolIs${tool}${over}`, async ({ page }) => {
+      const viewer = await openViewer(page, { initialZoom: 1, drawOverObjects });
       await viewer.addObject({ id: "a", page: 1, rect });
       await viewer.setTool(tool);
 
@@ -91,6 +95,47 @@ test.describe("what catches the pointer", () => {
     });
   }
 
+  test("drawTool_ShouldMoveObjectAndDrawNothing_WhenObjectIsDragged", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.setTool("draw-rect");
+
+    const from = await viewer.center(viewer.object("a"));
+    await viewer.drag(from, { x: from.x + 40, y: from.y });
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "140,100,200,100");
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+    await expect(page.locator("[data-object-id]")).toHaveCount(1);
+  });
+
+  test("drawTool_ShouldResizeObjectByHandle_WhenObjectIsSelected", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.setTool("draw-rect");
+    await viewer.object("a").click();
+
+    const from = await viewer.center(viewer.handle("se"));
+    await viewer.drag(from, { x: from.x + 20, y: from.y + 10 });
+
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,220,110");
+    await expect(page.locator("[data-object-id]")).toHaveCount(1);
+  });
+
+  test("drawTool_ShouldDrawOverObject_WhenDrawOverObjectsIsTurnedOnWhileToolIsActive", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.setTool("draw-rect");
+    await viewer.object("a").click();
+
+    await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ drawOverObjects: true }));
+    const from = await viewer.center(viewer.object("a"));
+    await viewer.drag(from, { x: from.x + 40, y: from.y + 40 });
+
+    await expect(page.locator("[data-object-id]")).toHaveCount(2);
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
+    await expect(page.locator(".pv-handle")).toHaveCount(0);
+  });
+
   test("object_ShouldNotBeTabStop_WhenToolIsNone", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
     await viewer.addObject({ id: "a", page: 1, rect });
@@ -98,6 +143,85 @@ test.describe("what catches the pointer", () => {
     await viewer.setTool("none");
 
     await expect(viewer.object("a")).toHaveAttribute("tabindex", "-1");
+  });
+});
+
+test.describe("presses outside the viewer", () => {
+  /** Adds a button after the viewer, outside it, and returns it. */
+  async function addOutsideButton(page: Page) {
+    await page.evaluate(() => {
+      const button = document.createElement("button");
+      button.id = "outside";
+      button.textContent = "Outside";
+      document.body.append(button);
+    });
+    return page.locator("#outside");
+  }
+
+  test("outsidePress_ShouldClearSelection_WhenClearSelectionOnOutsidePressIsOn", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1, clearSelectionOnOutsidePress: true });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.object("a").click();
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+    const selections = await viewer.recordEvents("pv-selection-change");
+
+    await (await addOutsideButton(page)).click();
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "");
+    expect(await selections()).toMatchObject([{ origin: "user", ids: [] }]);
+  });
+
+  test("outsidePress_ShouldKeepSelection_WhenClearSelectionOnOutsidePressIsOff", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1 });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.object("a").click();
+
+    await (await addOutsideButton(page)).click();
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+  });
+
+  test("outsidePress_ShouldKeepSelection_WhenViewerIsReadOnly", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1, clearSelectionOnOutsidePress: true });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.selectObject("a");
+      element.readOnly = true;
+    });
+
+    await (await addOutsideButton(page)).click();
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
+  });
+
+  test("insidePress_ShouldKeepSelection_WhenViewerIsInsideShadowRoot", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1, clearSelectionOnOutsidePress: true });
+    await viewer.addObject({ id: "a", page: 1, rect });
+
+    const selected = await viewer.host.evaluate((element: PdfViewerElement) => {
+      const shadowHost = document.createElement("div");
+      element.replaceWith(shadowHost);
+      shadowHost.attachShadow({ mode: "open" }).append(element);
+      element.selectObject("a");
+      element.querySelector(".pv-viewport")!
+        .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true, button: 0 }));
+      return element.selectedObjectIds;
+    });
+
+    expect(selected).toEqual(["a"]);
+  });
+
+  test("outsidePress_ShouldStillClearSelection_WhenViewerWasMovedInDocument", async ({ page }) => {
+    const viewer = await openViewer(page, { initialZoom: 1, clearSelectionOnOutsidePress: true });
+    await viewer.addObject({ id: "a", page: 1, rect });
+    await viewer.host.evaluate((element: PdfViewerElement) => {
+      element.parentElement!.append(element);
+      element.selectObject("a");
+    });
+
+    await (await addOutsideButton(page)).click();
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "");
   });
 });
 

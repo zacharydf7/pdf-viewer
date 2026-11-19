@@ -2,6 +2,7 @@ import type { Point } from "./geometry.js";
 import { clampPoint, rectFromCorners } from "./geometry.js";
 import { KeyEditor } from "./key-editor.js";
 import type { ObjectStore } from "./object-store.js";
+import { SelectTool } from "./select-tool.js";
 import type { DrawDefaults, ObjectKeyPress, PointerInput, PointerPress, Preview, PressResult, Tool, ToolContext,
   ToolPresentation } from "./tool.js";
 import { finalRect } from "./tool.js";
@@ -11,17 +12,20 @@ const minimumDrawSize = 2;
 
 /**
  * Draws a rectangle from where the pointer is pressed to where it's released, and leaves it with the store as a draft.
- * Keys still move and resize objects while it's active, so the user can adjust what they just drew, but the keys that
- * select, clear the selection or delete are left alone.
+ * Unless the drawOverObjects option is on, a press on an object selects it and a drag moves or resizes it, as with the
+ * select tool, so only a press elsewhere on the page draws. A click there, too small to draw anything, clears the
+ * selection. Keys still move and resize objects while it's active, so the user can adjust what they just drew, but the
+ * keys that select, clear the selection or delete are left alone.
  */
 export class DrawRectTool implements Tool {
-  readonly presentation: ToolPresentation = { pointer: "page", focusable: true, handles: false, readOnly: false };
   readonly #store: ObjectStore;
   readonly #show: (preview: Preview | undefined) => void;
   /** Kept for its options, which are read at each use because they can change. */
   readonly #context: ToolContext;
   readonly #defaults: DrawDefaults;
   readonly #keys: KeyEditor;
+  /** Handles presses on objects. */
+  readonly #select: SelectTool;
   #draw: { page: number; start: Point; current: Point } | undefined;
 
   /** The defaults are applied to every rectangle drawn. */
@@ -31,31 +35,47 @@ export class DrawRectTool implements Tool {
     this.#context = context;
     this.#defaults = defaults;
     this.#keys = new KeyEditor(context, false);
+    this.#select = new SelectTool(context);
   }
 
-  pointerDown({ page, geometry, point }: PointerPress): PressResult {
+  get presentation(): ToolPresentation {
+    const { drawOverObjects } = this.#context.options;
+    return { pointer: drawOverObjects ? "page" : "objects-and-page", focusable: true, handles: !drawOverObjects,
+      readOnly: false };
+  }
+
+  pointerDown(input: PointerPress): PressResult {
+    if (input.target !== undefined && !this.#context.options.drawOverObjects) {
+      return this.#select.pointerDown(input);
+    }
+    const { page, geometry, point } = input;
     const start = clampPoint(geometry, point);
     this.#draw = { page, start, current: start };
     this.#showDraft();
     return { gesture: true };
   }
 
-  pointerMove({ geometry, point }: PointerInput): void {
-    if (this.#draw !== undefined) {
-      this.#draw.current = clampPoint(geometry, point);
-      this.#showDraft();
-    }
-  }
-
-  pointerUp({ geometry, point }: PointerInput): void {
-    const draw = this.#draw;
-    if (draw === undefined) {
+  pointerMove(input: PointerInput): void {
+    if (this.#draw === undefined) {
+      this.#select.pointerMove(input);
       return;
     }
+    this.#draw.current = clampPoint(input.geometry, input.point);
+    this.#showDraft();
+  }
+
+  pointerUp(input: PointerInput): void {
+    const draw = this.#draw;
+    if (draw === undefined) {
+      this.#select.pointerUp(input);
+      return;
+    }
+    const { geometry, point } = input;
     this.#draw = undefined;
     this.#show(undefined);
     const rect = rectFromCorners(draw.start, clampPoint(geometry, point));
     if (rect.width < minimumDrawSize || rect.height < minimumDrawSize) {
+      this.#store.select([], "user");
       return;
     }
     const final = finalRect(geometry, rect, this.#context.options.roundCoordinates);
@@ -63,16 +83,18 @@ export class DrawRectTool implements Tool {
   }
 
   cancel(): boolean {
+    const dragging = this.#select.cancel();
     const drawing = this.#draw !== undefined;
     this.#draw = undefined;
     if (drawing) {
       this.#show(undefined);
     }
-    return drawing;
+    return dragging || drawing;
   }
 
   keyDown({ id, geometry, action }: ObjectKeyPress): boolean {
-    return this.#draw === undefined && action.kind === "edit" && this.#keys.edit(id, geometry, action);
+    return this.#draw === undefined && !this.#select.dragging && action.kind === "edit"
+      && this.#keys.edit(id, geometry, action);
   }
 
   endKeyEdit(): void {
@@ -80,6 +102,7 @@ export class DrawRectTool implements Tool {
   }
 
   objectsChanged(): void {
+    this.#select.objectsChanged();
     this.#keys.objectsChanged();
   }
 

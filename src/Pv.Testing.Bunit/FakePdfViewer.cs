@@ -166,7 +166,10 @@ public sealed partial class FakePdfViewer : IViewerBackend
     /// <summary>
     /// Draws a rectangle on the displayed page with the draw tool, and returns the new object's ID. With an
     /// <see cref="PdfViewer.OnObjectDrawn"/> handler, the object stays a draft until the handler finishes, and this
-    /// completes after that.
+    /// completes after that. Unless <see cref="PdfViewerOptions.DrawOverObjects"/> is on, a draw can't start on an
+    /// object, because a press there selects it. The fake checks that only for
+    /// <see cref="ViewerObjectHitArea.Fill"/>, because the band that catches the pointer with
+    /// <see cref="ViewerObjectHitArea.Border"/> depends on the zoom.
     /// </summary>
     public async Task<string> SimulateDrawAsync(PageRect rect)
     {
@@ -190,6 +193,13 @@ public sealed partial class FakePdfViewer : IViewerBackend
             throw new ArgumentException(
                 $"A drawn rectangle must be at least {MinimumDrawSize} units each way and lie on the page.",
                 nameof(rect));
+        }
+        if (!Options.DrawOverObjects && Options.ObjectHitArea == ViewerObjectHitArea.Fill &&
+            _objects.Values.FirstOrDefault(o => CatchesPress(o, rect.X, rect.Y)) is { } pressed)
+        {
+            throw new InvalidOperationException(
+                $"The draw starts on object \"{pressed.Id}\", which catches the press, so the user would select it " +
+                "rather than draw. Start on empty page area, or turn on PdfViewerOptions.DrawOverObjects.");
         }
         var defaults = DrawDefaults;
         var drawn = new ViewerObject(Guid.NewGuid().ToString(), _pageNumber, Round(rect))
@@ -222,9 +232,12 @@ public sealed partial class FakePdfViewer : IViewerBackend
     public Task SimulateClickAsync(string? id) => ActAsync(async notifications =>
     {
         RequireDocument();
-        RequirePointerTool();
         if (id is null)
         {
+            if (Tool != ViewerTool.DrawRectangle)
+            {
+                RequirePointerTool();
+            }
             if (!ReadOnly)
             {
                 Select([], ChangeOrigin.User);
@@ -232,8 +245,22 @@ public sealed partial class FakePdfViewer : IViewerBackend
         }
         else
         {
+            RequireObjectPressTool();
             RequireReachable(id);
             Select([id], ChangeOrigin.User);
+        }
+        await SendPendingAsync(notifications);
+    });
+
+    /// <summary>
+    /// Presses outside the viewer, which clears the selection while
+    /// <see cref="PdfViewerOptions.ClearSelectionOnOutsidePress"/> is on and the viewer isn't read-only.
+    /// </summary>
+    public Task SimulatePressOutsideAsync() => ActAsync(async notifications =>
+    {
+        if (Options.ClearSelectionOnOutsidePress && !ReadOnly)
+        {
+            Select([], ChangeOrigin.User);
         }
         await SendPendingAsync(notifications);
     });
@@ -249,7 +276,14 @@ public sealed partial class FakePdfViewer : IViewerBackend
     public Task SimulateEditAsync(string id, PageRect rect, EditGesture gesture) => ActAsync(async notifications =>
     {
         RequireDocument();
-        RequirePointerTool();
+        if (gesture == EditGesture.Nudge)
+        {
+            RequirePointerTool();
+        }
+        else
+        {
+            RequireObjectPressTool();
+        }
         var target = RequireReachable(id);
         if (target.Locked)
         {
@@ -783,7 +817,10 @@ public sealed partial class FakePdfViewer : IViewerBackend
             : throw new InvalidOperationException($"Object \"{id}\" {reason}, so the user can't reach it.");
     }
 
-    /// <summary>Clicking and editing objects needs the select tool, which read-only mode also gives.</summary>
+    /// <summary>
+    /// A nudge, Delete and, unless the draw tool is chosen, a click on empty page area need the select tool, which
+    /// read-only mode also gives.
+    /// </summary>
     private void RequirePointerTool()
     {
         if (!ReadOnly && Tool != ViewerTool.Select)
@@ -792,6 +829,29 @@ public sealed partial class FakePdfViewer : IViewerBackend
                 $"The user acts on objects with the select tool, but the tool is {Tool}.");
         }
     }
+
+    /// <summary>
+    /// Pressing an object needs the select tool, or the draw tool while <see cref="PdfViewerOptions.DrawOverObjects"/>
+    /// is off.
+    /// </summary>
+    private void RequireObjectPressTool()
+    {
+        if (Tool != ViewerTool.DrawRectangle || ReadOnly)
+        {
+            RequirePointerTool();
+        }
+        else if (Options.DrawOverObjects)
+        {
+            throw new InvalidOperationException(
+                "The draw tool draws over objects while DrawOverObjects is on, so a press doesn't reach them.");
+        }
+    }
+
+    /// <summary>Whether an object on the displayed page catches a press at a point, with the fill hit area.</summary>
+    private bool CatchesPress(ViewerObject target, double x, double y) =>
+        (target.Page is null || target.Page == _pageNumber) && !target.Hidden && target.Selectable &&
+        x >= target.Rect.X && x < target.Rect.X + target.Rect.Width &&
+        y >= target.Rect.Y && y < target.Rect.Y + target.Rect.Height;
 
     /// <summary>
     /// Turns to a page, or while a document is opening, makes it open on that page and waits for it, as the browser

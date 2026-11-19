@@ -277,6 +277,89 @@ public class FakePdfViewerTests : BunitContext
     }
 
     [Fact]
+    public async Task SimulateDrawAsync_ShouldThrow_WhenDrawStartsOnObject()
+    {
+        var page = await OpenAsync(objects: Region);
+        await DrawHeadingsAsync(page);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Viewer.SimulateDrawAsync(new PageRect(60, 60, 100, 40)));
+
+        Assert.Contains("region", exception.Message);
+    }
+
+    [Fact]
+    public async Task SimulateDrawAsync_ShouldDrawOverObject_WhenDrawOverObjectsIsOn()
+    {
+        var page = await OpenAsync(parameters => parameters.Add(p => p.Options, new() { DrawOverObjects = true }),
+            Region);
+        await DrawHeadingsAsync(page);
+
+        await Viewer.SimulateDrawAsync(new PageRect(60, 60, 100, 40));
+
+        Assert.Equal(2, Viewer.Objects.Count);
+    }
+
+    [Fact]
+    public async Task SimulateEditAsync_ShouldMoveObject_WhenDrawToolIsActive()
+    {
+        var page = await OpenAsync(objects: Region);
+        await DrawHeadingsAsync(page);
+        var moved = new PageRect(90, 70, 150, 80);
+
+        await Viewer.SimulateEditAsync("region", moved, EditGesture.Move);
+
+        Assert.Equal(moved, Assert.Single(page.Instance.Objects).Rect);
+        Assert.Equal(["region"], Viewer.SelectedObjectIds);
+    }
+
+    [Fact]
+    public async Task SimulateClickAsync_ShouldClearSelection_WhenEmptyPageIsClickedWithDrawTool()
+    {
+        var page = await OpenAsync(objects: Region);
+        await Viewer.SimulateClickAsync("region");
+        await DrawHeadingsAsync(page);
+
+        await Viewer.SimulateClickAsync(null);
+
+        Assert.Empty(Viewer.SelectedObjectIds);
+    }
+
+    [Fact]
+    public async Task SimulateClickAsync_ShouldThrow_WhenDrawToolDrawsOverObjects()
+    {
+        var page = await OpenAsync(parameters => parameters.Add(p => p.Options, new() { DrawOverObjects = true }),
+            Region);
+        await DrawHeadingsAsync(page);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Viewer.SimulateClickAsync("region"));
+    }
+
+    [Fact]
+    public async Task SimulatePressOutsideAsync_ShouldClearSelection_WhenClearSelectionOnOutsidePressIsOn()
+    {
+        var page = await OpenAsync(parameters => parameters.Add(p => p.Options,
+            new() { ClearSelectionOnOutsidePress = true }), Region);
+        await Viewer.SimulateClickAsync("region");
+
+        await Viewer.SimulatePressOutsideAsync();
+
+        Assert.Empty(Viewer.SelectedObjectIds);
+        Assert.Equal(new SelectionChangedArgs(3, ChangeOrigin.User, null, 0), page.Instance.Events.Last());
+    }
+
+    [Fact]
+    public async Task SimulatePressOutsideAsync_ShouldKeepSelection_WhenClearSelectionOnOutsidePressIsOff()
+    {
+        await OpenAsync(objects: Region);
+        await Viewer.SimulateClickAsync("region");
+
+        await Viewer.SimulatePressOutsideAsync();
+
+        Assert.Equal(["region"], Viewer.SelectedObjectIds);
+    }
+
+    [Fact]
     public async Task SimulateEditAsync_ShouldThrow_WhenResizingObjectThatIsNotSelected()
     {
         await OpenAsync(objects: Region);

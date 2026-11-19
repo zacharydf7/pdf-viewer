@@ -78,6 +78,21 @@ public sealed class PdfViewerLocatorTests(SampleAppFixture app) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DrawAsync_ShouldThrowNamingObject_WhenDrawStartsOnObject()
+    {
+        await OpenAsync("letter", headless: true);
+        await _page.GetByTestId("add-object").ClickAsync();
+        await _page.GetByTestId("tool-draw").ClickAsync();
+        await _viewer.WaitForToolAsync(ViewerTool.DrawRectangle, "heading");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _viewer.DrawAsync(new PageRect(50, 50, 100, 60)));
+
+        Assert.Contains("code-1", exception.Message);
+        await Expect(_viewer.Objects()).ToHaveCountAsync(1);
+    }
+
+    [Fact]
     public async Task ClickObjectAsync_ShouldSelectObjectAndKeepIt_WhenObjectsCatchPointerOnlyAtBorder()
     {
         await OpenAsync("letter", headless: true);
