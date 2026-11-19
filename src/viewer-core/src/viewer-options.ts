@@ -47,8 +47,8 @@ export interface ViewerOptions {
   /** Whether an object the user draws is selected once it's one of the viewer's objects. Defaults to false. */
   selectOnCreate?: boolean;
   /**
-   * Whether the draw tool draws over objects. When off, a press on an object selects it and a drag moves or resizes
-   * it, as with the select tool, so only a press elsewhere on the page draws. Defaults to false.
+   * Whether the draw tool draws over objects. When off, a press on an object selects it and a drag moves it, as with
+   * the select tool, so only a press elsewhere on the page draws. Defaults to false.
    */
   drawOverObjects?: boolean;
   /**
@@ -67,8 +67,8 @@ export interface ViewerOptions {
   coordinates?: "page" | "display";
   /**
    * Where an object catches the pointer. "fill" is its whole area. "border" is a band along its edges, so objects inside
-   * or behind it stay reachable, while a selected or very small object still catches the pointer everywhere. Defaults
-   * to "fill".
+   * or behind it stay reachable, while a very small object still catches the pointer everywhere. A selected one does
+   * too, except while the draw tool is active, so a draw can start inside it. Defaults to "fill".
    */
   objectHitArea?: "fill" | "border";
 }

@@ -87,7 +87,7 @@ export interface ToolOptions extends KeyOptions {
   /** Whether an object that takes focus is selected too. */
   selectOnFocus: boolean;
   roundCoordinates: boolean;
-  /** Whether the draw tool draws over objects, rather than selecting, moving and resizing them. */
+  /** Whether the draw tool draws over objects, rather than selecting and moving them. */
   drawOverObjects: boolean;
 }
 

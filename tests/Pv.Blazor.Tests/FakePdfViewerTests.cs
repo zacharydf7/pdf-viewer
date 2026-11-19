@@ -326,6 +326,17 @@ public class FakePdfViewerTests : BunitContext
     }
 
     [Fact]
+    public async Task SimulateEditAsync_ShouldThrow_WhenResizingWithDrawTool()
+    {
+        var page = await OpenAsync(objects: Region);
+        await Viewer.SimulateClickAsync("region");
+        await DrawHeadingsAsync(page);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Viewer.SimulateEditAsync("region", new PageRect(50, 50, 200, 80), EditGesture.Resize));
+    }
+
+    [Fact]
     public async Task SimulateClickAsync_ShouldThrow_WhenDrawToolDrawsOverObjects()
     {
         var page = await OpenAsync(parameters => parameters.Add(p => p.Options, new() { DrawOverObjects = true }),

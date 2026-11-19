@@ -86,7 +86,7 @@ public sealed class PdfViewerLocatorTests(SampleAppFixture app) : IAsyncLifetime
         await _viewer.WaitForToolAsync(ViewerTool.DrawRectangle, "heading");
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _viewer.DrawAsync(new PageRect(50, 50, 100, 60)));
+            _viewer.DrawAsync(new PageRect(51, 70, 100, 60)));
 
         Assert.Contains("code-1", exception.Message);
         await Expect(_viewer.Objects()).ToHaveCountAsync(1);
@@ -105,6 +105,46 @@ public sealed class PdfViewerLocatorTests(SampleAppFixture app) : IAsyncLifetime
 
         await Expect(_viewer.Selected).ToHaveAttributeAsync("data-object-id", "code-1");
         Assert.Equal(new PageRect(50, 50, 150, 80), await _viewer.PageRectAsync("code-1"));
+    }
+
+    [Fact]
+    public async Task DragObjectByAsync_ShouldMoveSelectedObject_WhenDrawToolIsChosenWithBorderHitArea()
+    {
+        await OpenAsync("letter", headless: true);
+        await _page.GetByTestId("add-object").ClickAsync();
+        await _page.GetByTestId("tool-draw").ClickAsync();
+        await _viewer.WaitForToolAsync(ViewerTool.DrawRectangle, "heading");
+
+        await _viewer.ClickObjectAsync("code-1");
+        await Expect(_viewer.Selected).ToHaveAttributeAsync("data-object-id", "code-1");
+        await _viewer.DragObjectByAsync("code-1", 30, 20);
+
+        RectAssert.Near(new PageRect(80, 70, 150, 80), await _viewer.PageRectAsync("code-1"));
+        await Expect(_viewer.Objects()).ToHaveCountAsync(1);
+    }
+
+    [Fact]
+    public async Task ClickObjectAsync_ShouldSelectObject_WhenTooltipCoversPageUntilMouseLeavesButton()
+    {
+        await OpenAsync("letter", headless: true);
+        var addButton = _page.GetByTestId("add-object");
+        await addButton.ClickAsync();
+        await Expect(_viewer.Object("code-1")).ToBeVisibleAsync();
+        // Like a hover tooltip, it covers the page, but not its button, until just after the mouse leaves the button.
+        await addButton.EvaluateAsync(
+            """
+            button => {
+              const { left, top, width, height } = document.querySelector(".pv-page").getBoundingClientRect();
+              const tooltip = document.body.appendChild(document.createElement("div"));
+              Object.assign(tooltip.style, { position: "fixed", left: `${left}px`, top: `${top}px`, width: `${width}px`,
+                height: `${height}px`, zIndex: "1000" });
+              button.addEventListener("mouseleave", () => setTimeout(() => tooltip.remove(), 200), { once: true });
+            }
+            """);
+
+        await _viewer.ClickObjectAsync("code-1");
+
+        await Expect(_viewer.Selected).ToHaveAttributeAsync("data-object-id", "code-1");
     }
 
     [Fact]

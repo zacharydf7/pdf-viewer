@@ -98,8 +98,8 @@ public sealed class PdfViewerLocator
     /// <summary>
     /// Draws a rectangle with the real mouse, from its top-left corner to its bottom-right corner, on the given page or
     /// else the current one. Waits first until the draw tool is chosen and the viewer isn't read-only. Throws if the
-    /// top-left corner is on an object or one of its handles, because a press there selects or resizes the object
-    /// unless <c>DrawOverObjects</c> is on.
+    /// top-left corner is on an object, because a press there selects or moves the object unless
+    /// <c>DrawOverObjects</c> is on.
     /// </summary>
     public async Task DrawAsync(PageRect rect, int? page = null)
     {
@@ -112,16 +112,14 @@ public sealed class PdfViewerLocator
         await WaitForPointerTargetAsync(Page(pageNumber), start.X, start.Y);
         var pressed = await Host.Page.EvaluateAsync<string?>(
             """
-            ({ x, y }) => {
-              const element = document.elementFromPoint(x, y)?.closest("[data-object-id], [data-handle-for]");
-              return element?.getAttribute("data-object-id") ?? element?.getAttribute("data-handle-for") ?? null;
-            }
+            ({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-object-id]")?.getAttribute("data-object-id")
+              ?? null
             """, new { x = start.X, y = start.Y });
         if (pressed is not null)
         {
             throw new InvalidOperationException(
                 $"The draw starts on object \"{pressed}\", which catches the press, so the user would select or " +
-                "resize it rather than draw. Start on empty page area, or turn on PdfViewerOptions.DrawOverObjects.");
+                "move it rather than draw. Start on empty page area, or turn on PdfViewerOptions.DrawOverObjects.");
         }
         await DragAsync(start, end);
     }
@@ -142,19 +140,18 @@ public sealed class PdfViewerLocator
         var from = await PressPointAsync(id);
         var origin = await PageToClientAsync(pageNumber, 0, 0);
         var offset = await PageToClientAsync(pageNumber, deltaX, deltaY);
-        await WaitForPointerTargetAsync(Object(id), from.X, from.Y);
         await DragAsync(from, (from.X + offset.X - origin.X, from.Y + offset.Y - origin.Y));
     }
 
     /// <summary>
-    /// Clicks an object with the real mouse where it catches the pointer: just inside its edge while it's unselected,
-    /// which also works with the border hit area, and at its center once it's selected.
+    /// Clicks an object with the real mouse where it catches the pointer: at its center when that reaches it, as it
+    /// does for a selected object with the select tool, and otherwise just inside its edge, clear of the resize
+    /// handles, which also works with the border hit area.
     /// </summary>
     public async Task ClickObjectAsync(string id)
     {
         await ScrollIntoViewAsync(await CurrentPageAsync(), await PageRectAsync(id));
         var point = await PressPointAsync(id);
-        await WaitForPointerTargetAsync(Object(id), point.X, point.Y);
         await Host.Page.Mouse.ClickAsync((float)point.X, (float)point.Y);
     }
 
@@ -165,27 +162,8 @@ public sealed class PdfViewerLocator
     /// tooltip shown while the mouse is over its button stays until the mouse leaves. A point outside the browser
     /// viewport never reaches anything, so scroll the target into view first.
     /// </summary>
-    public async Task WaitForPointerTargetAsync(ILocator target, double x, double y)
-    {
-        await Host.Page.Mouse.MoveAsync((float)x, (float)y);
-        await using var element = await target.ElementHandleAsync();
-        try
-        {
-            await Host.Page.WaitForFunctionAsync(
-                """
-                ({ target, x, y }) => {
-                  const element = document.elementFromPoint(x, y);
-                  return element !== null && target.contains(element);
-                }
-                """, new { target = element, x, y });
-        }
-        catch (TimeoutException exception)
-        {
-            throw new TimeoutException(
-                $"The pointer at ({x:0.#}, {y:0.#}) never reached {target}. Something may cover it, or the active tool " +
-                "or read-only mode may keep it from catching the pointer.", exception);
-        }
-    }
+    public Task WaitForPointerTargetAsync(ILocator target, double x, double y) =>
+        WaitForReachingPointAsync(target, [[x, y]], $"at ({x:0.#}, {y:0.#})");
 
     /// <summary>
     /// The rectangle a run of the page's own text takes up, in the coordinates objects use, read from the text layer
@@ -275,14 +253,53 @@ public sealed class PdfViewerLocator
             """, new object[] { pageNumber, area.X, area.Y, area.Width, area.Height });
     }
 
-    /// <summary>Where the object catches the pointer and pressing starts no resize. See <see cref="ClickObjectAsync"/>.</summary>
+    /// <summary>
+    /// Where the object catches the pointer and a press starts no resize. Tries its center, then points just inside its
+    /// left and top edges a quarter of the way along, clear of the resize handles, and waits until one of them reaches
+    /// the object, as <see cref="WaitForPointerTargetAsync"/> does for one point. The mouse moves onto the object
+    /// first, so a tooltip over a button it just left goes away. See <see cref="ClickObjectAsync"/>.
+    /// </summary>
     private async Task<(double X, double Y)> PressPointAsync(string id)
     {
-        var element = Object(id);
-        var box = await element.BoundingBoxAsync()
+        var target = Object(id);
+        var box = await target.BoundingBoxAsync()
             ?? throw new InvalidOperationException($"Object '{id}' isn't shown.");
-        var selected = await element.GetAttributeAsync("aria-selected") == "true";
-        return selected ? (box.X + box.Width / 2, box.Y + box.Height / 2) : (box.X + 1, box.Y + box.Height / 2);
+        double[][] points =
+        [
+            [box.X + box.Width / 2, box.Y + box.Height / 2], [box.X + 1, box.Y + box.Height / 4],
+            [box.X + box.Width / 4, box.Y + 1],
+        ];
+        return await WaitForReachingPointAsync(target, points, "at its center or just inside its edge");
+    }
+
+    /// <summary>
+    /// Moves the mouse to the first point and waits until the topmost element at one of the points is the target or
+    /// inside it, then returns the first such point. <paramref name="where"/> says where the target was tried, for the
+    /// timeout's message.
+    /// </summary>
+    private async Task<(double X, double Y)> WaitForReachingPointAsync(ILocator target, double[][] points,
+        string where)
+    {
+        await Host.Page.Mouse.MoveAsync((float)points[0][0], (float)points[0][1]);
+        await using var element = await target.ElementHandleAsync();
+        try
+        {
+            var reached = await Host.Page.WaitForFunctionAsync(
+                """
+                ({ target, points }) => points.find(([x, y]) => {
+                  const hit = document.elementFromPoint(x, y);
+                  return hit !== null && target.contains(hit);
+                }) ?? null
+                """, new { target = element, points });
+            var point = await reached.JsonValueAsync<double[]>();
+            return (point[0], point[1]);
+        }
+        catch (TimeoutException exception)
+        {
+            throw new TimeoutException(
+                $"The pointer never reached {target} {where}. Something may cover it, or the active tool or " +
+                "read-only mode may keep it from catching the pointer.", exception);
+        }
     }
 
     private async Task DragAsync((double X, double Y) from, (double X, double Y) to)

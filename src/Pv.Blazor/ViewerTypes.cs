@@ -244,8 +244,9 @@ public enum ViewerObjectHitArea
     [JsonStringEnumMemberName("fill")] Fill,
 
     /// <summary>
-    /// A band along its edges, so objects inside or behind it stay reachable. A selected or very small object still
-    /// catches the pointer everywhere.
+    /// A band along its edges, so objects inside or behind it stay reachable. A very small object still catches the
+    /// pointer everywhere. A selected one does too, except while the draw tool is active, so a draw can start inside
+    /// it.
     /// </summary>
     [JsonStringEnumMemberName("border")] Border,
 }
@@ -333,8 +334,8 @@ public sealed record PdfViewerOptions
     public bool SelectOnCreate { get; init; }
 
     /// <summary>
-    /// Whether the draw tool draws over objects. When off, a press on an object selects it and a drag moves or resizes
-    /// it, as with the select tool, so only a press elsewhere on the page draws.
+    /// Whether the draw tool draws over objects. When off, a press on an object selects it and a drag moves it, as with
+    /// the select tool, so only a press elsewhere on the page draws.
     /// </summary>
     public bool DrawOverObjects { get; init; }
 

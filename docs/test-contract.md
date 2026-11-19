@@ -19,7 +19,7 @@ keys.
 | `data-current-page` | The displayed page, starting at 1 |
 | `data-zoom` | The zoom being displayed or rendered, with 1 meaning 100%. Absent until a page has been sized. The element's `zoom` property gives the same number |
 | `data-busy` | Present while a document is loading, a page turn is under way, or the page shown is rendering or extracting its text, and absent once the viewer is idle. Style `pdf-viewer[data-busy]` to show a loading indicator |
-| `data-tool` | `select`, `draw-rect`, `none`. Unless the `drawOverObjects` option is on, `draw-rect` treats objects as `select` does: a press on an object selects it and a drag moves or resizes it. Only a press elsewhere on the page draws |
+| `data-tool` | `select`, `draw-rect`, `none`. Unless the `drawOverObjects` option is on, `draw-rect` treats objects as `select` does: a press on an object selects it and a drag moves it. Only a press elsewhere on the page draws. `draw-rect` shows no resize handles |
 | `data-tool-kind` | The kind the draw tool gives its objects. Present only while the draw tool is chosen with a kind |
 | `data-readonly` | `true` while the user is kept from selecting, drawing and editing objects, otherwise `false`. `data-tool` keeps showing the chosen tool meanwhile |
 | `data-object-hit-area` | `fill`, or `border` when only an unselected object's edges catch the pointer |
@@ -179,7 +179,8 @@ so it tells which of two events is newer.
   tools differ only in kind. The same goes for `ReadOnly` and `data-readonly`.
 - **Use the real mouse.** Don't use Playwright's `force: true`. A click that can't reach an object is a real defect.
 - **Press an edge when objects use the border hit area.** The center of an unselected object doesn't catch the pointer, so
-  Playwright's `click()` on its locator reports it as covered. Press near its edge, or select it first.
+  Playwright's `click()` on its locator reports it as covered. Press near its edge, or, with the select tool, select it
+  first.
 - **Read positions from the page.** Don't hard-code pixel coordinates, because they break at the first change of page size,
   zoom or viewport. For .NET, `Pv.Testing.Playwright` does this for you; see the [testing guide](testing.md).
 - **Assert page units for geometry.** `data-page-rect` is exact at any zoom. On-screen measurements need a tolerance of

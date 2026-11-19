@@ -108,17 +108,19 @@ test.describe("what catches the pointer", () => {
     await expect(page.locator("[data-object-id]")).toHaveCount(1);
   });
 
-  test("drawTool_ShouldResizeObjectByHandle_WhenObjectIsSelected", async ({ page }) => {
+  test("drawTool_ShouldDrawBesideSelectedObjectsCorner_WhenItShowsNoHandles", async ({ page }) => {
     const viewer = await openViewer(page, { initialZoom: 1 });
     await viewer.addObject({ id: "a", page: 1, rect });
     await viewer.setTool("draw-rect");
     await viewer.object("a").click();
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "a");
 
-    const from = await viewer.center(viewer.handle("se"));
-    await viewer.drag(from, { x: from.x + 20, y: from.y + 10 });
+    const box = (await viewer.object("a").boundingBox())!;
+    await viewer.drag({ x: box.x - 6, y: box.y - 6 }, { x: box.x - 60, y: box.y - 60 });
 
-    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,220,110");
-    await expect(page.locator("[data-object-id]")).toHaveCount(1);
+    await expect(page.locator(".pv-handle")).toHaveCount(0);
+    await expect(page.locator("[data-object-id]")).toHaveCount(2);
+    await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
   });
 
   test("drawTool_ShouldDrawOverObject_WhenDrawOverObjectsIsTurnedOnWhileToolIsActive", async ({ page }) => {
@@ -133,7 +135,6 @@ test.describe("what catches the pointer", () => {
 
     await expect(page.locator("[data-object-id]")).toHaveCount(2);
     await expect(viewer.object("a")).toHaveAttribute("data-page-rect", "100,100,200,100");
-    await expect(page.locator(".pv-handle")).toHaveCount(0);
   });
 
   test("object_ShouldNotBeTabStop_WhenToolIsNone", async ({ page }) => {

@@ -216,7 +216,12 @@
     calc(100% - var(--band)) calc(100% - var(--band)), calc(100% - var(--band)) var(--band), var(--band) var(--band));
 }
 
-.pv-viewer[data-object-hit-area="border"] .pv-object[aria-selected="true"]::before {
+/*
+  Except with the draw tool, a selected object catches the pointer everywhere so it can be dragged from inside. With the
+  draw tool, a press inside it starts a draw instead, so boxes can be nested.
+*/
+.pv-viewer[data-object-hit-area="border"] .pv-object-layer:not([data-pointer="objects-and-page"])
+  .pv-object[aria-selected="true"]::before {
   clip-path: none;
 }
 

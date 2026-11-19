@@ -276,13 +276,13 @@ public sealed partial class FakePdfViewer : IViewerBackend
     public Task SimulateEditAsync(string id, PageRect rect, EditGesture gesture) => ActAsync(async notifications =>
     {
         RequireDocument();
-        if (gesture == EditGesture.Nudge)
+        if (gesture == EditGesture.Move)
         {
-            RequirePointerTool();
+            RequireObjectPressTool();
         }
         else
         {
-            RequireObjectPressTool();
+            RequirePointerTool();
         }
         var target = RequireReachable(id);
         if (target.Locked)
@@ -818,8 +818,8 @@ public sealed partial class FakePdfViewer : IViewerBackend
     }
 
     /// <summary>
-    /// A nudge, Delete and, unless the draw tool is chosen, a click on empty page area need the select tool, which
-    /// read-only mode also gives.
+    /// A resize, a nudge, Delete and, unless the draw tool is chosen, a click on empty page area need the select tool,
+    /// which read-only mode also gives.
     /// </summary>
     private void RequirePointerTool()
     {

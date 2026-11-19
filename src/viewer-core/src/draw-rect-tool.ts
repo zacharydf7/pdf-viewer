@@ -12,10 +12,11 @@ const minimumDrawSize = 2;
 
 /**
  * Draws a rectangle from where the pointer is pressed to where it's released, and leaves it with the store as a draft.
- * Unless the drawOverObjects option is on, a press on an object selects it and a drag moves or resizes it, as with the
- * select tool, so only a press elsewhere on the page draws. A click there, too small to draw anything, clears the
- * selection. Keys still move and resize objects while it's active, so the user can adjust what they just drew, but the
- * keys that select, clear the selection or delete are left alone.
+ * Unless the drawOverObjects option is on, a press on an object selects it and a drag moves it, as with the select
+ * tool, so only a press elsewhere on the page draws. A click there, too small to draw anything, clears the selection.
+ * It shows no resize handles, which would reach past a selected object's corners and edges and keep the user from
+ * drawing right beside it. Keys still move and resize objects while it's active, so the user can adjust what they just
+ * drew, but the keys that select, clear the selection or delete are left alone.
  */
 export class DrawRectTool implements Tool {
   readonly #store: ObjectStore;
@@ -40,8 +41,7 @@ export class DrawRectTool implements Tool {
 
   get presentation(): ToolPresentation {
     const { drawOverObjects } = this.#context.options;
-    return { pointer: drawOverObjects ? "page" : "objects-and-page", focusable: true, handles: !drawOverObjects,
-      readOnly: false };
+    return { pointer: drawOverObjects ? "page" : "objects-and-page", focusable: true, handles: false, readOnly: false };
   }
 
   pointerDown(input: PointerPress): PressResult {

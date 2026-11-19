@@ -205,17 +205,6 @@ describe("pressing objects", () => {
     expect(record.drafts).toEqual([]);
   });
 
-  it("pointerUp_ShouldResizeObject_WhenHandleIsDragged", () => {
-    const { tool, store, record } = setupWithObject();
-    store.select(["a"], "api");
-
-    tool.pointerDown({ ...at(300, 250), target: { kind: "handle", id: "a", handle: "se" } });
-    tool.pointerUp(at(320, 260));
-
-    expect(record.updated[0])
-      .toMatchObject({ gesture: "resize", object: { rect: { ...rect, width: 220, height: 110 } } });
-  });
-
   it("pointerUp_ShouldDrawOverObject_WhenDrawOverObjectsIsOn", () => {
     const { tool, store, record } = setupWithObject({ drawOverObjects: true });
 
@@ -227,10 +216,11 @@ describe("pressing objects", () => {
     expect(record.drafts[0]!.rect).toEqual({ x: 150, y: 200, width: 20, height: 30 });
   });
 
-  it("presentation_ShouldLetObjectsCatchPointerAndShowHandles_WhenDrawOverObjectsIsOff", () => {
+  it("presentation_ShouldLetObjectsCatchPointerWithoutHandles_WhenDrawOverObjectsIsOff", () => {
     const { tool } = setupWithObject();
 
-    expect(tool.presentation).toEqual({ pointer: "objects-and-page", focusable: true, handles: true, readOnly: false });
+    expect(tool.presentation)
+      .toEqual({ pointer: "objects-and-page", focusable: true, handles: false, readOnly: false });
   });
 
   it("presentation_ShouldLeavePointerToPage_WhenDrawOverObjectsIsTurnedOn", () => {
