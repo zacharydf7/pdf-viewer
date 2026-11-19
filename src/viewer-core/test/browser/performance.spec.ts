@@ -314,6 +314,8 @@ test("drag_ShouldStayWithinBudgetPerMove_WhenPageHas5000Objects", async ({ page 
 
 test("drawRect_ShouldStayWithinBudgetPerMove_WhenPageHas5000Objects", async ({ page }) => {
   const viewer = await openWithObjects(page, 5_000);
+  // The objects cover the page, and a press on one would select it rather than draw.
+  await viewer.host.evaluate((element: PdfViewerElement) => element.configure({ drawOverObjects: true }));
   await viewer.setTool("draw-rect");
   await recordMoveTimings(page);
   const from = await viewer.pagePoint(0.1, 0.1);

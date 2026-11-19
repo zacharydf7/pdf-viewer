@@ -220,6 +220,15 @@
   clip-path: none;
 }
 
+/*
+  With the draw tool, a press right outside an object starts a draw, so the ring stops at the object's edge. Its band
+  narrows by the same 4px, so it reaches as far inside the object as the select tool's ring does.
+*/
+.pv-viewer[data-object-hit-area="border"] .pv-object-layer[data-pointer="objects-and-page"] .pv-object::before {
+  --band: 4px;
+  inset: calc(-1 * var(--pv-object-border-width, 2px));
+}
+
 @container (max-width: 28px) or (max-height: 28px) {
   .pv-viewer[data-object-hit-area="border"] .pv-object::before {
     clip-path: none;

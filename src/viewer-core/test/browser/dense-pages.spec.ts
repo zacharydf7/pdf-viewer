@@ -85,6 +85,40 @@ test.describe("border hit area", () => {
     await expect(viewer.object("outer")).toHaveAttribute("data-page-rect", "100,100,300,300");
   });
 
+  test("drawTool_ShouldDraw_WhenPressedJustOutsideObjectAndBorderHitAreaIsOn", async ({ page }) => {
+    const viewer = await openViewer(page, { objectHitArea: "border", initialZoom: 1 });
+    await viewer.addObject({ id: "outer", page: 1, rect: outer });
+    await viewer.setTool("draw-rect");
+
+    const box = (await viewer.object("outer").boundingBox())!;
+    await viewer.drag({ x: box.x + 60, y: box.y - 3 }, { x: box.x + 120, y: box.y - 60 });
+
+    await expect(page.locator("[data-object-id]")).toHaveCount(2);
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "");
+  });
+
+  test("drawTool_ShouldDraw_WhenPressedSixPixelsInsideObjectAndBorderHitAreaIsOn", async ({ page }) => {
+    const viewer = await openViewer(page, { objectHitArea: "border", initialZoom: 1 });
+    await viewer.addObject({ id: "outer", page: 1, rect: outer });
+    await viewer.setTool("draw-rect");
+
+    const box = (await viewer.object("outer").boundingBox())!;
+    await viewer.drag({ x: box.x + 60, y: box.y + 6 }, { x: box.x + 120, y: box.y + 60 });
+
+    await expect(page.locator("[data-object-id]")).toHaveCount(2);
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "");
+  });
+
+  test("selectTool_ShouldSelectObject_WhenPressedJustOutsideItAndBorderHitAreaIsOn", async ({ page }) => {
+    const viewer = await openViewer(page, { objectHitArea: "border", initialZoom: 1 });
+    await viewer.addObject({ id: "outer", page: 1, rect: outer });
+
+    const box = (await viewer.object("outer").boundingBox())!;
+    await page.mouse.click(box.x + 60, box.y - 3);
+
+    await expect(viewer.host).toHaveAttribute("data-selected-object", "outer");
+  });
+
   test("drawTool_ShouldDrawOverExistingBorder_WhenBorderHitAreaAndDrawOverObjectsAreOn", async ({ page }) => {
     const viewer = await openViewer(page, { objectHitArea: "border", initialZoom: 1, drawOverObjects: true });
     await viewer.addObject({ id: "outer", page: 1, rect: outer });
